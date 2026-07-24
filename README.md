@@ -1,15 +1,30 @@
 # Box3D Quest VR
 
-A **standalone Meta Quest 3 VR game**, written as a native OpenXR app in C/C++,
-with physics powered by the brand-new [**Box3D**](https://github.com/erincatto/box3d)
-engine (from Erin Catto, creator of Box2D).
+A **standalone Meta Quest 3 VR game** built around the brand-new
+[**Box3D**](https://github.com/erincatto/box3d) physics engine (from Erin
+Catto, creator of Box2D). This repo is the complete home for the project: a
+**playable browser build** and the **native OpenXR app** source.
 
-It installs onto the headset as a real app and runs entirely on-device — no PC,
-no cable once it's installed, no browser.
+## ▶ Play it right now — headset only, nothing to install
 
-> **Status: foundation / vertical slice.** This is the proven-on-device base:
-> real Box3D physics rendered in stereo VR, plus controller interaction. It's
-> built to grow into a full game from here.
+Open **<https://piedpiper80.github.io/Box3D-Quest-3/>** in the Meta Quest
+Browser and tap **Enter VR**. Boxes tumble and bounce around your room; pull
+either trigger to throw more.
+
+That build is [`docs/index.html`](docs/index.html) — a self-contained WebXR
+page (published via GitHub Pages from the `gh-pages` branch) using stand-in
+physics for now. Upgrading it to the **real Box3D engine compiled to
+WebAssembly** is the roadmap's next step.
+
+## The native app (this repo's C/C++ source)
+
+The rest of this repo is the full native version: a real installed Quest app
+written against OpenXR in C/C++ with genuine Box3D physics. It installs onto
+the headset and runs entirely on-device — no PC, no cable, no browser — but
+**building it requires a computer** with Android Studio (steps below).
+
+> **Status: foundation / vertical slice.** Real Box3D physics rendered in
+> stereo VR, plus controller interaction. Built to grow into a full game.
 
 ## What you'll see
 
