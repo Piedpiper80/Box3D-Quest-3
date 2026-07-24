@@ -1,0 +1,17 @@
+# Gradle / Android build output
+.gradle/
+build/
+/local.properties
+captures/
+
+# Native build intermediates
+.cxx/
+.externalNativeBuild/
+
+# IDE
+.idea/
+*.iml
+*.iws
+
+# OS
+.DS_Store
