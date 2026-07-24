@@ -11,10 +11,12 @@ Open **<https://piedpiper80.github.io/Box3D-Quest-3/>** in the Meta Quest
 Browser and tap **Enter VR**. Boxes tumble and bounce around your room; pull
 either trigger to throw more.
 
-That build is [`docs/index.html`](docs/index.html) — a self-contained WebXR
-page (published via GitHub Pages from the `gh-pages` branch) using stand-in
-physics for now. Upgrading it to the **real Box3D engine compiled to
-WebAssembly** is the roadmap's next step.
+That build is [`docs/index.html`](docs/index.html) + [`docs/box3d.wasm`](docs/box3d.wasm):
+the **real Box3D engine compiled to WebAssembly** (~360 KB, scalar,
+single-threaded) drives the scene, with an automatic stand-in fallback if the
+wasm can't load. The engine badge on the page shows which one is running.
+Published via GitHub Pages from the `gh-pages` branch; see [`wasm/`](wasm/)
+for the C bridge, build command, and simulation test harness.
 
 ## The native app (this repo's C/C++ source)
 
