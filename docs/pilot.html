@@ -178,49 +178,83 @@
   // --- arm configuration --------------------------------------------------
   // Same actuator on both arms, eight times the mass on the right. The whole
   // spike is whether that difference is felt rather than read.
-  var SHOULDER_Y = 1.35, FORWARD = -0.55, SPREAD = 0.30;
-  var ARM_HALF = [0.28, 0.09, 0.09];
+  // Placed relative to the player's head when VR starts, so these are *their*
+  // shoulders rather than a figure standing in front of them.
+  var SHOULDER_DROP = 0.28;   // below eye level
+  var SHOULDER_SPREAD = 0.22; // either side of centre
+  var ARM_LENGTH = 0.62, ARM_THICK = 0.085;
+  var CONE = 1.25;            // radians the shoulder may swing through
   // Real densities, kg/m3. The segment is 0.018 m3, so the light arm is ~49 kg
   // of aluminium and the heavy one ~141 kg of steel. The first draft used
   // densities of 1 and 8, which made the arms weigh 18 and 145 *grams* — both
   // tracked the hand perfectly and the spike would have felt identical in each
   // hand, which is the one outcome that would have made it worthless.
   var LIGHT_DENSITY = 2700, HEAVY_DENSITY = 7800;
-  var LIGHT_FORCE = 2500;
-  var BASE_TORQUE = 400;
+  var LIGHT_TORQUE = 900;
 
   // The upgrade curve, measured rather than guessed. The heavy arm needs 1388 N
   // just to hold itself against gravity, so the bottom of the range is an
   // actuator that cannot quite lift its own limb, and the top nearly matches
   // the light arm. Mean tracking lag at each level, driven by a 4 rad/s sweep:
   //   1800 N -> 32 cm   2100 -> 15 cm   2500 -> 12 cm   3000 -> 10 cm   3600 -> 9 cm
-  var FORCE_LEVELS = [1800, 2100, 2500, 3000, 3600];
+  var TORQUE_LEVELS = [220, 340, 520, 800, 1200];
   var heavyLevel = 0;
+  // Shoulder positions in world space, set when the scene is built.
+  var shoulders = [[0,0,0],[0,0,0]];
 
   var E = null;
 
-  function buildScene() {
+  function buildScene(headX, headY, headZ) {
     E.w_reset(1);
-    // Something to hit, so the arms have consequences.
+
+    var cy = headY - SHOULDER_DROP;
+    shoulders[0] = [headX - SHOULDER_SPREAD, cy, headZ];
+    shoulders[1] = [headX + SHOULDER_SPREAD, cy, headZ];
+
+    // The torso the arms hang off. Being able to see what they are attached to
+    // is most of what makes them read as arms rather than floating blocks.
+    E.w_torso_create(headX, cy - 0.05, headZ, SHOULDER_SPREAD, 0.22, 0.12);
+
+    E.w_arm_create(0, shoulders[0][0], shoulders[0][1], shoulders[0][2],
+                   ARM_LENGTH, ARM_THICK, LIGHT_DENSITY, LIGHT_TORQUE, CONE);
+    E.w_arm_create(1, shoulders[1][0], shoulders[1][1], shoulders[1][2],
+                   ARM_LENGTH, ARM_THICK, HEAVY_DENSITY, TORQUE_LEVELS[heavyLevel], CONE);
+
+    // Something to hit, just beyond arm's reach.
     for (var i = 0; i < 10; i++) {
-      E.w_spawn(0.0, 0.12 + i * 0.21, -1.5, 0, 0, 0, 0.10, i % 6);
+      E.w_spawn(headX, 0.12 + i * 0.21, headZ - 1.15, 0, 0, 0, 0.10, i % 6);
     }
-    // The light arm's actuator stays fixed — it is the reference the heavy arm
-    // is judged against, so only one variable moves.
-    E.w_arm_create(0, -SPREAD, SHOULDER_Y, FORWARD, ARM_HALF[0], ARM_HALF[1], ARM_HALF[2],
-                   LIGHT_DENSITY, LIGHT_FORCE, BASE_TORQUE);
-    E.w_arm_create(1,  SPREAD, SHOULDER_Y, FORWARD, ARM_HALF[0], ARM_HALF[1], ARM_HALF[2],
-                   HEAVY_DENSITY, FORCE_LEVELS[heavyLevel], BASE_TORQUE);
+
+    torsoItem = {
+      m: trs([headX, cy - 0.05, headZ], [0,0,0,1], [SHOULDER_SPREAD, 0.22, 0.12]),
+      c: [0.30, 0.34, 0.42]
+    };
   }
 
+  var torsoItem = null;
+
+  // The body origin is the shoulder and the limb extends along its own -Z, so
+  // the drawn box is offset half a length down that axis.
   function armItems() {
     var ptr = E.w_arm_state() >>> 2;
     var f = new Float32Array(E.memory.buffer);
     var out = [];
     for (var i = 0; i < 2; i++) {
-      var o = ptr + i * 7;
+      var o = ptr + i * 8;
+      var px = f[o], py = f[o+1], pz = f[o+2];
+      var q = [f[o+3], f[o+4], f[o+5], f[o+6]];
+      var len = f[o+7] || ARM_LENGTH;
+
+      // Rotate (0,0,-len/2) by q to find the segment's centre.
+      var h = len * 0.5;
+      var vx = 0, vy = 0, vz = -h;
+      var tx = 2*(q[1]*vz - q[2]*vy), ty = 2*(q[2]*vx - q[0]*vz), tz = 2*(q[0]*vy - q[1]*vx);
+      var cx = vx + q[3]*tx + (q[1]*tz - q[2]*ty);
+      var cy = vy + q[3]*ty + (q[2]*tx - q[0]*tz);
+      var cz = vz + q[3]*tz + (q[0]*ty - q[1]*tx);
+
       out.push({
-        m: trs([f[o], f[o+1], f[o+2]], [f[o+3], f[o+4], f[o+5], f[o+6]], ARM_HALF),
+        m: trs([px + cx, py + cy, pz + cz], q, [ARM_THICK, ARM_THICK, h]),
         c: i === 0 ? [0.45, 0.85, 0.95] : [0.95, 0.45, 0.35]
       });
     }
@@ -245,18 +279,22 @@
   // Level readout as a row of markers — no font needed, readable at a glance.
   function levelItems() {
     var out = [];
-    for (var i = 0; i < FORCE_LEVELS.length; i++) {
-      var lit = i <= heavyLevel;
+    var sh = shoulders[1];
+    for (var i = 0; i < TORQUE_LEVELS.length; i++) {
       out.push({
-        m: trs([SPREAD - 0.12 + i * 0.06, SHOULDER_Y + 0.32, FORWARD], [0,0,0,1],
-               [0.018, 0.018, 0.018]),
-        c: lit ? [0.98, 0.72, 0.25] : [0.20, 0.23, 0.30]
+        m: trs([sh[0] - 0.06 + i * 0.05, sh[1] + 0.30, sh[2] - 0.25], [0,0,0,1],
+               [0.014, 0.014, 0.014]),
+        c: i <= heavyLevel ? [0.98, 0.72, 0.25] : [0.20, 0.23, 0.30]
       });
     }
     return out;
   }
 
-  function allItems() { return cubeItems().concat(armItems(), levelItems()); }
+  function allItems() {
+    var out = cubeItems().concat(armItems(), levelItems());
+    if (torsoItem) out.push(torsoItem);
+    return out;
+  }
 
   // --- wasm ---------------------------------------------------------------
   var memRef = { mem: null };
@@ -281,11 +319,11 @@
       inst.exports._initialize();
       E = inst.exports;
 
-      if (typeof E.w_arm_create !== "function") {
-        setStatus("This box3d.wasm predates the piloting exports (w_arm_create). It needs rebuilding from wasm/bridge.c.", true);
+      if (typeof E.w_torso_create !== "function") {
+        setStatus("This box3d.wasm predates the piloting exports (w_torso_create). It needs rebuilding from wasm/bridge.c.", true);
         return;
       }
-      buildScene();
+      buildScene(0, 1.55, 0);
       checkVR();
       requestAnimationFrame(preview);
     })
@@ -307,10 +345,11 @@
     var dt = lastT ? Math.min((t - lastT) / 1000, 0.05) : 0.016; lastT = t;
     // Sweep the targets so the difference is visible before entering VR.
     var s = t / 1000;
-    var tx = Math.sin(s * 1.6) * 0.45;
-    var ty = SHOULDER_Y + Math.sin(s * 1.1) * 0.28;
-    E.w_arm_target(0, -SPREAD + tx, ty, FORWARD);
-    E.w_arm_target(1,  SPREAD + tx, ty, FORWARD);
+    var sw = Math.sin(s * 2.2);
+    for (var i = 0; i < 2; i++) {
+      var sh = shoulders[i];
+      E.w_arm_target(i, sh[0] + sw * 0.45, sh[1] + 0.30 + sw * 0.25, sh[2] - 0.55);
+    }
     E.w_step(dt);
 
     var w = canvas.clientWidth * devicePixelRatio, h = canvas.clientHeight * devicePixelRatio;
@@ -325,12 +364,23 @@
   }
 
   // --- VR -----------------------------------------------------------------
-  var refSpace = null;
+  var refSpace = null, placed = false;
 
   function onXRFrame(t, frame) {
     var session = frame.session;
     session.requestAnimationFrame(onXRFrame);
     var dt = lastT ? Math.min((t - lastT) / 1000, 0.05) : 0.016; lastT = t;
+
+    var viewerPose = frame.getViewerPose(refSpace);
+
+    // Build the mech around wherever the player actually is, once we have a
+    // real head pose. Guessing at it beforehand puts the arms somewhere else.
+    if (!placed && viewerPose) {
+      var hp = viewerPose.transform.position;
+      buildScene(hp.x, hp.y, hp.z);
+      placed = true;
+      setStatus("In VR. Left hand light, right hand heavy. Right trigger upgrades.");
+    }
 
     // Hands drive the arm targets. Left hand → light arm, right hand → heavy.
     var sources = session.inputSources;
@@ -352,11 +402,10 @@
     gl.clearColor(0.02, 0.03, 0.07, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-    var pose = frame.getViewerPose(refSpace);
-    if (!pose) return;
+    if (!viewerPose) return;
     var items = allItems();
-    for (var v = 0; v < pose.views.length; v++) {
-      var view = pose.views[v];
+    for (var v = 0; v < viewerPose.views.length; v++) {
+      var view = viewerPose.views[v];
       var vp = layer.getViewport(view);
       gl.viewport(vp.x, vp.y, vp.width, vp.height);
       draw(mul(view.projectionMatrix, view.transform.inverse.matrix), items);
@@ -371,7 +420,7 @@
         inVR = true; lastT = 0;
 
         session.addEventListener("end", function () {
-          inVR = false; refSpace = null; lastT = 0;
+          inVR = false; refSpace = null; lastT = 0; placed = false;
           enterBtn.textContent = "Enter VR";
           setStatus("Left VR. Tap Enter VR to go back in.");
           requestAnimationFrame(preview);
@@ -381,8 +430,8 @@
         // wraps at the top, so the whole range is reachable one-handed.
         session.addEventListener("selectstart", function (e) {
           if (e.inputSource.handedness !== "right") return;
-          heavyLevel = (heavyLevel + 1) % FORCE_LEVELS.length;
-          E.w_arm_limits(1, FORCE_LEVELS[heavyLevel], BASE_TORQUE);
+          heavyLevel = (heavyLevel + 1) % TORQUE_LEVELS.length;
+          E.w_arm_limits(1, TORQUE_LEVELS[heavyLevel]);
         });
 
         return gl.makeXRCompatible().then(function () {
@@ -392,9 +441,9 @@
           });
         }).then(function (space) {
           refSpace = space;
-          buildScene();
+          placed = false;
           session.requestAnimationFrame(onXRFrame);
-          setStatus("In VR.");
+          setStatus("In VR — placing the mech around you…");
         });
       })
       .catch(function (e) {
