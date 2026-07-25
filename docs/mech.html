@@ -44,10 +44,9 @@
       <li>A capped force <strong>hauls each wrist</strong> toward your hand. The arm is not told to match
           you — it gets dragged, and the joints work out the rest.</li>
       <li>Press <strong>A</strong> to change what the arms are made of:
-          <strong>light alloy → alloy → dense alloy → steel</strong>. Amber markers on your right show which.</li>
-      <li>Heavier arms lag, overshoot, and <strong>drag the whole machine off its footing</strong>.
-          Steel is deliberately too heavy for these joints, so the arms barely move — that is an under-built
-          machine, not a bug.</li>
+          <strong>light → medium → heavy → very heavy</strong>. Amber markers on your right show which.</li>
+      <li>Heavier arms lag, overshoot, and <strong>drag the whole machine off its footing</strong> —
+          sideways, not downwards. The legs hold your height whatever the arms weigh.</li>
       <li>Punch the blocks. Watch the torso get pulled when you commit to a swing.</li>
       <li><strong>Setting the floor:</strong> the grid starts <strong>amber</strong> and follows your lower
           controller. Rest that controller on the actual ground and <strong>pull the trigger</strong>. The grid
@@ -186,11 +185,15 @@
 
   // --- the machine ---------------------------------------------------------
   var E = null, built = false;
-  var UPPER_LEN = 0.34, FORE_LEN = 0.32, THICK = 0.075;
-  var SHOULDER_TORQUE = 900, ELBOW_TORQUE = 600, CONE = 1.3;
+  var UPPER_LEN = 0.40, FORE_LEN = 0.38, THICK = 0.07;
+  // Cone was 1.3 rad (~75 deg), which is a crane, not a shoulder. 2.2 rad
+  // (~126 deg) is roughly a human shoulder's forward range.
+  var SHOULDER_TORQUE = 1400, ELBOW_TORQUE = 900, CONE = 2.2;
   // Measured on the real build: 400 tracks closely, 3000 overshoots and drags
   // the torso, 7800 cannot be swung at all by these joints.
-  var DENSITIES = [400, 1200, 3000, 7800];
+  // Top end trimmed: 7800 could not be swung at all, which is a broken toy
+  // rather than a heavy one. These all move; they just move differently.
+  var DENSITIES = [350, 800, 1600, 2800];
   var level = 1;
   var prevA = false;
   var segLen = [UPPER_LEN, FORE_LEN];

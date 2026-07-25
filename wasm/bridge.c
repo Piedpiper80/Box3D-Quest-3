@@ -497,7 +497,7 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
     b3BodyDef td = b3DefaultBodyDef();
     td.type = b3_dynamicBody;
     td.position.x = x; td.position.y = y; td.position.z = z;
-    td.angularDamping = 4.0f;   // a mech is not a spinning top
+    td.angularDamping = 5.0f;   // a mech is not a spinning top
     td.linearDamping = 1.0f;
     s_mTorso = b3CreateBody(s_world, &td);
 
@@ -517,7 +517,7 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
         b3BodyDef ud = b3DefaultBodyDef();
         ud.type = b3_dynamicBody;
         ud.position.x = x + sx; ud.position.y = y + sy; ud.position.z = z;
-        ud.angularDamping = 0.6f;
+        ud.angularDamping = 0.15f;   // loose enough to swing
         s_mUpper[i] = b3CreateBody(s_world, &ud);
 
         b3ShapeDef usd = b3DefaultShapeDef();
@@ -547,7 +547,7 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
         b3BodyDef fd = b3DefaultBodyDef();
         fd.type = b3_dynamicBody;
         fd.position.x = x + sx; fd.position.y = y + sy; fd.position.z = z - upperLen;
-        fd.angularDamping = 0.6f;
+        fd.angularDamping = 0.15f;
         s_mFore[i] = b3CreateBody(s_world, &fd);
 
         b3ShapeDef fsd = b3DefaultShapeDef();
@@ -568,8 +568,8 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
         rj.base.localFrameB = b3Transform_identity;
         rj.base.collideConnected = false;
         rj.enableLimit = true;
-        rj.lowerAngle = -2.2f;    // fully folded
-        rj.upperAngle = 0.05f;    // just short of straight
+        rj.lowerAngle = -2.4f;    // fully folded
+        rj.upperAngle = 0.10f;    // just short of straight
         rj.enableMotor = true;
         rj.maxMotorTorque = elbowTorque;
         rj.motorSpeed = 0.0f;
@@ -600,9 +600,9 @@ void w_mech_hand(int i, float x, float y, float z, int active)
 // How hard you can haul the wrist. This is the pilot's grip on the controls,
 // not the joint strength — the joints have their own ceilings and will give way
 // first if they are the weaker link.
-static float s_mPullK = 2500.0f;
-static float s_mPullC = 180.0f;
-static float s_mPullMax = 4000.0f;
+static float s_mPullK = 900.0f;
+static float s_mPullC = 60.0f;
+static float s_mPullMax = 2500.0f;
 
 WASM_EXPORT("w_mech_tune")
 void w_mech_tune(float pullK, float pullC, float pullMax, float torsoMaxF)
@@ -616,20 +616,39 @@ void w_mech_apply(void)
 {
     if (!s_mExists) return;
 
-    // Legs: hold the torso at its target, but only up to a finite force. Beyond
-    // that the machine is moved by whatever moved it.
+    // Legs.
+    //
+    // They hold the machine's height, full stop. An earlier version made the
+    // legs a plain spring that had to fight gravity, so heavier arms dragged the
+    // whole mech downwards until it sank out from under the player and the arms
+    // could not be swung at all. Legs do not work like that: yours hold you at
+    // your height whether or not you are carrying something heavy, and they give
+    // out entirely rather than sagging in proportion to the load.
+    //
+    // So the vertical is gravity-compensated and stiff — the machine stands. The
+    // horizontal is a limited spring, which is what lets a committed punch drag
+    // it off its footing.
     {
         b3Pos p = b3Body_GetPosition(s_mTorso);
         b3Vec3 v = b3Body_GetLinearVelocity(s_mTorso);
+        const float mass = b3Body_GetMass(s_mTorso);
+
+        // Cancel the torso's own weight, then hold the height stiffly.
+        float fy = mass * 9.81f
+                 + (s_mTorsoTarget.y - (float)p.y) * s_mTorsoK * 3.0f
+                 - v.y * s_mTorsoC * 2.0f;
+
         float fx = (s_mTorsoTarget.x - (float)p.x) * s_mTorsoK - v.x * s_mTorsoC;
-        float fy = (s_mTorsoTarget.y - (float)p.y) * s_mTorsoK - v.y * s_mTorsoC;
         float fz = (s_mTorsoTarget.z - (float)p.z) * s_mTorsoK - v.z * s_mTorsoC;
-        float sq = fx*fx + fy*fy + fz*fz;
-        if (sq > s_mTorsoMaxF * s_mTorsoMaxF)
+
+        // Only the horizontal is capped — that is the footing giving way.
+        float hsq = fx*fx + fz*fz;
+        if (hsq > s_mTorsoMaxF * s_mTorsoMaxF)
         {
-            float k = s_mTorsoMaxF / __builtin_sqrtf(sq);
-            fx *= k; fy *= k; fz *= k;
+            float k = s_mTorsoMaxF / __builtin_sqrtf(hsq);
+            fx *= k; fz *= k;
         }
+
         b3Vec3 f; f.x = fx; f.y = fy; f.z = fz;
         b3Body_ApplyForceToCenter(s_mTorso, f, true);
     }
