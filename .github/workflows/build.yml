@@ -156,8 +156,13 @@ jobs:
             -Wl,--strip-all -o docs/box3d.wasm
           ls -l docs/box3d.wasm
 
+      # test.js loads box3d.wasm from its own directory, while the deployed copy
+      # lives in docs/ for GitHub Pages. Give the harness the copy it expects
+      # rather than teaching it a second path.
       - name: Sanity-check the module
-        run: node wasm/test.js
+        run: |
+          cp docs/box3d.wasm wasm/box3d.wasm
+          node wasm/test.js
 
       - name: Commit if changed
         run: |
