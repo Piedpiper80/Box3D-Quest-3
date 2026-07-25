@@ -176,7 +176,26 @@ jobs:
           # [skip ci] stops this commit from triggering another run of this
           # workflow, which would rebuild and commit forever.
           git commit -m "Rebuild box3d.wasm from bridge.c [skip ci]"
-          git push
+
+          # The branch often moves while this job is running, which left the
+          # checkout stale and the push rejected. Rebase onto whatever landed and
+          # retry; the wasm is a build product, so there is nothing to conflict
+          # with except an older copy of itself.
+          BRANCH="${{ github.head_ref || github.ref_name }}"
+          for attempt in 1 2 3; do
+            if git push origin "HEAD:$BRANCH"; then
+              echo "pushed on attempt $attempt"
+              exit 0
+            fi
+            echo "push rejected, rebasing and retrying"
+            git fetch origin "$BRANCH"
+            git rebase -X ours "origin/$BRANCH" || {
+              git rebase --abort || true
+              exit 1
+            }
+          done
+          echo "could not push the rebuilt wasm after 3 attempts"
+          exit 1
 
       - name: Upload wasm
         uses: actions/upload-artifact@v4
