@@ -129,18 +129,35 @@ jobs:
         with:
           ref: ${{ github.head_ref || github.ref_name }}
 
+      # Every commit this job pushes sends the repository owner an email, and
+      # most pushes do not touch the wasm source at all. Skip unless bridge.c
+      # actually changed.
+      - name: Does the wasm source need rebuilding?
+        id: changed
+        run: |
+          git fetch --depth=2 origin "${{ github.head_ref || github.ref_name }}" || true
+          if git diff --quiet HEAD~1 HEAD -- wasm/bridge.c 2>/dev/null; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "bridge.c unchanged — skipping wasm rebuild"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-python@v5
+        if: steps.changed.outputs.needed == 'true'
         with:
           python-version: '3.12'
 
       # Zig ships a complete C compiler and wasm libc as a pip wheel, so no
       # separate toolchain install is needed. See wasm/build.md.
       - name: Install Zig
+        if: steps.changed.outputs.needed == 'true'
         run: pip install ziglang
 
       # Must match the GIT_TAG in app/src/main/cpp/CMakeLists.txt and
       # bench/CMakeLists.txt, or the three builds measure different engines.
       - name: Fetch Box3D
+        if: steps.changed.outputs.needed == 'true'
         run: |
           git clone --filter=blob:none --no-checkout \
             https://github.com/erincatto/box3d.git box3d-src
@@ -148,6 +165,7 @@ jobs:
           git checkout c52908c9a907714e4d3a8a30be5272a1761158e1
 
       - name: Build box3d.wasm
+        if: steps.changed.outputs.needed == 'true'
         run: |
           python3 -m ziglang cc -target wasm32-wasi -Oz -mexec-model=reactor \
             -DBOX3D_DISABLE_SIMD -DNDEBUG \
@@ -160,11 +178,13 @@ jobs:
       # lives in docs/ for GitHub Pages. Give the harness the copy it expects
       # rather than teaching it a second path.
       - name: Sanity-check the module
+        if: steps.changed.outputs.needed == 'true'
         run: |
           cp docs/box3d.wasm wasm/box3d.wasm
           node wasm/test.js
 
       - name: Commit if changed
+        if: steps.changed.outputs.needed == 'true'
         run: |
           if git diff --quiet -- docs/box3d.wasm; then
             echo "wasm unchanged"
@@ -198,6 +218,7 @@ jobs:
           exit 1
 
       - name: Upload wasm
+        if: steps.changed.outputs.needed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: box3d-wasm
