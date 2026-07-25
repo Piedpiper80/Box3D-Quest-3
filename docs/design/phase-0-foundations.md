@@ -354,20 +354,49 @@ The benchmark starts **automatically**, about two seconds after the session
 settles. There is no menu and no button, deliberately: neither a broken HUD nor
 an unmapped controller can prevent a measurement.
 
+> **Everything below runs on a computer, not in the headset.** The Quest connects
+> to it over USB-C. There is nothing to type inside the headset — only the app to
+> launch.
+
+**First, get the APK.** On the computer: GitHub → this repo → the **Actions** tab
+→ the newest green run → **Artifacts** → `box3d-quest-debug-apk`. It downloads as
+a zip; unzip it.
+
+**Then, one-time setup on the headset:** Developer Mode enabled (see the main
+README), plugged in by USB-C, and **Allow USB debugging** accepted in the headset
+when prompted — tick "Always allow".
+
+#### Option A — Meta Quest Developer Hub (no command line)
+
+Free desktop app from Meta, and the easiest route because it does both the
+install and the log capture:
+
+1. **Device Manager** → drag the `.apk` onto the window to install.
+2. **Device Logs** → filter on `Box3DQuest` → start recording.
+3. Launch the app in the headset: app library → **Unknown Sources** dropdown →
+   "Box3D Quest VR".
+4. Put the headset down for ~2 minutes, then export the log.
+
+SideQuest installs the APK just as well, but its log handling is poorer.
+
+#### Option B — command line
+
+Needs **Android platform-tools**, a standalone download from Google — Android
+Studio is not required.
+
 ```bash
-# Grab the APK from the CI run's Artifacts section, then:
+adb devices                         # should list the Quest; confirms the connection
 adb install -r app-debug.apk
 adb logcat -c                       # clear the buffer first
-# launch the app from the headset's Unknown Sources library, then:
+# launch the app in the headset from Unknown Sources, then:
 adb logcat -s Box3DQuest:I | tee bench-device.txt
 ```
 
-Put the headset on long enough to confirm it launched, then put it down. A full
-run is roughly two minutes. Every result line starts with `BENCH,` so the run
+A full run is roughly two minutes. Every result line starts with `BENCH,` so it
 greps cleanly out of surrounding noise:
 
 ```bash
-grep '^.*BENCH,' bench-device.txt
+grep 'BENCH,' bench-device.txt
 ```
 
 Columns are `bodies, regime, frame_mean, frame_p50, frame_p99, step_mean,
