@@ -11,7 +11,8 @@
 //                                  [x,y,z, qx,qy,qz,qw, halfExtent, colorIdx]
 //   w_hand_create(i,...)           follow test: one free body chasing your hand
 //   w_hand_target(i,x,y,z)         drive body i toward the controller
-//   w_hand_limits(i,hertz,damping) retune body i's spring (the weight knob)
+//   w_hand_limits(i,k,c,maxF)      retune body i's spring constant
+//   w_hand_apply()                 apply the follow forces (call before w_step)
 //   w_hand_state()                 8 floats per body: [x,y,z, qx,qy,qz,qw, half]
 //   w_torso_create(...)            piloting spike: the body the arms hang from
 //   w_torso_update(x,y,z,yaw)      move the torso with the head, every frame
@@ -289,30 +290,53 @@ int w_capacity(void)
 // ---------------------------------------------------------------------------
 
 #define HAND_COUNT 2
-static b3JointId s_handJoint[HAND_COUNT];
 static b3BodyId s_handBody[HAND_COUNT];
-static b3BodyId s_handAnchor[HAND_COUNT];
 static float s_handHalf[HAND_COUNT];
 static int s_handExists[HAND_COUNT] = {0, 0};
 
+// Fixed-stiffness force, applied directly. No joint at all.
+//
+// Two mechanisms were tried and measured before this one, and both turned out to
+// be blind to mass:
+//
+//   Velocity motor with a force cap — a cliff, not a curve. A 3 kg body tracked
+//   identically at 50 N and 1500 N, and below the threshold simply fell to the
+//   floor. Nothing usable in between.
+//
+//   Spring specified in hertz — mass-normalised by design. 3 kg and 27 kg lagged
+//   by exactly the same amount at every stiffness, ratio 1.00. A frequency-based
+//   constraint behaves at that frequency whatever it is pulling; that is the
+//   point of expressing stiffness that way.
+//
+// A spring constant in newtons per metre is not normalised, so F = ma does the
+// work: the same pull on twice the mass gives half the acceleration, so it
+// trails further, overshoots more and takes longer to settle. That is what
+// weight feels like, and it grades continuously.
+static float s_handStiffness[HAND_COUNT];
+static float s_handDamping[HAND_COUNT];
+static float s_handMaxForce[HAND_COUNT];
+static b3Vec3 s_handTarget[HAND_COUNT];
+
 WASM_EXPORT("w_hand_create")
 void w_hand_create(int i, float x, float y, float z, float half, float density,
-                   float maxForce, float maxTorque, float hertz, float damping)
+                   float stiffness, float damping, float maxForce)
 {
     if (i < 0 || i >= HAND_COUNT)
     {
         return;
     }
     s_handHalf[i] = half;
-
-    b3BodyDef ad = b3DefaultBodyDef();
-    ad.type = b3_staticBody;
-    ad.position.x = x; ad.position.y = y; ad.position.z = z;
-    s_handAnchor[i] = b3CreateBody(s_world, &ad);
+    s_handStiffness[i] = stiffness;
+    s_handDamping[i] = damping;
+    s_handMaxForce[i] = maxForce;
+    s_handTarget[i].x = x; s_handTarget[i].y = y; s_handTarget[i].z = z;
 
     b3BodyDef bd = b3DefaultBodyDef();
     bd.type = b3_dynamicBody;
     bd.position.x = x; bd.position.y = y; bd.position.z = z;
+    // Gravity would drag it down and mask the effect being measured; the mech
+    // arm will want gravity back, but this test is about tracking alone.
+    bd.gravityScale = 0.0f;
     s_handBody[i] = b3CreateBody(s_world, &bd);
 
     b3ShapeDef sd = b3DefaultShapeDef();
@@ -322,33 +346,9 @@ void w_hand_create(int i, float x, float y, float z, float half, float density,
     b3BoxHull hull = b3MakeBoxHull(half, half, half);
     b3CreateHullShape(s_handBody[i], &sd, &hull.base);
 
-    // Spring-driven, not velocity-driven.
-    //
-    // Measured: capping a velocity motor's force does NOT produce graded weight.
-    // It is a cliff — below the threshold the body cannot hold itself up and
-    // falls to the floor, above it tracking is perfect, and there is nothing
-    // usable between. A 3 kg body tracked identically at 50 N and at 1500 N.
-    //
-    // A spring grades properly, because lag and overshoot fall out of the mass
-    // it is pulling: same spring, heavier body, more trailing and more
-    // follow-through. That is what dragging something heavy actually feels like,
-    // and it is what makes mass legible rather than binary.
-    b3MotorJointDef jd = b3DefaultMotorJointDef();
-    jd.base.bodyIdA = s_handAnchor[i];
-    jd.base.bodyIdB = s_handBody[i];
-    jd.linearHertz = hertz;
-    jd.linearDampingRatio = damping;
-    jd.maxSpringForce = maxForce;
-    jd.angularHertz = hertz;
-    jd.angularDampingRatio = damping;
-    jd.maxSpringTorque = maxTorque;
-    s_handJoint[i] = b3CreateMotorJoint(s_world, &jd);
-
     s_handExists[i] = 1;
 }
 
-// The spring pulls body B toward body A's frame, so moving the anchor moves the
-// target. The anchor is static, which in Box3D still permits repositioning it.
 WASM_EXPORT("w_hand_target")
 void w_hand_target(int i, float x, float y, float z)
 {
@@ -356,42 +356,56 @@ void w_hand_target(int i, float x, float y, float z)
     {
         return;
     }
-    b3Pos p; p.x = x; p.y = y; p.z = z;
-    b3Body_SetTransform(s_handAnchor[i], p, b3Quat_identity);
+    s_handTarget[i].x = x; s_handTarget[i].y = y; s_handTarget[i].z = z;
 }
 
-// Stiffness is the knob: softer spring means more trailing and more overshoot,
-// and the same spring on a heavier body feels heavier. Unlike a force cap this
-// grades smoothly instead of falling off a cliff.
 WASM_EXPORT("w_hand_limits")
-void w_hand_limits(int i, float hertz, float damping)
+void w_hand_limits(int i, float stiffness, float damping, float maxForce)
 {
     if (i < 0 || i >= HAND_COUNT || !s_handExists[i])
     {
         return;
     }
-    b3MotorJoint_SetLinearHertz(s_handJoint[i], hertz);
-    b3MotorJoint_SetLinearDampingRatio(s_handJoint[i], damping);
-    b3MotorJoint_SetAngularHertz(s_handJoint[i], hertz);
-    b3MotorJoint_SetAngularDampingRatio(s_handJoint[i], damping);
+    s_handStiffness[i] = stiffness;
+    s_handDamping[i] = damping;
+    s_handMaxForce[i] = maxForce;
 }
 
-// 8 floats per hand: position, rotation, half extent.
-WASM_EXPORT("w_hand_state")
-float* w_hand_state(void)
+// Applied every step, before b3World_Step.
+WASM_EXPORT("w_hand_apply")
+void w_hand_apply(void)
 {
-    static float out[HAND_COUNT * 8];
     for (int i = 0; i < HAND_COUNT; i++)
     {
-        float* o = &out[i * 8];
         if (!s_handExists[i]) continue;
+
         b3Pos p = b3Body_GetPosition(s_handBody[i]);
-        b3Quat q = b3Body_GetRotation(s_handBody[i]);
-        o[0] = (float)p.x; o[1] = (float)p.y; o[2] = (float)p.z;
-        o[3] = q.v.x; o[4] = q.v.y; o[5] = q.v.z; o[6] = q.s;
-        o[7] = s_handHalf[i];
+        b3Vec3 v = b3Body_GetLinearVelocity(s_handBody[i]);
+
+        float fx = (s_handTarget[i].x - (float)p.x) * s_handStiffness[i] - v.x * s_handDamping[i];
+        float fy = (s_handTarget[i].y - (float)p.y) * s_handStiffness[i] - v.y * s_handDamping[i];
+        float fz = (s_handTarget[i].z - (float)p.z) * s_handStiffness[i] - v.z * s_handDamping[i];
+
+        // Cap the magnitude so a large snap of the hand cannot fling the body
+        // across the room; well above the working range, so it rarely binds.
+        float sq = fx*fx + fy*fy + fz*fz;
+        float mx = s_handMaxForce[i];
+        if (sq > mx * mx)
+        {
+            float k = mx / __builtin_sqrtf(sq);
+            fx *= k; fy *= k; fz *= k;
+        }
+
+        b3Vec3 f; f.x = fx; f.y = fy; f.z = fz;
+        b3Body_ApplyForceToCenter(s_handBody[i], f, true);
     }
-    return out;
+}
+
+WASM_EXPORT("w_hand_mass")
+float w_hand_mass(int i)
+{
+    if (i < 0 || i >= HAND_COUNT || !s_handExists[i]) return 0.0f;
+    return b3Body_GetMass(s_handBody[i]);
 }
 
 // ---------------------------------------------------------------------------
