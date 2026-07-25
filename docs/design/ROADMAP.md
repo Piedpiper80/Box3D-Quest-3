@@ -74,6 +74,33 @@ with audio and game feel at Phase 4.
 
 ---
 
+## VR conventions — the default, not a per-feature decision
+
+Quest players arrive with expectations, and meeting them costs nothing while
+breaking them makes a game feel wrong for reasons players can rarely name. These
+are the house rules; deviate only with a stated reason.
+
+| Convention | Meaning here |
+|---|---|
+| **Meta button long-press** | Recentre. The system owns the button; listen for the reference space's `reset` event |
+| **Grip** | Hold / grab. Holds a mech arm; releasing lets the limb go slack |
+| **Trigger** | Primary action — attack. Never bind it to configuration |
+| **A / X** | Secondary action, cycling options |
+| **B / Y** | Cancel, back |
+| **Menu button** (left) | Pause / menu |
+| **Left stick** | Move |
+| **Right stick** | Turn — snap by default, smooth as an option |
+| **Body rig** | Derived from live head tracking every frame, never placed once and frozen |
+| **Comfort** | Vignette during artificial locomotion; never move the player's view without input |
+| **Hand tracking** | Pinch substitutes for trigger; anything gated on a button that hands lack must degrade to "always on" rather than to "broken" |
+
+The body-rig rule is worth stating plainly because it was learned the hard way:
+a rig placed once from a head pose leaves the player behind the moment they lean
+or stand, and every attempt to fix that with a calibration step is treating the
+symptom. Attach it to the head and the problem stops existing.
+
+---
+
 ## Decisions made
 
 ### Combat: you *are* the mech, with diegetic controls
