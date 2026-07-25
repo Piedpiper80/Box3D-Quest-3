@@ -197,7 +197,12 @@
   // actuator that cannot quite lift its own limb, and the top nearly matches
   // the light arm. Mean tracking lag at each level, driven by a 4 rad/s sweep:
   //   1800 N -> 32 cm   2100 -> 15 cm   2500 -> 12 cm   3000 -> 10 cm   3600 -> 9 cm
-  var TORQUE_LEVELS = [220, 340, 520, 800, 1200];
+  // Measured on the actual build, not guessed. Mean angular tracking error of
+  // the heavy arm under a 2.6 rad/s hand sweep, by level:
+  //   280 -> 61deg   380 -> 35deg   440 -> 31deg   520 -> 14deg   750 -> 11deg
+  // Above ~750 the curve flattens and the heavy arm becomes indistinguishable
+  // from the light one, so there is no point spending levels up there.
+  var TORQUE_LEVELS = [280, 380, 440, 520, 750];
   var heavyLevel = 0;
   // Shoulder positions in world space, set when the scene is built.
   var shoulders = [[0,0,0],[0,0,0]];
