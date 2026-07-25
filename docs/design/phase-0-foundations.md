@@ -3,10 +3,27 @@
 **Goal:** raise the engine ceiling far enough that the rest of the roadmap is
 possible, and produce the one number every later phase depends on.
 
-**Exit criterion:** the maximum dynamic body count that holds a stable 72 Hz
-in-headset, measured on-device with the perf HUD. Write the number into
-[`ROADMAP.md`](ROADMAP.md) when you have it. Stretch target: ≥1000 dynamic
-boxes, which is roughly what one destructible mech needs.
+**Exit criterion — met.** Measured on a Quest 3 via the browser build
+(`docs/bench.html`): **400 dynamic bodies colliding inside a 4.63 ms physics
+budget** at 72 Hz, scalar and single-threaded.
+
+That number calibrates everything else. The same 400-body scalar case costs
+1.86 ms on the CI runner, so **the Quest is ~2.5× slower than CI** for identical
+work — better than the 3× penalty that had been guessed, and now measured rather
+than assumed. Scaling the CI SIMD + 4-worker figures by that 2.5×:
+
+| bodies | est. Quest native | fits 4.63 ms? |
+|---:|---:|---|
+| 400 | ~1.6 ms | yes |
+| 800 | ~3.2 ms | yes |
+| 1600 | ~6.4 ms | no |
+
+So the native app should land around **1000–1200 awake bodies**, with two
+caveats pulling in opposite directions: part of the browser's 2.5× is
+WebAssembly overhead rather than the chip, which flatters native; and the Quest's
+cores are heterogeneous (one large, four mid, three small), so four workers will
+scale less cleanly there than on four uniform CI cores, which does not.
+Call it ~1000 until the native benchmark says otherwise.
 
 > **On 72 Hz.** Quest 3 also offers 80, 90 and 120. For a physics-heavy game a
 > rock-solid 72 beats a dropping 90 every time — inconsistent frame timing is

@@ -216,8 +216,23 @@ system, replace the per-body draw call with instancing, decouple physics from
 the render rate, and build the perf HUD.
 
 **Exit criterion is a number**, not a feature: the maximum dynamic body count
-that holds a stable frame rate in-headset. That number is an input to every
-phase below.
+that holds a stable frame rate in-headset.
+
+> ### The number: 400 measured, ~1000 expected native
+>
+> Measured on a Quest 3 through the browser build — scalar, single-threaded —
+> **400 bodies colliding inside a 4.63 ms physics budget** at 72 Hz. The same
+> case costs 1.86 ms on CI, so the Quest runs ~2.5× slower than CI for identical
+> work. Applying that to the SIMD + 4-worker figures puts the native app at
+> roughly **1000–1200 awake bodies**.
+>
+> **What it means for the design.** Phase 0.5 measured two fully-shattered mechs
+> at 200 voxels each as exactly 400 bodies — so the browser build already runs
+> that case, and native should manage ~500 voxels per mech fully shattered. But
+> full shattering is the worst case, not the normal one: with intact structure
+> merged into static chunks, the budget that actually binds is **live debris,
+> and it sits around 600–800 fragments**. That is the number Phase 2 designs
+> against, and the number a live-debris cap should enforce.
 
 ### Phase 0.5 — Worst-case spike
 Before designing anything on top: spawn the genuine worst case — two
