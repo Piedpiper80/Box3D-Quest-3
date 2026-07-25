@@ -114,3 +114,68 @@ jobs:
           name: bench-results
           path: bench-results.txt
           if-no-files-found: error
+
+  # Rebuilds docs/box3d.wasm from wasm/bridge.c and the pinned Box3D revision,
+  # and commits it back. The browser build is the only way to measure Box3D on
+  # real Quest hardware without a PC — no sideloading, no adb, no cable — so the
+  # wasm has to track bridge.c automatically rather than by hand.
+  wasm:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Zig ships a complete C compiler and wasm libc as a pip wheel, so no
+      # separate toolchain install is needed. See wasm/build.md.
+      - name: Install Zig
+        run: pip install ziglang
+
+      # Must match the GIT_TAG in app/src/main/cpp/CMakeLists.txt and
+      # bench/CMakeLists.txt, or the three builds measure different engines.
+      - name: Fetch Box3D
+        run: |
+          git clone --filter=blob:none --no-checkout \
+            https://github.com/erincatto/box3d.git box3d-src
+          cd box3d-src
+          git checkout c52908c9a907714e4d3a8a30be5272a1761158e1
+
+      - name: Build box3d.wasm
+        run: |
+          python3 -m ziglang cc -target wasm32-wasi -Oz -mexec-model=reactor \
+            -DBOX3D_DISABLE_SIMD -DNDEBUG \
+            -Ibox3d-src/include -Ibox3d-src/src \
+            box3d-src/src/*.c wasm/bridge.c \
+            -Wl,--strip-all -o docs/box3d.wasm
+          ls -l docs/box3d.wasm
+
+      - name: Sanity-check the module
+        run: node wasm/test.js
+
+      - name: Commit if changed
+        run: |
+          if git diff --quiet -- docs/box3d.wasm; then
+            echo "wasm unchanged"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/box3d.wasm
+          # [skip ci] stops this commit from triggering another run of this
+          # workflow, which would rebuild and commit forever.
+          git commit -m "Rebuild box3d.wasm from bridge.c [skip ci]"
+          git push
+
+      - name: Upload wasm
+        uses: actions/upload-artifact@v4
+        with:
+          name: box3d-wasm
+          path: docs/box3d.wasm
+          if-no-files-found: error

@@ -5,6 +5,8 @@
 //   w_step(dt)                     advance the simulation (4 sub-steps)
 //   w_spawn(px,py,pz,vx,vy,vz,h,c) throw a new cube; recycles oldest when full
 //   w_count()                      number of dynamic cubes
+//   w_reset(sleep)                 empty world + ground; sleep selects the regime
+//   w_fill(n)                      drop n cubes into a pile (benchmark scenes)
 //   w_state()                      pointer to packed floats, 9 per cube:
 //                                  [x,y,z, qx,qy,qz,qw, halfExtent, colorIdx]
 //
@@ -13,7 +15,7 @@
 
 #define WASM_EXPORT(name) __attribute__((export_name(name)))
 
-#define MAX_CUBES 96
+#define MAX_CUBES 2048
 #define TOWER_COUNT 12
 #define SCATTER_COUNT 8
 
@@ -25,6 +27,7 @@ typedef struct
 } Cube;
 
 static b3WorldId s_world;
+static int s_worldCreated = 0;
 static Cube s_cubes[MAX_CUBES];
 static int s_count = 0;
 static int s_ambient = 0;      // initial cubes are never recycled
@@ -78,6 +81,16 @@ static void addCube(float x, float y, float z, float half, float vx, float vy, f
 WASM_EXPORT("w_init")
 void w_init(void)
 {
+    // Reachable a second time when the benchmark hands the page back to the
+    // normal scene, so the previous world has to go or it leaks.
+    if (s_worldCreated)
+    {
+        b3DestroyWorld(s_world);
+    }
+    s_worldCreated = 1;
+    s_count = 0;
+    s_rng = 0x9e3779b9u;
+
     b3WorldDef wd = b3DefaultWorldDef();
     wd.gravity.x = 0.0f;
     wd.gravity.y = -9.81f;
@@ -124,6 +137,89 @@ WASM_EXPORT("w_step")
 void w_step(float dt)
 {
     b3World_Step(s_world, dt, 4);
+}
+
+// ---------------------------------------------------------------------------
+// Benchmark support
+//
+// The browser build is the only way to measure Box3D on real Quest hardware
+// without a PC: no sideloading, no adb, no cable — just a URL in the headset
+// browser. These two exports let the page build controlled scenes that mirror
+// bench/bench.c, so its numbers describe the same thing.
+//
+// Caveat worth remembering when reading the results: this build is scalar and
+// single-threaded (wasm has neither SSE2 nor Neon, and SharedArrayBuffer is
+// unavailable on plain static hosting), so it measures the engine's *slowest*
+// configuration. The native app runs SIMD with four workers, which CI measured
+// at roughly 3.6x faster. Web numbers are therefore a floor, not a ceiling.
+// ---------------------------------------------------------------------------
+
+// Tear the world down and rebuild it with only the ground.
+//
+// `enableSleep` selects the regime: with sleep on, settled bodies leave the
+// solver and cost almost nothing — the flattering number. With it off, every
+// body is solved every step whether or not it has come to rest, which is what a
+// fight looks like and the number that matters.
+WASM_EXPORT("w_reset")
+void w_reset(int enableSleep)
+{
+    // Tracked with an explicit flag rather than by inspecting the id: the id is
+    // zero-initialised at load, and a zeroed id is not guaranteed to compare
+    // equal to the library's null id.
+    if (s_worldCreated)
+    {
+        b3DestroyWorld(s_world);
+    }
+    s_worldCreated = 1;
+    s_count = 0;
+    s_ambient = 0;
+    s_nextRecycle = 0;
+    s_rng = 0x9e3779b9u; // identical scene every run, so runs are comparable
+
+    b3WorldDef wd = b3DefaultWorldDef();
+    wd.gravity.x = 0.0f;
+    wd.gravity.y = -9.81f;
+    wd.gravity.z = 0.0f;
+    wd.enableSleep = (enableSleep != 0);
+    s_world = b3CreateWorld(&wd);
+
+    b3BodyDef bd = b3DefaultBodyDef();
+    bd.type = b3_staticBody;
+    bd.position.x = 0.0f;
+    bd.position.y = -0.1f;
+    bd.position.z = 0.0f;
+    b3BodyId ground = b3CreateBody(s_world, &bd);
+
+    b3ShapeDef sd = b3DefaultShapeDef();
+    sd.baseMaterial.friction = 0.7f;
+    // Wide enough that the largest pile cannot roll off the edge and fall
+    // forever, which would quietly flatter the measurement.
+    b3BoxHull hull = b3MakeBoxHull(20.0f, 0.1f, 20.0f);
+    b3CreateHullShape(ground, &sd, &hull.base);
+}
+
+// Drop `n` cubes in a loose jittered cuboid, high enough that they fall,
+// collide and pile up. Mirrors Physics_SpawnPile and bench.c's addCubes.
+WASM_EXPORT("w_fill")
+void w_fill(int n)
+{
+    const float half = 0.10f;
+    const float spacing = half * 2.6f;
+    const int perRow = 12;
+
+    for (int i = 0; i < n && s_count < MAX_CUBES; i++)
+    {
+        const int cx = i % perRow;
+        const int cz = (i / perRow) % perRow;
+        const int cy = i / (perRow * perRow);
+
+        addCube(((float)cx - perRow * 0.5f) * spacing + frnd(-0.01f, 0.01f),
+                0.5f + (float)cy * spacing,
+                ((float)cz - perRow * 0.5f) * spacing + frnd(-0.01f, 0.01f) - 2.0f,
+                half, 0.0f, 0.0f, 0.0f, (float)(i % 6), 0.0f);
+    }
+    s_ambient = s_count;
+    s_nextRecycle = s_ambient;
 }
 
 WASM_EXPORT("w_spawn")
