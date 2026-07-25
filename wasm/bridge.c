@@ -9,10 +9,11 @@
 //   w_fill(n)                      drop n cubes into a pile (benchmark scenes)
 //   w_state()                      pointer to packed floats, 9 per cube:
 //                                  [x,y,z, qx,qy,qz,qw, halfExtent, colorIdx]
-//   w_arm_create(i,...)            piloting spike: one motor-driven arm segment
-//   w_arm_target(i,x,y,z)          point arm i at the hand
-//   w_arm_limits(i,force,torque)   retune arm i's actuator (the upgrade slider)
-//   w_arm_state()                  7 floats per arm: [x,y,z, qx,qy,qz,qw]
+//   w_torso_create(...)            piloting spike: the body the arms hang from
+//   w_arm_create(i,...)            an arm pivoting at a shoulder on the torso
+//   w_arm_target(i,x,y,z)          swing arm i toward the hand
+//   w_arm_limits(i,torque)         retune arm i's actuator (the upgrade slider)
+//   w_arm_state()                  8 floats per arm: [x,y,z, qx,qy,qz,qw, length]
 //
 // Coordinates: right-handed, Y-up, meters — matches WebXR local-floor space.
 #include <box3d/box3d.h>
@@ -263,89 +264,119 @@ int w_capacity(void)
 }
 
 // ---------------------------------------------------------------------------
-// Piloting spike — a force-limited arm chasing a target
+// Piloting spike — an arm that swings from a shoulder
 //
-// The core question of the whole design: does driving a heavy jointed arm with
-// your own hand *feel* like moving something massive? The mechanism is a motor
-// joint whose target follows the controller, with a hard cap on the force and
-// torque it may use. Under that cap the arm cannot keep up with a fast hand, so
-// mass is felt rather than displayed — and raising the cap is exactly what an
-// upgrade does.
+// The first version of this failed the only test that matters: it did not read
+// as an arm. Two boxes were tethered to invisible anchors by motor joints that
+// *translated* them toward the hand, so they drifted through space attached to
+// nothing. Correct dynamics, no embodiment — and embodiment is the whole point.
 //
-// b3MotorJoint is the right primitive, but note how it actually works: it is
-// *velocity* driven, not target driven — there is no SetLinearOffset. Each frame
-// we compute the velocity that would close the gap to the hand and hand that to
-// the motor, which then honours it only up to maxVelocityForce.
+// This version is built the other way round. An arm is a limb that pivots at a
+// shoulder on a body:
 //
-// That is a better fit than a positional target would have been. The force cap
-// is literally the upgrade stat, and the lag is not simulated or tuned — it
-// falls straight out of F = ma. A weak actuator on a heavy arm cannot reach the
-// requested velocity, so the arm trails the hand and sags under gravity.
+//   torso (static)  --spherical joint-->  upper arm (dynamic)
+//
+// The shoulder is the pivot, the segment's shape is offset so it hangs outward
+// from that pivot rather than being centred on it, and the motor applies torque
+// to swing it toward the hand. It cannot drift, because it is attached, and it
+// swings rather than slides, because that is what a joint does.
+//
+// The force limit still does the work the design needs: maxMotorTorque against
+// the segment's mass decides whether the arm can keep up, so the lag is still
+// F = ma and the upgrade is still a bigger number.
 // ---------------------------------------------------------------------------
 
-// Two arms, so the light and heavy cases can be felt in the same moment rather
-// than compared from memory. A/B in one hand each is a far sharper test than
-// cycling one arm through settings.
 #define ARM_COUNT 2
 static b3JointId s_armJoint[ARM_COUNT];
 static b3BodyId s_armBody[ARM_COUNT];
-static b3BodyId s_armAnchor[ARM_COUNT];
+static b3Vec3 s_shoulder[ARM_COUNT];
+static float s_armLength[ARM_COUNT];
 static int s_armExists[ARM_COUNT] = {0, 0};
+static b3BodyId s_torso;
+static int s_torsoExists = 0;
 
-// Create a single arm segment: a box on a motor joint, anchored to a static
-// body. `mass` scales the segment's density, `maxForce`/`maxTorque` are the
-// actuator limits the upgrade curve moves.
-WASM_EXPORT("w_arm_create")
-void w_arm_create(int i, float x, float y, float z, float halfX, float halfY, float halfZ,
-                  float density, float maxForce, float maxTorque)
+// Build the torso the arms hang from. Positioned at the player's chest so the
+// arms are theirs rather than something standing in front of them.
+WASM_EXPORT("w_torso_create")
+void w_torso_create(float x, float y, float z, float hx, float hy, float hz)
 {
-    if (i < 0 || i >= ARM_COUNT)
-    {
-        return;
-    }
-    b3BodyDef ad = b3DefaultBodyDef();
-    ad.type = b3_staticBody;
-    ad.position.x = x;
-    ad.position.y = y;
-    ad.position.z = z;
-    s_armAnchor[i] = b3CreateBody(s_world, &ad);
-
     b3BodyDef bd = b3DefaultBodyDef();
-    bd.type = b3_dynamicBody;
+    bd.type = b3_staticBody;
     bd.position.x = x;
     bd.position.y = y;
     bd.position.z = z;
+    s_torso = b3CreateBody(s_world, &bd);
+
+    b3ShapeDef sd = b3DefaultShapeDef();
+    sd.density = 1.0f;
+    b3BoxHull hull = b3MakeBoxHull(hx, hy, hz);
+    b3CreateHullShape(s_torso, &sd, &hull.base);
+    s_torsoExists = 1;
+}
+
+// One arm: a segment pivoting at (sx, sy, sz) and reaching `length` forward.
+WASM_EXPORT("w_arm_create")
+void w_arm_create(int i, float sx, float sy, float sz, float length, float thickness,
+                  float density, float maxTorque, float coneAngle)
+{
+    if (i < 0 || i >= ARM_COUNT || !s_torsoExists)
+    {
+        return;
+    }
+
+    const float half = length * 0.5f;
+    s_shoulder[i].x = sx;
+    s_shoulder[i].y = sy;
+    s_shoulder[i].z = sz;
+    s_armLength[i] = length;
+
+    // The body's origin sits at the shoulder; the shape is pushed out along -Z
+    // so the limb extends forward from the pivot instead of straddling it.
+    b3BodyDef bd = b3DefaultBodyDef();
+    bd.type = b3_dynamicBody;
+    bd.position.x = sx;
+    bd.position.y = sy;
+    bd.position.z = sz;
     s_armBody[i] = b3CreateBody(s_world, &bd);
 
     b3ShapeDef sd = b3DefaultShapeDef();
     sd.density = density;
     sd.baseMaterial.friction = 0.6f;
     sd.baseMaterial.restitution = 0.05f;
-    b3BoxHull hull = b3MakeBoxHull(halfX, halfY, halfZ);
-    b3CreateHullShape(s_armBody[i], &sd, &hull.base);
 
-    b3MotorJointDef jd = b3DefaultMotorJointDef();
-    jd.base.bodyIdA = s_armAnchor[i];
+    b3BoxHull hull = b3MakeBoxHull(thickness, thickness, half);
+    b3Transform offset = b3Transform_identity;
+    offset.p.z = -half;
+    b3CreateTransformedHullShape(s_armBody[i], &sd, &hull.base, offset);
+
+    // Pivot at the shoulder: the joint frame sits at the shoulder in world terms,
+    // which is the torso's local offset for A and the body origin for B.
+    b3SphericalJointDef jd = b3DefaultSphericalJointDef();
+    jd.base.bodyIdA = s_torso;
     jd.base.bodyIdB = s_armBody[i];
-    jd.maxVelocityForce = maxForce;
-    jd.maxVelocityTorque = maxTorque;
-    s_armJoint[i] = b3CreateMotorJoint(s_world, &jd);
+    jd.base.localFrameA = b3Transform_identity;
+    jd.base.localFrameA.p.x = sx;
+    jd.base.localFrameA.p.y = sy;
+    jd.base.localFrameA.p.z = sz;
+    jd.base.localFrameB = b3Transform_identity;
+    jd.base.collideConnected = false;
+    jd.enableMotor = true;
+    jd.maxMotorTorque = maxTorque;
+    jd.enableConeLimit = true;
+    jd.coneAngle = coneAngle;
+    s_armJoint[i] = b3CreateSphericalJoint(s_world, &jd);
 
     s_armExists[i] = 1;
 }
 
-// Gain on the position error, in units of 1/second: the velocity requested is
-// this many times the remaining distance. High enough to feel immediate on a
-// light arm, low enough not to overshoot when the actuator is strong.
-#define ARM_GAIN 14.0f
-// Ceiling on requested speed, so a large snap of the hand cannot ask for an
-// absurd velocity that the solver then fights.
-#define ARM_MAX_SPEED 12.0f
+// Gain on the angular error, in 1/second.
+#define ARM_GAIN 9.0f
+#define ARM_MAX_RATE 12.0f
 
-// Point the arm at the hand. Called every frame with the controller position.
+// Swing the arm toward the hand.
 //
-// Note this only ever *requests* — whether the arm gets there is decided by
-// maxVelocityForce against the segment's mass, which is the entire point.
+// Only a *request*: the motor honours it up to maxMotorTorque, and against a
+// heavy segment that is not far. The shortfall is the sensation being tested.
 WASM_EXPORT("w_arm_target")
 void w_arm_target(int i, float x, float y, float z)
 {
@@ -354,51 +385,66 @@ void w_arm_target(int i, float x, float y, float z)
         return;
     }
 
-    b3Pos p = b3Body_GetPosition(s_armBody[i]);
-    float dx = x - (float)p.x;
-    float dy = y - (float)p.y;
-    float dz = z - (float)p.z;
+    // Where the limb currently points: its own -Z axis in world space.
+    b3Quat q = b3Body_GetRotation(s_armBody[i]);
+    b3Matrix3 m = b3MakeMatrixFromQuat(q);
+    float dx = -m.cz.x, dy = -m.cz.y, dz = -m.cz.z;
 
-    float vx = dx * ARM_GAIN;
-    float vy = dy * ARM_GAIN;
-    float vz = dz * ARM_GAIN;
-
-    const float speedSq = vx * vx + vy * vy + vz * vz;
-    if (speedSq > ARM_MAX_SPEED * ARM_MAX_SPEED)
+    // Where it should point: from shoulder toward the hand.
+    float tx = x - s_shoulder[i].x;
+    float ty = y - s_shoulder[i].y;
+    float tz = z - s_shoulder[i].z;
+    float tl = __builtin_sqrtf(tx*tx + ty*ty + tz*tz);
+    if (tl < 1e-4f)
     {
-        // Rough inverse square root is plenty here; this only clamps a request.
-        float inv = ARM_MAX_SPEED / __builtin_sqrtf(speedSq);
-        vx *= inv; vy *= inv; vz *= inv;
+        return;
     }
+    tx /= tl; ty /= tl; tz /= tl;
 
-    b3Vec3 v;
-    v.x = vx; v.y = vy; v.z = vz;
-    b3MotorJoint_SetLinearVelocity(s_armJoint[i], v);
+    // Rotation carrying the current direction onto the target: axis is their
+    // cross product, angle is the arc between them.
+    float ax = dy*tz - dz*ty;
+    float ay = dz*tx - dx*tz;
+    float az = dx*ty - dy*tx;
+    float sinA = __builtin_sqrtf(ax*ax + ay*ay + az*az);
+    float cosA = dx*tx + dy*ty + dz*tz;
+    float angle = __builtin_atan2f(sinA, cosA);
+
+    b3Vec3 w;
+    if (sinA < 1e-5f)
+    {
+        w.x = 0.0f; w.y = 0.0f; w.z = 0.0f;
+    }
+    else
+    {
+        float rate = angle * ARM_GAIN;
+        if (rate > ARM_MAX_RATE) rate = ARM_MAX_RATE;
+        float k = rate / sinA;
+        w.x = ax * k; w.y = ay * k; w.z = az * k;
+    }
+    b3SphericalJoint_SetMotorVelocity(s_armJoint[i], w);
 }
 
-// Retune the actuator limits at runtime — this is the upgrade slider, and the
-// whole point of the spike is feeling the difference as it moves.
+// Retune the actuator — the upgrade slider.
 WASM_EXPORT("w_arm_limits")
-void w_arm_limits(int i, float maxForce, float maxTorque)
+void w_arm_limits(int i, float maxTorque)
 {
     if (i < 0 || i >= ARM_COUNT || !s_armExists[i])
     {
         return;
     }
-    b3MotorJoint_SetMaxVelocityForce(s_armJoint[i], maxForce);
-    b3MotorJoint_SetMaxVelocityTorque(s_armJoint[i], maxTorque);
+    b3SphericalJoint_SetMaxMotorTorque(s_armJoint[i], maxTorque);
 }
 
-// Packed 7 floats per arm: position then rotation quaternion. Where the arm
-// actually ended up, which under load is *not* where it was asked to go — that
-// lag is the sensation being tested.
+// Per arm: shoulder position, rotation quaternion, and length. The renderer
+// draws the segment hanging off the shoulder along the rotated -Z.
 WASM_EXPORT("w_arm_state")
 float* w_arm_state(void)
 {
-    static float out[ARM_COUNT * 7];
+    static float out[ARM_COUNT * 8];
     for (int i = 0; i < ARM_COUNT; i++)
     {
-        float* o = &out[i * 7];
+        float* o = &out[i * 8];
         if (!s_armExists[i])
         {
             continue;
@@ -407,6 +453,7 @@ float* w_arm_state(void)
         b3Quat q = b3Body_GetRotation(s_armBody[i]);
         o[0] = (float)p.x; o[1] = (float)p.y; o[2] = (float)p.z;
         o[3] = q.v.x; o[4] = q.v.y; o[5] = q.v.z; o[6] = q.s;
+        o[7] = s_armLength[i];
     }
     return out;
 }
