@@ -21,21 +21,26 @@ more in it.
 
 ## Where things stand
 
-| Constraint | Current | Location |
-|---|---|---|
-| Box3D revision | `c52908c9` — **16 commits ahead of v0.1.0** | `app/src/main/cpp/CMakeLists.txt` |
-| SIMD | disabled | `CMakeLists.txt` — `BOX3D_DISABLE_SIMD ON` |
-| Threading | none — `workerCount` left at default | `physics.cpp:114-118` |
-| Draw calls | **one per body per eye** | `main.cpp:628-633` |
-| Body cap | 400 | `physics.cpp:35` |
-| Render item cap | 512 | `main.cpp:54` |
-| Physics timestep | variable, tied to frame rate | `physics.cpp:164` |
-| Backface culling | disabled | `main.cpp:621` |
-| Web build cap | 96 cubes, scalar, single-threaded | `wasm/bridge.c` |
+| Constraint | At the start of Phase 0 | Now | Step |
+|---|---|---|---|
+| Box3D revision | `c52908c9` | unchanged — already 16 commits ahead of v0.1.0 | 1 |
+| Draw calls | **one per body per eye** | one instanced call per eye | 4 |
+| Body cap | 400, duplicated as a 512 render cap | 4096, single shared constant | 4 |
+| Physics timestep | variable, tied to frame rate | fixed 72 Hz with an accumulator | 3 |
+| SIMD | disabled | enabled | 5 |
+| Threading | none | 4 workers | 6 |
+| Backface culling | disabled | enabled, `GL_CW` | 7 |
+| Perf HUD | none | not yet | 2 |
+| On-device benchmark | none | not yet | 2b |
+| Headless benchmark | none | `bench/`, runs in CI | 2c |
+| Web build cap | 96 cubes, scalar, single-threaded | unchanged, deliberately | — |
 
-Every one of these is a hard ceiling on the roadmap. They come down in the order
-below — each step is independently committable and testable, so a step that goes
-wrong can be reverted without losing the others.
+The web build stays scalar and single-threaded. That divergence is expected — it
+runs on a different engine configuration and its body budget must not be
+confused with the native one.
+
+Each step is independently committable and revertible, so a step that goes wrong
+does not take the others with it.
 
 ---
 
@@ -209,22 +214,59 @@ regardless of body count, and the HUD confirms it.
 
 ## Step 5 — Enable SIMD
 
-Flip `BOX3D_DISABLE_SIMD` to `OFF`. Box3D uses Neon on arm64, and the comment in
-`CMakeLists.txt` already anticipates this flip once the app is known to run.
+**Done.** `BOX3D_DISABLE_SIMD` is `OFF`. See the measurements below.
 
-Keep it as its own commit — if Neon turns out to have build or precision trouble
-on the NDK toolchain, this needs to be revertible without taking Steps 1–4 with it.
+## Measured: what SIMD and threading are actually worth
 
-**Done when:** physics step time drops measurably on the HUD with identical
-simulation behaviour.
+From the Step 2c benchmark in CI (4-core x86 runner, 20 cm cubes in a
+contact-rich pile, mean step time in ms, bodies awake and colliding):
+
+| bodies | scalar, 1 worker | SIMD, 1 | SIMD, 2 | SIMD, 4 |
+|---:|---:|---:|---:|---:|
+| 400 | 1.86 | 1.09 | 0.75 | **0.66** |
+| 800 | 4.24 | 2.52 | 1.54 | **1.31** |
+| 1600 | 8.97 | 5.63 | 3.13 | **2.57** |
+| 3200 | 20.04 | 14.06 | 7.07 | **5.53** |
+
+- **SIMD: 1.4–1.9×.** Measured on x86 SSE2; arm64 uses Neon so the figure will
+  differ, but not the direction.
+- **Threading: up to 2.5×**, and 1→2 workers scales at 1.99× — near perfect. The
+  2→4 gain is modest here only because the runner has 4 cores total.
+- **Combined: 3.6×** at 3200 bodies, from two lines of configuration.
+- **Below ~100 bodies threading is a net loss** — synchronisation costs more than
+  it saves. Irrelevant for real scenes, but don't benchmark the 12-cube tower and
+  conclude threading is broken.
+
+Two results that matter more than the speedup:
+
+**Scaling is mildly superlinear, not quadratic.** Per-body cost drifts from
+3.9 µs to 6.3 µs across a 64× increase in body count — roughly O(n^1.1), as
+contact counts rise with pile depth. Had it been quadratic the destructible-mech
+design would have been unworkable at any optimisation level.
+
+**Sleeping bodies are ~1000× cheaper than awake ones.** Settled bodies reach a
+median step time of 0.4 µs against roughly 4 ms awake. This is the strongest
+evidence yet that Phase 2's *demotion* step — returning resting debris to the
+static merged chunk — is not housekeeping but the single highest-value
+optimisation in the voxel system. Above ~800 bodies the sleeping and awake
+figures converge, because a pile that large never fully settles within the
+measurement window; that is itself worth remembering when tuning sleep
+thresholds later.
+
+> **Estimating Quest 3 from this is guesswork, deliberately unresolved.** CI runs
+> server cores; the XR2 Gen 2 is a mobile part that also throttles in a headset.
+> A 3× penalty is a reasonable guess, which would put roughly 800–1000 awake
+> bodies inside a ~4 ms physics budget — coincidentally about one destructible
+> mech. Treat that as a hypothesis for Step 8 to confirm or destroy, not a
+> number to design against.
 
 ## Step 6 — Multithreading
 
 The API is confirmed (see Step 1): `b3WorldDef.workerCount`, plus optional
 `enqueueTask` / `finishTask` / `userTaskContext` callbacks.
 
-**Try the one-line version first.** With the callbacks left null and
-`workerCount > 1`, Box3D spawns its own internal threads. That may be the whole
+**Done — it was the one-line version.** With the callbacks left null and
+`workerCount > 1`, Box3D spawns its own internal threads, which is the whole
 step. Only build a thread pool and wire the callbacks if you need to share
 workers with other subsystems or control thread priority and affinity — which on
 Quest is a real possibility eventually, but not a Phase 0 problem.
