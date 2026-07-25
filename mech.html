@@ -229,8 +229,9 @@
     .catch(function (e) { setStatus("Could not load the engine: " + e.message, true); });
 
   function buildWorld(hx, hz) {
+    // headY is set from the live pose each frame; use it here too.
     E.w_reset(1, floorY);
-    E.w_mech_create(hx, floorY + 1.05, hz, UPPER_LEN, FORE_LEN, THICK,
+    E.w_mech_create(hx, chestY(), hz, UPPER_LEN, FORE_LEN, THICK,
                     DENSITIES[level], SHOULDER_TORQUE, ELBOW_TORQUE, CONE);
     var L = E.w_mech_lengths() >>> 2, lf = new Float32Array(E.memory.buffer);
     segLen = [lf[L], lf[L + 1]];
@@ -366,7 +367,8 @@
     prevTrig = trigCount > 0;
 
     if (E && built) {
-      E.w_mech_stand(hp.x, floorY + 1.05, hp.z);
+      headY = hp.y;
+      E.w_mech_stand(hp.x, chestY(), hp.z);
       E.w_mech_apply();
       E.w_step(1 / 72);
 
