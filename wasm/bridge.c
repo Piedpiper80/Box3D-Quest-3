@@ -504,14 +504,16 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
     b3ShapeDef tsd = b3DefaultShapeDef();
     tsd.density = density * 1.5f;   // the body outweighs the arms
     tsd.baseMaterial.friction = 0.6f;
-    b3BoxHull thull = b3MakeBoxHull(0.26f, 0.30f, 0.16f);
+    // Deliberately small. An earlier version was 0.52 x 0.60 x 0.32 m centred at
+    // a fixed height, which swallowed the player's head.
+    b3BoxHull thull = b3MakeBoxHull(0.20f, 0.22f, 0.13f);
     b3CreateHullShape(s_mTorso, &tsd, &thull.base);
 
     for (int i = 0; i < MECH_ARMS; i++)
     {
         const float side = (i == 0) ? -1.0f : 1.0f;
-        const float sx = side * 0.26f;   // shoulder, in torso local space
-        const float sy = 0.20f;
+        const float sx = side * 0.22f;   // shoulder, in torso local space
+        const float sy = 0.17f;
 
         // --- upper arm ---
         b3BodyDef ud = b3DefaultBodyDef();
