@@ -398,6 +398,9 @@
       lines.push("arm material " + (level+1) + " of " + DENSITIES.length +
                  "  (density " + DENSITIES[level] + ")");
     } else if (E && floorY !== null && !built) {
+      // Take the head height before building, or the first frame constructs the
+      // machine around a guess and only corrects on the next one.
+      headY = hp.y;
       buildWorld(hp.x, hp.z);
     }
 
