@@ -49,7 +49,9 @@
       <li>Press <strong>A</strong> to change the right-hand weight: <strong>3, 10, 27, 68, 152 kg</strong>.
           The markers to your right show which one. Heavier trails further, and at the top end it cannot
           keep up with your reach at all — sweep your arm and watch it fall short.</li>
-      <li>Knock the blocks over with it.</li>
+      <li>Press <strong>B</strong> to change damping — the blue markers on your left. Lower damping
+          overshoots and carries momentum through a hit; higher is precise but arrives with no punch.</li>
+      <li>Knock the blocks over with it. Swing fully and see which damping hits hardest.</li>
       <li><strong>Setting the floor:</strong> the grid starts <strong>amber</strong> and follows your lower
           controller. Rest that controller on the actual ground and <strong>pull the trigger</strong>. The grid
           turns grey and stays there. It is remembered, so you only do this once.</li>
@@ -161,10 +163,17 @@
   // damping scaled per mass to keep each controllable.
   //   3kg -> 5.5cm lag, full reach     27kg -> 21cm lag, full reach
   //  68kg -> 29.5cm lag, 27cm reach   152kg -> 28.6cm lag, 13.5cm reach
-  var STIFFNESS = 500, ZETA = 0.6;
+  var STIFFNESS = 500;
+  // Damping is the control-versus-punch dial. High damping settles onto your
+  // hand, which is precise but arrives with no momentum — the block is
+  // decelerating at the moment of impact, which is why a full swing lacked
+  // punch. Low damping overshoots and carries through the hit.
+  var ZETAS = [0.15, 0.3, 0.6, 0.9];
+  var zetaLevel = 2;
+  var ZETA = ZETAS[zetaLevel];
   var DENSITIES = [900, 3000, 8000, 20000, 45000];
   var level = 1;
-  var prevA = false;
+  var prevA = false, prevB = false;
   var HAND_HALF = 0.075;
   var GRAV_ON = false;
 
@@ -205,7 +214,7 @@
       E.w_hand_create(i, hx + (i === 0 ? -0.25 : 0.25), floorY + 1.0, hz - 0.4,
                       HAND_HALF, dens, STIFFNESS, 1, 1e6);
       var m = E.w_hand_mass(i);
-      E.w_hand_limits(i, STIFFNESS, 2 * ZETA * Math.sqrt(STIFFNESS * m), 1e6);
+      E.w_hand_limits(i, STIFFNESS, 2 * ZETAS[zetaLevel] * Math.sqrt(STIFFNESS * m), 1e6);
     }
     // A few blocks to knock over, in reach.
     for (var b = 0; b < 6; b++) {
@@ -339,6 +348,19 @@
           built = false;
         }
         prevA = aDown;
+
+        // B changes damping live — no rebuild needed.
+        if (gp.buttons.length > 5) {
+          var bDown = gp.buttons[5].pressed;
+          if (bDown && !prevB && E && built) {
+            zetaLevel = (zetaLevel + 1) % ZETAS.length;
+            for (var Z = 0; Z < 2; Z++) {
+              var mz = E.w_hand_mass(Z);
+              E.w_hand_limits(Z, STIFFNESS, 2 * ZETAS[zetaLevel] * Math.sqrt(STIFFNESS * mz), 1e6);
+            }
+          }
+          prevB = bDown;
+        }
       }
 
       lines.push("  " + label + ": x " + pos.x.toFixed(2) + " y " + pos.y.toFixed(2) +
@@ -388,6 +410,13 @@
           c: mI <= level ? [0.98,0.72,0.25] : [0.20,0.23,0.30]
         });
       }
+      for (var zI = 0; zI < ZETAS.length; zI++) {
+        items.push({
+          m: trs([hp.x - 0.6, floorY + 1.1 + zI * 0.07, hp.z - 0.5], [0,0,0,1], 0.02),
+          c: zI <= zetaLevel ? [0.45,0.80,0.95] : [0.20,0.23,0.30]
+        });
+      }
+      lines.push("damping " + ZETAS[zetaLevel] + "  (B changes it; lower = more overshoot and punch)");
       lines.push("right hand weight class " + (level + 1) + " of " + DENSITIES.length +
                  "  (" + E.w_hand_mass(1).toFixed(1) + " kg vs left " +
                  E.w_hand_mass(0).toFixed(1) + " kg)");
