@@ -9,6 +9,10 @@
 //   w_fill(n)                      drop n cubes into a pile (benchmark scenes)
 //   w_state()                      pointer to packed floats, 9 per cube:
 //                                  [x,y,z, qx,qy,qz,qw, halfExtent, colorIdx]
+//   w_hand_create(i,...)           follow test: one free body chasing your hand
+//   w_hand_target(i,x,y,z)         drive body i toward the controller
+//   w_hand_limits(i,force)         retune body i's actuator
+//   w_hand_state()                 8 floats per body: [x,y,z, qx,qy,qz,qw, half]
 //   w_torso_create(...)            piloting spike: the body the arms hang from
 //   w_torso_update(x,y,z,yaw)      move the torso with the head, every frame
 //   w_arm_create(i,...)            an arm pivoting at a shoulder on the torso
@@ -270,6 +274,114 @@ WASM_EXPORT("w_capacity")
 int w_capacity(void)
 {
     return MAX_CUBES;
+}
+
+// ---------------------------------------------------------------------------
+// Follow test — one physics body chasing your hand
+//
+// The layer below the arm, and the one that should have been proven first. No
+// shoulder, no joint chain: a single free box driven toward the controller by a
+// motor with a force ceiling. If this feels wrong, nothing built on top of it
+// could feel right, and the arm rig was never the problem.
+//
+// Uses the same motor-joint mechanism the arm does — velocity request, capped by
+// maxVelocityForce — so what is learned here transfers directly.
+// ---------------------------------------------------------------------------
+
+#define HAND_COUNT 2
+static b3JointId s_handJoint[HAND_COUNT];
+static b3BodyId s_handBody[HAND_COUNT];
+static b3BodyId s_handAnchor[HAND_COUNT];
+static float s_handHalf[HAND_COUNT];
+static int s_handExists[HAND_COUNT] = {0, 0};
+
+WASM_EXPORT("w_hand_create")
+void w_hand_create(int i, float x, float y, float z, float half, float density,
+                   float maxForce, float maxTorque)
+{
+    if (i < 0 || i >= HAND_COUNT)
+    {
+        return;
+    }
+    s_handHalf[i] = half;
+
+    b3BodyDef ad = b3DefaultBodyDef();
+    ad.type = b3_staticBody;
+    ad.position.x = x; ad.position.y = y; ad.position.z = z;
+    s_handAnchor[i] = b3CreateBody(s_world, &ad);
+
+    b3BodyDef bd = b3DefaultBodyDef();
+    bd.type = b3_dynamicBody;
+    bd.position.x = x; bd.position.y = y; bd.position.z = z;
+    s_handBody[i] = b3CreateBody(s_world, &bd);
+
+    b3ShapeDef sd = b3DefaultShapeDef();
+    sd.density = density;
+    sd.baseMaterial.friction = 0.6f;
+    sd.baseMaterial.restitution = 0.05f;
+    b3BoxHull hull = b3MakeBoxHull(half, half, half);
+    b3CreateHullShape(s_handBody[i], &sd, &hull.base);
+
+    b3MotorJointDef jd = b3DefaultMotorJointDef();
+    jd.base.bodyIdA = s_handAnchor[i];
+    jd.base.bodyIdB = s_handBody[i];
+    jd.maxVelocityForce = maxForce;
+    jd.maxVelocityTorque = maxTorque;
+    s_handJoint[i] = b3CreateMotorJoint(s_world, &jd);
+
+    s_handExists[i] = 1;
+}
+
+#define HAND_GAIN 16.0f
+#define HAND_MAX_SPEED 14.0f
+
+WASM_EXPORT("w_hand_target")
+void w_hand_target(int i, float x, float y, float z)
+{
+    if (i < 0 || i >= HAND_COUNT || !s_handExists[i])
+    {
+        return;
+    }
+    b3Pos p = b3Body_GetPosition(s_handBody[i]);
+    float vx = (x - (float)p.x) * HAND_GAIN;
+    float vy = (y - (float)p.y) * HAND_GAIN;
+    float vz = (z - (float)p.z) * HAND_GAIN;
+    float sq = vx*vx + vy*vy + vz*vz;
+    if (sq > HAND_MAX_SPEED * HAND_MAX_SPEED)
+    {
+        float k = HAND_MAX_SPEED / __builtin_sqrtf(sq);
+        vx *= k; vy *= k; vz *= k;
+    }
+    b3Vec3 v; v.x = vx; v.y = vy; v.z = vz;
+    b3MotorJoint_SetLinearVelocity(s_handJoint[i], v);
+}
+
+WASM_EXPORT("w_hand_limits")
+void w_hand_limits(int i, float maxForce)
+{
+    if (i < 0 || i >= HAND_COUNT || !s_handExists[i])
+    {
+        return;
+    }
+    b3MotorJoint_SetMaxVelocityForce(s_handJoint[i], maxForce);
+}
+
+// 8 floats per hand: position, rotation, half extent.
+WASM_EXPORT("w_hand_state")
+float* w_hand_state(void)
+{
+    static float out[HAND_COUNT * 8];
+    for (int i = 0; i < HAND_COUNT; i++)
+    {
+        float* o = &out[i * 8];
+        if (!s_handExists[i]) continue;
+        b3Pos p = b3Body_GetPosition(s_handBody[i]);
+        b3Quat q = b3Body_GetRotation(s_handBody[i]);
+        o[0] = (float)p.x; o[1] = (float)p.y; o[2] = (float)p.z;
+        o[3] = q.v.x; o[4] = q.v.y; o[5] = q.v.z; o[6] = q.s;
+        o[7] = s_handHalf[i];
+    }
+    return out;
 }
 
 // ---------------------------------------------------------------------------

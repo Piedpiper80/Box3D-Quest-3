@@ -102,6 +102,13 @@ are the house rules; deviate only with a stated reason.
 | **Body rig** | Derived from live head tracking every frame, never placed once and frozen |
 | **Comfort** | Vignette during artificial locomotion; never move the player's view without input |
 | **Hand tracking** | Pinch substitutes for trigger; anything gated on a button that hands lack must degrade to "always on" rather than to "broken" |
+| **Floor height** | Set by the player — rest a controller on the ground and pull the trigger — then remembered. Never inferred from the runtime |
+| **Destructive actions** | Never on a gameplay input. Calibration, resets and anything that discards state live in a menu |
+
+The destructive-action rule was learned the hard way too: floor recalibration was
+briefly bound to holding both triggers, which is a two-handed punch — precisely
+what a mech pilot does constantly. Any gesture reachable in a fight will happen
+in a fight.
 
 The body-rig rule is worth stating plainly because it was learned the hard way:
 a rig placed once from a head pose leaves the player behind the moment they lean
