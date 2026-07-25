@@ -15,6 +15,7 @@
 //   w_hand_apply()                 apply the follow forces (call before w_step)
 //   w_hand_state()                 8 floats per body: [x,y,z, qx,qy,qz,qw, half]
 //   w_mech_create(...)             the real machine: torso + two jointed arms
+//                                  last arg is half the shoulder width, measured
 //   w_mech_stand(x,y,z)            where the machine tries to stand
 //   w_mech_hand(i,x,y,z,active,q)  haul attachment i to the controller, and aim it
 //   w_mech_apply()                 apply leg + arm forces (call before w_step)
@@ -483,6 +484,8 @@ static b3Quat s_mToolAim[MECH_ARMS];
 static b3JointId s_mShoulder[MECH_ARMS];
 static b3JointId s_mElbow[MECH_ARMS];
 static b3Vec3 s_mWrist[MECH_ARMS];      // wrist offset in forearm local space
+// How far the mount can turn away from the forearm before the joint stops it.
+static float s_mWristCone = 1.35f;
 static b3Vec3 s_mHandTarget[MECH_ARMS];
 static int s_mHandActive[MECH_ARMS] = {0, 0};
 static int s_mExists = 0;
@@ -501,8 +504,13 @@ static float s_mUpperLen, s_mForeLen, s_mToolHalf;
 WASM_EXPORT("w_mech_create")
 void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
                    float thickness, float density, float shoulderTorque,
-                   float elbowTorque, float coneAngle)
+                   float elbowTorque, float coneAngle, float shoulderHalf)
 {
+    // How far out the shoulders sit. Measured off the player's own arm span
+    // rather than assumed, so the machine's joints line up with theirs.
+    if (!(shoulderHalf > 0.06f)) shoulderHalf = 0.20f;
+    if (shoulderHalf > 0.40f) shoulderHalf = 0.40f;
+
     // Box3D asserts a spherical cone limit of at most a quarter turn, and this
     // is built with NDEBUG so that assert is gone. Handing it 2.2 rad, as this
     // did, sails straight past without complaint and leaves the cone geometry
@@ -530,13 +538,14 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
     tsd.baseMaterial.friction = 0.6f;
     // Deliberately small. An earlier version was 0.52 x 0.60 x 0.32 m centred at
     // a fixed height, which swallowed the player's head.
-    b3BoxHull thull = b3MakeBoxHull(0.20f, 0.22f, 0.13f);
+    // Torso spans the shoulders, so it widens with the player too.
+    b3BoxHull thull = b3MakeBoxHull(shoulderHalf * 0.92f, 0.22f, 0.13f);
     b3CreateHullShape(s_mTorso, &tsd, &thull.base);
 
     for (int i = 0; i < MECH_ARMS; i++)
     {
         const float side = (i == 0) ? -1.0f : 1.0f;
-        const float sx = side * 0.22f;   // shoulder, in torso local space
+        const float sx = side * shoulderHalf;   // shoulder, in torso local space
         const float sy = 0.17f;
 
         // --- upper arm ---
@@ -651,13 +660,20 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
         kd.type = b3_dynamicBody;
         kd.position.x = x + sx; kd.position.y = y + sy;
         kd.position.z = z - upperLen - foreLen;
-        kd.angularDamping = 0.25f;
+        // The pull acts on the far face of this block, which torques it hard
+        // against the wrist's cone limit — up to a few hundred newton metres.
+        // Riding a hard stop with almost no rotational damping is what made the
+        // mount buzz. This is the mount's own bearing friction.
+        kd.angularDamping = 6.0f;
         s_mTool[i] = b3CreateBody(s_world, &kd);
 
         b3ShapeDef ksd = b3DefaultShapeDef();
         ksd.density = density;
         ksd.baseMaterial.friction = 0.8f;
-        const float toolHalf = thickness * 1.3f;
+        // The mount is part of the arm's reach, so an oversized block here
+        // lengthens the whole limb. At 1.3x thickness it added 18 cm to an arm
+        // that was already twice as long as it should be.
+        const float toolHalf = thickness * 1.0f;
         s_mToolHalf = toolHalf;
         b3BoxHull khull = b3MakeBoxHull(toolHalf, toolHalf, toolHalf);
         b3Transform koff = b3Transform_identity;
@@ -674,7 +690,12 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
         wj.base.localFrameB = b3Transform_identity;
         wj.base.collideConnected = false;
         wj.enableConeLimit = true;
-        wj.coneAngle = 1.1f;
+        // Measured pinned against this limit in every pose while the aim
+        // controller kept pushing past it. A controller shoving against a hard
+        // constraint chatters, which is the attachment buzzing. Widened so the
+        // wrist has somewhere to go; the aim is also clamped to what the wrist
+        // can actually reach, below, so the two stop fighting.
+        wj.coneAngle = s_mWristCone;
         // No motor here. A spherical motor with a zero target velocity is a
         // brake: it was holding the mount still with several hundred newton
         // metres and swamping the aim torque entirely, so the attachment sat at
@@ -743,13 +764,29 @@ static float s_mPullZeta = 1.0f;
 
 // How quickly the attachment swings round to the angle you are pointing, and
 // how hard it will hold that angle against a knock.
-static float s_mAimPeriod = 0.25f;    // seconds
+static float s_mAimPeriod = 0.35f;    // seconds — softened; 0.25 buzzed
 static float s_mAimZeta = 1.0f;
 static float s_mAimMax = 12.0f;       // N m per kg of attachment
 
 // How much of the arm's own weight the machine carries. 1 is all of it, which
 // is what a powered joint does; 0 is a dead limb hanging off a shoulder.
 static float s_mArmLift = 1.0f;
+
+
+// Where the elbow sits, and how firmly it stays there.
+//
+// A ball shoulder with the arm pulled by its wrist is one degree of freedom
+// short of determined: for any hand position the elbow can sit anywhere on a
+// circle around the shoulder-to-wrist line, and nothing in the physics picks a
+// spot. Measured, it sat at 167 degrees — very nearly straight up, a chicken
+// wing — and wandered over 21 degrees while the hand moved. That is the "elbows
+// bend at weird angles at weird times".
+//
+// Real arms resolve this with muscle, not with the skeleton: your elbow stays
+// low because something holds it low. This is that something.
+static float s_mSwivelPeriod = 0.35f;
+static float s_mSwivelZeta = 1.0f;
+static float s_mSwivelMax = 40.0f;    // N m per kg of arm
 
 // How the machine holds itself up, as a response rather than as raw gains.
 //
@@ -835,6 +872,12 @@ WASM_EXPORT("w_mech_aim")
 void w_mech_aim(float period, float zeta, float maxTorquePerKg)
 {
     s_mAimPeriod = period; s_mAimZeta = zeta; s_mAimMax = maxTorquePerKg;
+}
+
+WASM_EXPORT("w_mech_swivel")
+void w_mech_swivel(float period, float zeta, float maxTorquePerKg)
+{
+    s_mSwivelPeriod = period; s_mSwivelZeta = zeta; s_mSwivelMax = maxTorquePerKg;
 }
 
 WASM_EXPORT("w_mech_lift")
@@ -976,6 +1019,77 @@ void w_mech_apply(void)
             }
         }
 
+        // Hold the elbow down.
+        //
+        // Rotates the whole limb about its own shoulder-to-wrist line, which
+        // moves the elbow around that circle without disturbing where the hand
+        // ends up — the one direction the hand's pull cannot control. The
+        // reaction goes into the torso, so this adds no free momentum.
+        {
+            b3Pos sp = b3Body_GetPosition(s_mUpper[i]);   // shoulder
+            b3Pos ep = b3Body_GetPosition(s_mFore[i]);    // elbow
+            b3Pos wp = b3Body_GetPosition(s_mTool[i]);    // wrist
+
+            float ax[3] = { (float)(wp.x - sp.x), (float)(wp.y - sp.y), (float)(wp.z - sp.z) };
+            float axLen = __builtin_sqrtf(ax[0]*ax[0] + ax[1]*ax[1] + ax[2]*ax[2]);
+
+            // With the arm folded right up the axis is too short to be a
+            // meaningful direction, and the swivel is meaningless anyway.
+            if (axLen > 0.12f)
+            {
+                ax[0] /= axLen; ax[1] /= axLen; ax[2] /= axLen;
+
+                float off[3] = { (float)(ep.x - sp.x), (float)(ep.y - sp.y), (float)(ep.z - sp.z) };
+                const float offAx = off[0]*ax[0] + off[1]*ax[1] + off[2]*ax[2];
+                float u[3] = { off[0] - ax[0]*offAx, off[1] - ax[1]*offAx, off[2] - ax[2]*offAx };
+                const float uLen = __builtin_sqrtf(u[0]*u[0] + u[1]*u[1] + u[2]*u[2]);
+
+                // Straight down, with the component along the arm removed:
+                // down - ax * (down . ax), where down is (0,-1,0) so the dot
+                // product is just -ax[1].
+                float d[3] = { ax[0]*ax[1], -1.0f + ax[1]*ax[1], ax[2]*ax[1] };
+                const float dLen = __builtin_sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+
+                if (uLen > 0.02f && dLen > 0.02f)
+                {
+                    u[0] /= uLen; u[1] /= uLen; u[2] /= uLen;
+                    d[0] /= dLen; d[1] /= dLen; d[2] /= dLen;
+
+                    // Signed angle from where the elbow is to where it should be.
+                    const float cosT = u[0]*d[0] + u[1]*d[1] + u[2]*d[2];
+                    const float crx = u[1]*d[2] - u[2]*d[1];
+                    const float cry = u[2]*d[0] - u[0]*d[2];
+                    const float crz = u[0]*d[1] - u[1]*d[0];
+                    const float sinT = crx*ax[0] + cry*ax[1] + crz*ax[2];
+                    const float theta = __builtin_atan2f(sinT, cosT);
+
+                    // Inertia of the limb about that line, so the gains mean
+                    // the same thing at every weight class.
+                    const float rArm = uLen;
+                    float I = (b3Body_GetMass(s_mFore[i]) + b3Body_GetMass(s_mTool[i])) * rArm * rArm;
+                    if (I < 0.02f) I = 0.02f;
+
+                    b3Vec3 wU = b3Body_GetAngularVelocity(s_mUpper[i]);
+                    b3Vec3 wT = b3Body_GetAngularVelocity(s_mTorso);
+                    const float spin = (wU.x - wT.x)*ax[0] + (wU.y - wT.y)*ax[1] + (wU.z - wT.z)*ax[2];
+
+                    const float w0 = 6.2831853f / s_mSwivelPeriod;
+                    float tq = I * w0 * w0 * theta - 2.0f * s_mSwivelZeta * I * w0 * spin;
+
+                    const float cap = s_mSwivelMax * (b3Body_GetMass(s_mUpper[i])
+                                    + b3Body_GetMass(s_mFore[i]) + b3Body_GetMass(s_mTool[i]));
+                    if (tq > cap) tq = cap;
+                    if (tq < -cap) tq = -cap;
+
+                    b3Vec3 t;
+                    t.x = ax[0]*tq; t.y = ax[1]*tq; t.z = ax[2]*tq;
+                    b3Body_ApplyTorque(s_mUpper[i], t, true);
+                    t.x = -t.x; t.y = -t.y; t.z = -t.z;
+                    b3Body_ApplyTorque(s_mTorso, t, true);
+                }
+            }
+        }
+
         if (!s_mHandActive[i]) continue;
 
         b3Pos bp = b3Body_GetPosition(s_mTool[i]);
@@ -987,11 +1101,24 @@ void w_mech_apply(void)
         float wy = (float)bp.y + m.cz.y * s_mWrist[i].z;
         float wz = (float)bp.z + m.cz.z * s_mWrist[i].z;
 
-        // What the pull actually has to accelerate is the whole arm, not just
-        // the block on the end of it.
-        const float armMass = b3Body_GetMass(s_mUpper[i]) + b3Body_GetMass(s_mFore[i])
-                            + b3Body_GetMass(s_mTool[i]);
-        const float pullC = 2.0f * s_mPullZeta * __builtin_sqrtf(s_mPullK * armMass);
+        // Damping is sized to the body the force is applied to, not to the arm
+        // behind it.
+        //
+        // It used to come from the whole arm's mass while acting on the mount
+        // alone. That was survivable while the mount was a 5 kg block, and blew
+        // up the moment it was made a sensible size: at 0.26 kg the damping
+        // came out about eight times what an explicit step can take, and the
+        // arm flung itself up and backwards over the shoulder. An explicit
+        // damper is unconditionally unstable past c*h/m = 2, so the ceiling
+        // below is a real limit and not a tuning knob.
+        const float toolMass = b3Body_GetMass(s_mTool[i]);
+        float pullC = 2.0f * s_mPullZeta * __builtin_sqrtf(s_mPullK * toolMass);
+
+        // 72 Hz is what the page and the tests both run at; the margin leaves
+        // room for a frame that arrives late.
+        const float stepH = 1.0f / 72.0f;
+        const float cMax = 0.9f * toolMass / stepH;
+        if (pullC > cMax) pullC = cMax;
 
         b3Vec3 v = b3Body_GetLinearVelocity(s_mTool[i]);
         float fx = (s_mHandTarget[i].x - wx) * s_mPullK - v.x * pullC;
@@ -1015,6 +1142,44 @@ void w_mech_apply(void)
             // Shortest rotation from current to target, as a quaternion.
             b3Quat cur = b3Body_GetRotation(s_mTool[i]);
             b3Quat tgt = s_mToolAim[i];
+
+            // Never ask the wrist for an angle it cannot hold.
+            //
+            // The target is your controller's orientation, and it is often well
+            // outside the wrist's cone — measured, the joint was jammed hard
+            // against that limit in every single frame while the aim kept
+            // pushing further. A controller shoving at a hard constraint is a
+            // fight neither side wins, and it chatters: that is the mount
+            // spasming. Folding the request back to the edge of what the joint
+            // can reach ends the fight rather than damping it.
+            {
+                b3Matrix3 fm = b3MakeMatrixFromQuat(b3Body_GetRotation(s_mFore[i]));
+                b3Matrix3 tm = b3MakeMatrixFromQuat(tgt);
+                float d = fm.cz.x*tm.cz.x + fm.cz.y*tm.cz.y + fm.cz.z*tm.cz.z;
+                if (d < -1.0f) d = -1.0f;
+                if (d > 1.0f) d = 1.0f;
+                const float ang = __builtin_acosf(d);
+                const float room = s_mWristCone * 0.9f;   // stop shy of the stop
+                if (ang > room)
+                {
+                    float ax[3] = {
+                        fm.cz.y*tm.cz.z - fm.cz.z*tm.cz.y,
+                        fm.cz.z*tm.cz.x - fm.cz.x*tm.cz.z,
+                        fm.cz.x*tm.cz.y - fm.cz.y*tm.cz.x };
+                    const float al = __builtin_sqrtf(ax[0]*ax[0] + ax[1]*ax[1] + ax[2]*ax[2]);
+                    if (al > 1e-4f)
+                    {
+                        ax[0] /= al; ax[1] /= al; ax[2] /= al;
+                        const float h = -(ang - room) * 0.5f;
+                        const float sh = __builtin_sinf(h);
+                        b3Quat qc;
+                        qc.v.x = ax[0]*sh; qc.v.y = ax[1]*sh; qc.v.z = ax[2]*sh;
+                        qc.s = __builtin_cosf(h);
+                        tgt = b3MulQuat(qc, tgt);
+                    }
+                }
+            }
+
             float dot = cur.v.x*tgt.v.x + cur.v.y*tgt.v.y + cur.v.z*tgt.v.z + cur.s*tgt.s;
             if (dot < 0.0f) { tgt.v.x = -tgt.v.x; tgt.v.y = -tgt.v.y; tgt.v.z = -tgt.v.z; tgt.s = -tgt.s; }
             // err = tgt * conj(cur)

@@ -118,6 +118,10 @@ const wasi = new WASI({ version: "preview1" });
   // by mass where the dynamics wanted rotational inertia. Every one of them is
   // silent — the machine just thrashed. These pin the behaviour instead.
   const HEAD = 1.62, CHEST = HEAD - 0.40;
+  // What the page computes from a measured arm span, kept in step with it.
+  const SPAN = 1.75, SHOULDER_HALF = SPAN * 0.11, TOOL_LEN = 2 * 0.06 * 1.0;
+  const BONES = SPAN * 0.5 - SHOULDER_HALF - TOOL_LEN;
+  const UPPER = BONES * 0.55, FORE = BONES * 0.45;
   const mech = () => { const p = E.w_mech_state() >>> 2; return mem().slice(p, p + 49); };
   const joints = () => { const p = E.w_mech_joints() >>> 2; return mem().slice(p, p + 6); };
   // The end of the left arm — the far face of the attachment, which is the
@@ -126,7 +130,7 @@ const wasi = new WASI({ version: "preview1" });
   // would report a permanent 18 cm error that is not real.
   const tipL = (f) => {
     const o = 21, x = f[o+3], y = f[o+4], z = f[o+5], w = f[o+6];
-    const d = -2 * 0.091;                       // thickness 0.07 * 1.3, doubled
+    const d = -2 * (0.06 * 1.0);               // thickness * mount multiplier
     // rotate (0, 0, d) by the attachment's quaternion
     const tx = 2 * (y * d), ty = 2 * (-x * d);
     return [f[o] + w*tx + y*0 - z*ty,
@@ -139,7 +143,8 @@ const wasi = new WASI({ version: "preview1" });
     E.w_reset(1, 0);
     // Joint friction matched to docs/mech.html, or this measures a machine the
     // headset never runs.
-    E.w_mech_create(0, CHEST, 0, 0.40, 0.46, 0.07, density, 25, 16, cone);
+    // Arm proportions from a measured 1.75 m span, as the page derives them.
+    E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, density, 25, 16, cone, SHOULDER_HALF);
     E.w_mech_tune(2000, 1.0, 3000, 900);
   };
   const drive = (steps, target) => {
@@ -231,25 +236,71 @@ const wasi = new WASI({ version: "preview1" });
     check(`the elbow keeps working at density ${d}`, r > 15, `only ${r.toFixed(0)} deg of travel`);
   }
 
-  // Weight shows up as momentum: a heavier arm takes longer to get going and
-  // longer to stop, so it falls further behind a *moving* hand. Measured while
-  // moving, not while still — standing still it should track regardless.
-  const movingLagAt = (density) => {
+  // Weight shows up as momentum, so it has to be measured with a motion that
+  // has some. A gentle wave reported only 1.3x between the lightest and
+  // heaviest arm and read as "weight barely matters" — but nothing is being
+  // accelerated hard enough there for mass to bite. A punch is the motion this
+  // game is made of, and it separates them properly.
+  const punchLagAt = (density) => {
     build(density);
-    let lag = [];
-    for (let s = 0; s <= 500; s++) {
-      const t = s / 72;
-      const h = [-0.30 + 0.18*Math.sin(t*1.6), 1.15 + 0.22*Math.sin(t*1.1), -0.35 - 0.22*Math.sin(t*2.1)];
+    const rest = [-0.28, 1.20, -0.20], out = -0.62;
+    let peak = 0;
+    for (let s = 0; s <= 400; s++) {
+      // 0.42 m forward in about 0.15 s, then stop dead.
+      const t = s < 150 ? 0 : Math.min(1, (s - 150) / 11);
+      const h = [rest[0], rest[1], rest[2] + (out - rest[2]) * t];
       E.w_mech_hand(0, ...h, 1, 0, 0, 0, 1);
       E.w_mech_hand(1, -h[0], h[1], h[2], 1, 0, 0, 0, 1);
       E.w_mech_stand(0, CHEST, 0); E.w_mech_apply(); E.w_step(1 / 72);
-      if (s > 150) { const tp = tipL(mech()); lag.push(Math.hypot(tp[0]-h[0], tp[1]-h[1], tp[2]-h[2])); }
+      if (s >= 150) {
+        const tp = tipL(mech());
+        peak = Math.max(peak, Math.hypot(tp[0]-h[0], tp[1]-h[1], tp[2]-h[2]));
+      }
     }
-    return lag.reduce((a, b) => a + b, 0) / lag.length;
+    return peak;
   };
-  const lightLag = movingLagAt(350), heavyLag = movingLagAt(2800);
-  check("heavier arms fall further behind a moving hand", heavyLag > lightLag * 1.4,
-        `light ${(lightLag*100).toFixed(1)} cm, heavy ${(heavyLag*100).toFixed(1)} cm`);
+  const lightLag = punchLagAt(350), heavyLag = punchLagAt(2800);
+  check("a heavy arm is harder to throw a punch with", heavyLag > lightLag * 1.8,
+        `light ${(lightLag*100).toFixed(1)} cm behind, heavy ${(heavyLag*100).toFixed(1)} cm`);
+
+  // The elbow has to sit where an elbow sits.
+  //
+  // A ball shoulder plus a pull at the wrist leaves one degree of freedom that
+  // nothing determines: the elbow can be anywhere on a circle about the
+  // shoulder-to-wrist line. Left alone it settled at 167 degrees — pointing
+  // very nearly straight up, a chicken wing — and wandered 21 degrees while the
+  // hand moved. Zero here means hanging straight down, which is where yours is.
+  const elbowSwivel = () => {
+    const f = mech();
+    const s = [f[7], f[8], f[9]], e = [f[14], f[15], f[16]], w = [f[21], f[22], f[23]];
+    const ax = [w[0]-s[0], w[1]-s[1], w[2]-s[2]];
+    const L = Math.hypot(...ax); if (L < 0.12) return null;
+    for (let i = 0; i < 3; i++) ax[i] /= L;
+    const off = [e[0]-s[0], e[1]-s[1], e[2]-s[2]];
+    const oa = off[0]*ax[0] + off[1]*ax[1] + off[2]*ax[2];
+    const u = [off[0]-ax[0]*oa, off[1]-ax[1]*oa, off[2]-ax[2]*oa];
+    const ul = Math.hypot(...u); if (ul < 0.02) return null;
+    for (let i = 0; i < 3; i++) u[i] /= ul;
+    const d = [ax[0]*ax[1], -1 + ax[1]*ax[1], ax[2]*ax[1]];
+    const dl = Math.hypot(...d);
+    for (let i = 0; i < 3; i++) d[i] /= dl;
+    return Math.acos(Math.max(-1, Math.min(1, u[0]*d[0] + u[1]*d[1] + u[2]*d[2]))) * 180 / Math.PI;
+  };
+  build(800);
+  let swiv = [];
+  for (let s = 0; s <= 500; s++) {
+    const t = s / 72;
+    const h = [-0.28 + 0.15*Math.sin(t*1.6), 1.15 + 0.18*Math.sin(t*1.1), -0.30 - 0.16*Math.sin(t*2.1)];
+    E.w_mech_hand(0, ...h, 1, 0, 0, 0, 1);
+    E.w_mech_hand(1, -h[0], h[1], h[2], 1, 0, 0, 0, 1);
+    E.w_mech_stand(0, CHEST, 0); E.w_mech_apply(); E.w_step(1 / 72);
+    if (s > 200) { const a = elbowSwivel(); if (a !== null) swiv.push(a); }
+  }
+  const swAvg = swiv.reduce((a, b) => a + b, 0) / swiv.length;
+  check("the elbow stays low rather than sticking up", swAvg < 75,
+        `sitting ${swAvg.toFixed(0)} deg off straight-down`);
+  check("the elbow does not wander", Math.max(...swiv) - Math.min(...swiv) < 60,
+        `${(Math.max(...swiv) - Math.min(...swiv)).toFixed(0)} deg of drift`);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail === 0 ? 0 : 1);

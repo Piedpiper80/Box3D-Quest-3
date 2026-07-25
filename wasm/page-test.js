@@ -90,8 +90,8 @@ function makeSession(gl, poses) {
       handedness: i === 0 ? "left" : "right",
       gripSpace: { which: i },
       targetRaySpace: { which: i },
-      // Trigger and A both up. The floor comes from localStorage, as it would
-      // for anyone who has already calibrated once.
+      // Driven per frame from poseAt().trigger, so the harness can work
+      // through the calibration the same way a person does.
       gamepad: { buttons: Array.from({ length: 6 }, () => ({ pressed: false, value: 0 })) },
     })),
     renderState: { baseLayer: null },
@@ -137,7 +137,7 @@ async function runPage(file, frames, poseAt) {
   const gl = makeGL(drawLog);
   const els = {};
   const errors = [];
-  const store = new Map([["box3d.floorY", "0"]]);   // already calibrated
+  const store = new Map([["box3d.floorY", "0"]]);   // floor done, span is measured below
 
   const poses = poseAt(0);
   let session = null;
@@ -216,6 +216,10 @@ async function runPage(file, frames, poseAt) {
     const p = poseAt(f);
     poses.head = p.head;
     poses.controllers.forEach((c, i) => { c.pos = p.controllers[i].pos; c.q = p.controllers[i].q; });
+    session.inputSources.forEach((src) => {
+      src.gamepad.buttons[0].pressed = !!p.trigger;
+      src.gamepad.buttons[0].value = p.trigger ? 1 : 0;
+    });
     const before = drawLog.length;
     try {
       if (session._pump(makeFrame(session, poses)) === 0) throw new Error("frame loop stopped rescheduling");
@@ -236,21 +240,47 @@ const check = (name, ok, detail) => {
   else { fail++; console.log(`FAIL  ${name}${detail ? "  — " + detail : ""}`); }
 };
 
-// A standing player, floor at y=0, hands out in front and drifting sideways so
-// the arms have to actually follow something.
+// A standing player, floor already calibrated, who then measures their arm
+// span and gets on with it.
+//
+// The span calibration is walked through rather than seeded, because it is the
+// step that decides how big the machine is: a person holds their arms straight
+// out and pulls a trigger, and everything downstream is built from that. If it
+// silently failed the arms would be the wrong length and the checks below would
+// all still pass on a machine nobody could use.
 const HEAD_Y = 1.62;
+const SPAN = 1.90;   // deliberately not the built-in fallback, so a
+                     // calibration that silently did nothing shows up
+const TPOSE_UNTIL = 24, PULL_AT = 12;
+
 function pose(f) {
+  if (f < TPOSE_UNTIL) {
+    // Arms straight out to the sides.
+    return {
+      head: vec(0, HEAD_Y, 0),
+      controllers: [
+        { pos: vec(-SPAN / 2, 1.40, 0), q: quat(0, 0, 0, 1) },
+        { pos: vec(SPAN / 2, 1.40, 0), q: quat(0, 0, 0, 1) },
+      ],
+      trigger: f === PULL_AT,
+    };
+  }
   // Kept small enough that each hand stays on its own side of the body, so a
   // limb drawn on the wrong side is unambiguous rather than just a wide reach.
   // Held still for the last stretch, so the closing checks measure where the
   // arm actually comes to rest rather than how far behind a moving hand it is.
-  const sway = Math.sin(Math.min(f, 110) * 0.05) * 0.12;
+  // Sway settles to nothing before the end, so the closing checks read a
+  // symmetric, comfortable reach rather than a moment where one hand happens to
+  // have drifted across the body.
+  const g = f - TPOSE_UNTIL;
+  const sway = g > 110 ? 0 : Math.sin(g * 0.05) * 0.12;
   return {
     head: vec(0, HEAD_Y, 0),
     controllers: [
-      { pos: vec(-0.32 + sway, 1.05, -0.42), q: quat(0, 0, 0, 1) },
-      { pos: vec(0.32 + sway, 1.05, -0.42), q: quat(0, 0, 0, 1) },
+      { pos: vec(-0.32 + sway, 1.20, -0.45), q: quat(0, 0, 0, 1) },
+      { pos: vec(0.32 + sway, 1.20, -0.45), q: quat(0, 0, 0, 1) },
     ],
+    trigger: false,
   };
 }
 
@@ -258,7 +288,7 @@ function pose(f) {
   const page = process.argv[2] || "mech.html";
   console.log(`--- ${page} ---`);
 
-  const r = await runPage(page, 150, pose);
+  const r = await runPage(page, 190, pose);
 
   check("no exception escaped the frame loop", r.errors.length === 0,
         (r.errors[0] || "") + "  [page said: " + r.status + "]");
@@ -290,9 +320,24 @@ function pose(f) {
     // Limbs are drawn as long thin boxes; joints and attachments are cubes.
     const limbs = last.filter((b) => {
       const s = b.scale, long = Math.max(...s), thin = Math.min(...s);
-      return long > 0.15 && long / thin > 2.0 && b.pos[1] > 0.3;
+      // Threshold sized for a human-proportioned forearm (about 0.13 drawn
+      // half-length), not the over-long arm this used to have.
+      return long > 0.09 && long / thin > 1.7 && b.pos[1] > 0.3;
     });
     check("four limb segments are drawn", limbs.length === 4, `${limbs.length} found`);
+
+    // The arm is the length the T-pose measured, not a built-in default.
+    // Everything downstream is built off that measurement, so if the trigger
+    // pull quietly did nothing the machine would be the wrong size for the
+    // player and every other check here would still pass.
+    if (limbs.length === 4) {
+      const shoulderHalf = SPAN * 0.11, toolLen = 2 * 0.06;
+      const bones = SPAN * 0.5 - shoulderHalf - toolLen;
+      const wantUpper = bones * 0.55 * 0.5;             // drawn half-length
+      const gotUpper = Math.max(...limbs.map((b) => Math.max(...b.scale)));
+      check("the arm is the length your span said", Math.abs(gotUpper - wantUpper) < 0.03,
+            `drawn ${gotUpper.toFixed(3)} m, measured span wants ${wantUpper.toFixed(3)} m`);
+    }
 
     // Colour says which arm a segment belongs to: blue left, orange right. With
     // the wrong stride the right arm was drawn from the left arm's bodies, so
@@ -318,7 +363,7 @@ function pose(f) {
     // not following you. The drawn attachment is a half-length short of the
     // point the engine hauls, so allow for that and little else.
     if (tips.length === 2) {
-      const hands = pose(149).controllers.map((c) => c.pos);
+      const hands = pose(189).controllers.map((c) => c.pos);
       const near = [-1, 1].map((sign) => {
         const hand = hands.find((h) => Math.sign(h.x) === sign) || hands[0];
         const tip = tips.reduce((a, b) =>
@@ -340,7 +385,7 @@ function pose(f) {
           stray.length ? `${stray.length} strays, first at y ${stray[0].pos[1].toFixed(2)}` : "");
 
     // The arms have to move. A frozen machine draws the same thing every frame.
-    const first = r.perFrame[10] || [];
+    const first = r.perFrame[40] || [];
     const moved = first.length === last.length &&
       last.some((b, i) => Math.hypot(b.pos[0] - first[i].pos[0], b.pos[1] - first[i].pos[1],
                                      b.pos[2] - first[i].pos[2]) > 0.02);
