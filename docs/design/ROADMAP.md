@@ -26,6 +26,15 @@ never changes is an ordering nobody is using.
    Each answered in the headset before the next is written.
 2. **Every milestone ends with something testable in the headset.** Not a
    passing unit test — something you put the Quest on and try.
+
+   **But it must be confirmed to run before it gets there.** "You need a headset
+   to test VR" was taken for granted and it was wrong. Only the poses and the GL
+   calls come from the headset; stub those two and the whole page — wasm load,
+   world build, physics, draw list — runs in Node. `wasm/page-test.js` does
+   exactly that and CI runs it on every push, because a page was handed over
+   three times in a row that rendered nothing at all and there was no way to
+   know. What still needs a person in a headset is how it *feels*, and that is
+   the only thing that does.
 3. **Measure before you design.** The perf HUD (Phase 0) exists so that every
    later decision is made against real numbers instead of intuition. Quest 3 is
    a fixed budget; the numbers decide the design, not the other way round.
@@ -311,6 +320,46 @@ Then three spikes:
   deliberate manipulation and weakest at exactly what a fight is made of. A
   legitimate outcome is "hands for cockpit, sandbox and on-foot; controllers for
   fights."
+
+#### What the piloting spike cost, and why
+
+The jointed arm took five rebuilds to get honest, and every fault in it was
+**silent** — nothing errored, nothing warned, the machine just thrashed and the
+page just went black. Worth writing down, because the same traps are waiting in
+every other joint this game builds.
+
+| What was wrong | Why nothing caught it |
+| --- | --- |
+| Spherical cone limit set to 2.2 rad | Box3D asserts a quarter turn is the maximum, and the release build compiles asserts out. The cone geometry silently went degenerate. |
+| Elbow hinged along the arm's own length | Box3D revolute joints rotate about the frame's **+Z**; the frames were left as identity, which pointed the hinge down the limb. The elbow could only twist, so the arm was one rigid stick — the "two sticks coming off my shoulders". |
+| Elbow limits fenced off the fold direction | With the axis finally right, the arm wanted negative angles and the limits allowed positive. It sat pinned at its stop, stretched to 0.85 m for a target 0.28 m away. |
+| Aim and uprighting gains scaled by **mass** | Angular dynamics answers to *rotational inertia*. Against ~0.03 kg·m² a damping term of 22 is roughly eleven times what an explicit 72 Hz step tolerates, so the controller pumped energy in every frame. |
+| Motors held at zero velocity | A motor with no target is a brake. The arm was hauled by the hand and braked by its own joints at 2300 N·m simultaneously. Joint *limits* give structure; motors held at zero are just a clamp. |
+| Draw stride still 2 after the state went to 7 bodies | The right arm was drawn from the left attachment. |
+| `chestY()` called but never defined | Inside `"use strict"` it throws on the first frame, before the draw call. Cleared buffer, no error, pure black — indistinguishable from a page that never loaded. |
+
+Three rules came out of it, and they apply to every joint from here on:
+
+1. **Derive gains from the quantity the dynamics actually uses** — inertia for
+   torques, mass for forces — and express them as a period and a damping ratio,
+   never as raw numbers picked by eye. A gain that looks reasonable and is
+   fifty times too large behaves like a physics bug, not a tuning problem.
+2. **Read the joints, don't infer them.** `w_mech_joints()` exists because
+   guessing whether a joint was pinned at a limit burned more time than every
+   other diagnosis combined. One reading — "elbow at −6°, limits −6..137" —
+   ended it instantly.
+3. **Isolate before tuning.** Two faults were live at once and each hid the
+   other; nothing tuned because nothing *could*. `w_mech_pin()` bolts the torso
+   down so an arm can be judged on its own. A steady drift toward a *fixed*
+   target is proof of a controller adding energy, and is the single most useful
+   signal found here.
+
+Measured on the working build, medium arms: stands at 4° tilt and settles; the
+elbow folds to −122° for a hand at the chest; lag grows 0.157 m → 0.368 m as the
+arms go 7.4 kg → 59.3 kg, and the torso gets dragged 0.025 m → 0.225 m off its
+footing. Weight is carried by a **fixed spring constant** — the earlier finding
+that a mass-normalised spring cannot convey weight at all still holds, and the
+damping is derived separately so stability never costs the weight signal.
 
 ### Phase 2 — Voxel core
 The unified static/dynamic system. **The deformable skin idea and the

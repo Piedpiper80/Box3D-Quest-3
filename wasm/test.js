@@ -108,6 +108,85 @@ const wasi = new WASI({ version: "preview1" });
   console.log(`perf: ${usPerStep.toFixed(0)} us/step with ${E.w_count()} cubes (budget: 13888 us/frame @72Hz)`);
   check("step fits a 72 Hz frame budget", usPerStep < 6000, `${usPerStep.toFixed(0)} us`);
 
+  // --- the mech ---
+  //
+  // Four separate faults were live here at once, each hiding the others, and
+  // none of them showed up as an error: a cone limit past the quarter turn
+  // Box3D allows (the assert is compiled out of a release build), an elbow
+  // hinged along the arm's own length so it could only twist, that elbow's fold
+  // direction fenced off by its limits, and two controllers with gains scaled
+  // by mass where the dynamics wanted rotational inertia. Every one of them is
+  // silent — the machine just thrashed. These pin the behaviour instead.
+  const HEAD = 1.62, CHEST = HEAD - 0.40;
+  const mech = () => { const p = E.w_mech_state() >>> 2; return mem().slice(p, p + 49); };
+  const joints = () => { const p = E.w_mech_joints() >>> 2; return mem().slice(p, p + 6); };
+  const tipL = (f) => [f[21], f[22], f[23]];
+  const tiltOf = (f) => Math.acos(Math.max(-1, Math.min(1, 1 - 2 * (f[3]*f[3] + f[5]*f[5])))) * 180 / Math.PI;
+
+  const build = (density, cone = 1.5707) => {
+    E.w_reset(1, 0);
+    E.w_mech_create(0, CHEST, 0, 0.40, 0.46, 0.07, density, 60, 40, cone);
+    E.w_mech_tune(2000, 1.0, 3000, 900);
+  };
+  const drive = (steps, target) => {
+    for (let s = 0; s < steps; s++) {
+      if (target) { E.w_mech_hand(0, ...target, 1, 0, 0, 0, 1); E.w_mech_hand(1, -target[0], target[1], target[2], 1, 0, 0, 0, 1); }
+      E.w_mech_stand(0, CHEST, 0);
+      E.w_mech_apply();
+      E.w_step(1 / 72);
+    }
+    return mech();
+  };
+
+  // Stands under the weight of its own arms. Before the uprighting torque was
+  // derived from inertia this reached 54 degrees and kept going.
+  build(800);
+  let f = drive(400, null);
+  check("the machine stands up on its own", tiltOf(f) < 12, `tilted ${tiltOf(f).toFixed(1)} deg`);
+  check("it holds its height", Math.abs(f[1] - CHEST) < 0.06, `y ${f[1].toFixed(3)} vs ${CHEST}`);
+
+  // Settles rather than drifting. A fixed target cannot cause motion, so any
+  // steady drift is a controller adding energy — which is how the unstable aim
+  // gains were found.
+  build(800);
+  drive(300, [-0.30, 1.15, -0.35]);
+  const a = tipL(mech());
+  drive(120, [-0.30, 1.15, -0.35]);
+  const b = tipL(mech());
+  const drift = Math.hypot(b[0]-a[0], b[1]-a[1], b[2]-a[2]);
+  check("the arm settles instead of drifting", drift < 0.03, `moved ${drift.toFixed(3)} m while the hand was still`);
+
+  // The elbow is a hinge, and it folds. It used to sit pinned at its limit in
+  // every pose with the arm stretched out full length past a near target.
+  build(800);
+  E.w_mech_pin(1);
+  drive(400, [-0.25, 1.20, -0.20]);              // a hand close to the chest
+  const jf = joints(), elbow = jf[1] * 180 / Math.PI;
+  check("the elbow folds when the hand is close", elbow < -40, `elbow at ${elbow.toFixed(0)} deg`);
+  const sh = [-0.22, CHEST + 0.17, 0], t = tipL(mech());
+  const extended = Math.hypot(t[0]-sh[0], t[1]-sh[1], t[2]-sh[2]);
+  check("the arm shortens to reach a near target", extended < 0.6, `arm out to ${extended.toFixed(2)} m for a 0.28 m reach`);
+
+  // A cone past a quarter turn is out of range for Box3D and must be clamped
+  // rather than handed to the solver.
+  build(800, 2.2);
+  E.w_mech_pin(1);
+  f = drive(400, [-0.30, 1.15, -0.35]);
+  const finite = [...f].every((v) => Number.isFinite(v));
+  check("an over-wide cone is clamped, not passed through", finite, "NaN in the mech state");
+
+  // Heavier arms have to lag further behind the hand. This is the whole point
+  // of the weight classes, and a mass-normalised spring would flatten it.
+  const lagAt = (density) => {
+    build(density);
+    const target = [-0.30, 1.15, -0.35];
+    const s = drive(400, target), tp = tipL(s);
+    return Math.hypot(tp[0]-target[0], tp[1]-target[1], tp[2]-target[2]);
+  };
+  const light = lagAt(350), heavy = lagAt(2800);
+  check("heavier arms lag further behind the hand", heavy > light * 1.5,
+        `light ${light.toFixed(3)} m, heavy ${heavy.toFixed(3)} m`);
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail === 0 ? 0 : 1);
 })().catch((e) => { console.error("HARNESS ERROR:", e); process.exit(2); });

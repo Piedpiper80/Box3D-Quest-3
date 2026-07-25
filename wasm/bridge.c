@@ -18,7 +18,14 @@
 //   w_mech_stand(x,y,z)            where the machine tries to stand
 //   w_mech_hand(i,x,y,z,active,q)  haul attachment i to the controller, and aim it
 //   w_mech_apply()                 apply leg + arm forces (call before w_step)
-//   w_mech_state()                 7 floats each: torso, upperL, foreL, upperR, foreR
+//   w_mech_state()                 7 bodies x 7 floats: torso, then upper /
+//                                  forearm / attachment for each arm
+//   w_mech_lengths()               upper length, forearm length, attachment half
+//   w_mech_joints()                shoulder cone, elbow angle, wrist cone, per arm
+//   w_mech_tune(k,zeta,maxF,footF) how hard the hand hauls the arm
+//   w_mech_upright(period,zeta,max) how the legs hold the machine up
+//   w_mech_aim(period,zeta,max)    how the attachment holds the angle you point
+//   w_mech_pin(on)                 bolt the torso down, to study an arm alone
 //   w_torso_create(...)            piloting spike: the body the arms hang from
 //   w_torso_update(x,y,z,yaw)      move the torso with the head, every frame
 //   w_arm_create(i,...)            an arm pivoting at a shoulder on the torso
@@ -496,6 +503,16 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
                    float thickness, float density, float shoulderTorque,
                    float elbowTorque, float coneAngle)
 {
+    // Box3D asserts a spherical cone limit of at most a quarter turn, and this
+    // is built with NDEBUG so that assert is gone. Handing it 2.2 rad, as this
+    // did, sails straight past without complaint and leaves the cone geometry
+    // degenerate — cos(cone) goes negative — which showed up as the whole
+    // machine thrashing and no amount of tuning helping. Clamped here so a
+    // number out of range can never reach the solver again.
+    const float coneMax = 1.5707963f;
+    if (!(coneAngle >= 0.0f)) coneAngle = 0.0f;      // also catches NaN
+    if (coneAngle > coneMax) coneAngle = coneMax;
+
     s_mUpperLen = upperLen;
     s_mForeLen = foreLen;
     s_mTorsoTarget.x = x; s_mTorsoTarget.y = y; s_mTorsoTarget.z = z;
@@ -544,11 +561,32 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
         sj.base.localFrameA = b3Transform_identity;
         sj.base.localFrameA.p.x = sx;
         sj.base.localFrameA.p.y = sy;
+        // Tilt the cone axis back by 45 degrees.
+        //
+        // Box3D measures the cone from body A's local +Z, and a quarter turn is
+        // as wide as the limit may legally be. Left pointing straight along Z,
+        // that puts "arm straight out in front" at the centre of the cone and
+        // "arm hanging at your side" exactly on its edge — measured, the arm
+        // could not get back to its side at all, ending up 0.38 m adrift.
+        // Splitting the difference puts forward and down each 45 degrees off
+        // centre, so both are comfortably inside and the arm can also swing
+        // across the body.
+        sj.base.localFrameA.q.v.x = -0.38268343f;   // -45 deg about X
+        sj.base.localFrameA.q.v.y = 0.0f;
+        sj.base.localFrameA.q.v.z = 0.0f;
+        sj.base.localFrameA.q.s = 0.92387953f;
         sj.base.localFrameB = b3Transform_identity;
         sj.base.collideConnected = false;
         sj.enableConeLimit = true;
         sj.coneAngle = coneAngle;
-        sj.enableMotor = true;
+        // Friction, not a motor. A spherical motor with no target velocity
+        // holds the joint still, and at the torque this used to carry (1400 N m)
+        // that is a lock, not a shoulder — the arm was being hauled by the hand
+        // and braked by its own joint at the same time, which is what made it
+        // thrash instead of swing. What is left is the stiffness of the
+        // mechanism itself: enough to feel like machinery, far too little to
+        // stop the arm moving.
+        sj.enableMotor = shoulderTorque > 0.0f;
         sj.maxMotorTorque = shoulderTorque;
         s_mShoulder[i] = b3CreateSphericalJoint(s_world, &sj);
 
@@ -567,19 +605,43 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
         foff.p.z = -foreLen * 0.5f;
         b3CreateTransformedHullShape(s_mFore[i], &fsd, &fhull.base, foff, one);
 
-        // Elbow: a hinge about the arm's local X, which bends the way an elbow
-        // bends and cannot hyperextend.
+        // Elbow.
+        //
+        // Box3D hinges about the joint frame's local +Z, and these frames were
+        // left as identity — which pointed the hinge straight down the arm's
+        // own length. That is a twist, not an elbow: the forearm could spin
+        // about the arm but could not fold at all, so the whole limb behaved as
+        // one rigid stick. It is why reaching for a point half an arm away left
+        // the arm stretched out full length beside it, and why the thing read
+        // as two poles rather than as an arm.
+        //
+        // Turning both frames a quarter turn about Y swings that axis onto the
+        // arm's local X — sideways, across the limb — which is what a hinge
+        // needs to be. Both frames get the same rotation, so the joint's zero
+        // angle is still "straight".
+        const float rt2 = 0.70710678f;
+        b3Transform elbowFrame = b3Transform_identity;
+        elbowFrame.q.v.x = 0.0f; elbowFrame.q.v.y = rt2; elbowFrame.q.v.z = 0.0f;
+        elbowFrame.q.s = rt2;
+
         b3RevoluteJointDef rj = b3DefaultRevoluteJointDef();
         rj.base.bodyIdA = s_mUpper[i];
         rj.base.bodyIdB = s_mFore[i];
-        rj.base.localFrameA = b3Transform_identity;
+        rj.base.localFrameA = elbowFrame;
         rj.base.localFrameA.p.z = -upperLen;
-        rj.base.localFrameB = b3Transform_identity;
+        rj.base.localFrameB = elbowFrame;
         rj.base.collideConnected = false;
         rj.enableLimit = true;
-        rj.lowerAngle = -2.4f;    // fully folded
-        rj.upperAngle = 0.10f;    // just short of straight
-        rj.enableMotor = true;
+        // Measured, not assumed: with the hinge on the right axis the arm folds
+        // toward negative angles. Read off w_mech_joints, the elbow sat pinned
+        // at its limit in every pose, arm stretched to 0.85 m for a target
+        // 0.28 m away, because the fold direction was fenced off.
+        rj.lowerAngle = -2.40f;   // fully folded
+        rj.upperAngle = 0.10f;    // just short of straight — no hyperextending
+        // Same as the shoulder: this is the hinge's own stiffness, not a motor
+        // driving the arm anywhere. The limits above are what stop the elbow
+        // bending the wrong way; the torque here only resists.
+        rj.enableMotor = elbowTorque > 0.0f;
         rj.maxMotorTorque = elbowTorque;
         rj.motorSpeed = 0.0f;
         s_mElbow[i] = b3CreateRevoluteJoint(s_world, &rj);
@@ -629,7 +691,10 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
         // matters is that this point ends up where the player's hand actually
         // is, so the arm's total length has to match their reach rather than
         // stopping a hand's length short at a wrist.
-        s_mWrist[i].x = 0.0f; s_mWrist[i].y = 0.0f; s_mWrist[i].z = -toolHalf;
+        // Pull from the far face of the attachment, not its middle. That point
+        // is the end of the arm, and the end of the arm is what has to arrive
+        // where your hand is.
+        s_mWrist[i].x = 0.0f; s_mWrist[i].y = 0.0f; s_mWrist[i].z = -2.0f * toolHalf;
         s_mHandActive[i] = 0;
     }
     s_mExists = 1;
@@ -660,14 +725,125 @@ void w_mech_hand(int i, float x, float y, float z, int active,
 // that it does not flail. Beyond this, feel is not something measurement here
 // can settle — it needs a person in the headset.
 static float s_mPullK = 2000.0f;
-static float s_mPullC = 180.0f;
 static float s_mPullMax = 3000.0f;
 
-WASM_EXPORT("w_mech_tune")
-void w_mech_tune(float pullK, float pullC, float pullMax, float torsoMaxF)
+// Damping is given as a ratio, not a coefficient.
+//
+// The stiffness above stays a fixed spring constant on purpose: measured
+// earlier, a mass-normalised spring lags by exactly the same amount at 3 kg and
+// at 27 kg, so it cannot convey weight at all, while a fixed N/m grades it
+// properly. That finding is the reason this spike exists and it is not being
+// given up.
+//
+// Damping is a separate question. It is not there to shape the feel, only to
+// stop the arm ringing, and how much is needed genuinely does depend on how
+// much arm there is to bring to a halt — so it is derived from the arm's own
+// mass each frame. 1.0 is critical: it settles without bouncing back.
+static float s_mPullZeta = 1.0f;
+
+// How quickly the attachment swings round to the angle you are pointing, and
+// how hard it will hold that angle against a knock.
+static float s_mAimPeriod = 0.25f;    // seconds
+static float s_mAimZeta = 1.0f;
+static float s_mAimMax = 12.0f;       // N m per kg of attachment
+
+// How the machine holds itself up, as a response rather than as raw gains.
+//
+// Written as gains scaled by mass this was unstable at every setting: angular
+// dynamics answers to rotational inertia, and the torso's is about 1.2 kg m^2
+// against 55 kg of mass, so a damping term scaled by mass came out roughly
+// fifty times too strong and an explicit integrator at 72 Hz blew up. Stiffen
+// it and the tilt got worse, not better, which is the giveaway.
+//
+// Period is how long a full correction takes — larger reads as heavier.
+// Damping of 1.0 is critical: it comes back level without rebounding past.
+static float s_mUprightPeriod = 0.60f;   // seconds
+static float s_mUprightZeta = 1.0f;
+static float s_mUprightMax = 26.0f;      // N m per kg of machine — leg strength
+
+// Effective rotational inertia about the torso's centre, arms included.
+//
+// The arms are most of what has to be hauled back upright, and how much they
+// weigh is the entire point of the experiment, so leaving them out would tune
+// the machine for a body that does not exist.
+static float mechInertia(void)
 {
-    s_mPullK = pullK; s_mPullC = pullC; s_mPullMax = pullMax;
+    b3Matrix3 Ib = b3Body_GetLocalRotationalInertia(s_mTorso);
+    float I = 0.5f * (Ib.cx.x + Ib.cz.z);   // pitch and roll, averaged
+
+    b3Pos c = b3Body_GetPosition(s_mTorso);
+    for (int i = 0; i < MECH_ARMS; i++)
+    {
+        b3BodyId parts[3] = { s_mUpper[i], s_mFore[i], s_mTool[i] };
+        for (int k = 0; k < 3; k++)
+        {
+            b3Pos p = b3Body_GetPosition(parts[k]);
+            const float dx = (float)(p.x - c.x);
+            const float dy = (float)(p.y - c.y);
+            const float dz = (float)(p.z - c.z);
+            I += b3Body_GetMass(parts[k]) * (dx*dx + dy*dy + dz*dz);
+        }
+    }
+    return I;
+}
+
+static float mechMass(void)
+{
+    float m = b3Body_GetMass(s_mTorso);
+    for (int i = 0; i < MECH_ARMS; i++)
+    {
+        m += b3Body_GetMass(s_mUpper[i]) + b3Body_GetMass(s_mFore[i]) + b3Body_GetMass(s_mTool[i]);
+    }
+    return m;
+}
+
+WASM_EXPORT("w_mech_tune")
+void w_mech_tune(float pullK, float pullZeta, float pullMax, float torsoMaxF)
+{
+    s_mPullK = pullK; s_mPullZeta = pullZeta; s_mPullMax = pullMax;
     s_mTorsoMaxF = torsoMaxF;
+}
+
+// Bolt the torso to the world, so an arm can be studied on its own.
+//
+// Two things were going wrong at once — the machine could not stand up and the
+// arms could not reach — and each was hiding the other. Pinning the torso
+// separates them: whatever the arm does with this on is the arm's own doing.
+// It is also what a test rig or a wall-mounted arm would be.
+// What every joint is actually doing, in radians: shoulder cone angle, elbow
+// angle, wrist cone angle, for each arm. Guessing at whether a joint is pinned
+// against a limit wastes far more time than reading it off.
+WASM_EXPORT("w_mech_joints")
+float* w_mech_joints(void)
+{
+    static float out[MECH_ARMS * 3];
+    if (!s_mExists) return out;
+    for (int i = 0; i < MECH_ARMS; i++)
+    {
+        out[i*3 + 0] = b3SphericalJoint_GetConeAngle(s_mShoulder[i]);
+        out[i*3 + 1] = b3RevoluteJoint_GetAngle(s_mElbow[i]);
+        out[i*3 + 2] = b3SphericalJoint_GetConeAngle(s_mWristJ[i]);
+    }
+    return out;
+}
+
+WASM_EXPORT("w_mech_aim")
+void w_mech_aim(float period, float zeta, float maxTorquePerKg)
+{
+    s_mAimPeriod = period; s_mAimZeta = zeta; s_mAimMax = maxTorquePerKg;
+}
+
+WASM_EXPORT("w_mech_pin")
+void w_mech_pin(int on)
+{
+    if (!s_mExists) return;
+    b3Body_SetType(s_mTorso, on ? b3_staticBody : b3_dynamicBody);
+}
+
+WASM_EXPORT("w_mech_upright")
+void w_mech_upright(float period, float zeta, float maxTorquePerKg)
+{
+    s_mUprightPeriod = period; s_mUprightZeta = zeta; s_mUprightMax = maxTorquePerKg;
 }
 
 WASM_EXPORT("w_mech_apply")
@@ -712,6 +888,50 @@ void w_mech_apply(void)
         b3Body_ApplyForceToCenter(s_mTorso, f, true);
     }
 
+    // Staying upright.
+    //
+    // Without this the machine tumbles. The legs held its height but nothing
+    // held its attitude, so every swing torqued the torso back and it rolled
+    // over — measured at 300 steps, the right shoulder had swung across to the
+    // left side of the body. The arms were fine; the thing they hang from was
+    // cartwheeling.
+    //
+    // Legs and stabilisers really do this, so it is the machine working rather
+    // than a correction bolted on. It is capped for the same reason the footing
+    // is: a hard enough swing gets to tip you over, and that is the drama. Only
+    // pitch and roll are restored — the cross product has no yaw term — so the
+    // machine is still free to turn.
+    {
+        b3Quat q = b3Body_GetRotation(s_mTorso);
+        b3Matrix3 m = b3MakeMatrixFromQuat(q);
+
+        // Local up, in world space, crossed with world up. The result is the
+        // axis that swings the machine back level, and its length is the sine
+        // of how far over it is.
+        const float ax = -m.cy.z, az = m.cy.x;
+
+        b3Vec3 w = b3Body_GetAngularVelocity(s_mTorso);
+        const float I = mechInertia();
+        const float w0 = 6.2831853f / s_mUprightPeriod;
+        const float k = I * w0 * w0;                       // torque per radian
+        const float c = 2.0f * s_mUprightZeta * I * w0;    // torque per rad/s
+
+        float tx = ax * k - w.x * c;
+        float ty =        - w.y * c;
+        float tz = az * k - w.z * c;
+
+        const float cap = s_mUprightMax * mechMass();
+        float tsq = tx*tx + ty*ty + tz*tz;
+        if (tsq > cap * cap)
+        {
+            float k = cap / __builtin_sqrtf(tsq);
+            tx *= k; ty *= k; tz *= k;
+        }
+
+        b3Vec3 t; t.x = tx; t.y = ty; t.z = tz;
+        b3Body_ApplyTorque(s_mTorso, t, true);
+    }
+
     // Arms: haul each wrist toward the hand. Applied at the wrist, not the
     // centre of mass, so it swings the forearm and torques back through the
     // elbow and shoulder the way pulling a real arm does.
@@ -728,10 +948,16 @@ void w_mech_apply(void)
         float wy = (float)bp.y + m.cz.y * s_mWrist[i].z;
         float wz = (float)bp.z + m.cz.z * s_mWrist[i].z;
 
+        // What the pull actually has to accelerate is the whole arm, not just
+        // the block on the end of it.
+        const float armMass = b3Body_GetMass(s_mUpper[i]) + b3Body_GetMass(s_mFore[i])
+                            + b3Body_GetMass(s_mTool[i]);
+        const float pullC = 2.0f * s_mPullZeta * __builtin_sqrtf(s_mPullK * armMass);
+
         b3Vec3 v = b3Body_GetLinearVelocity(s_mTool[i]);
-        float fx = (s_mHandTarget[i].x - wx) * s_mPullK - v.x * s_mPullC;
-        float fy = (s_mHandTarget[i].y - wy) * s_mPullK - v.y * s_mPullC;
-        float fz = (s_mHandTarget[i].z - wz) * s_mPullK - v.z * s_mPullC;
+        float fx = (s_mHandTarget[i].x - wx) * s_mPullK - v.x * pullC;
+        float fy = (s_mHandTarget[i].y - wy) * s_mPullK - v.y * pullC;
+        float fz = (s_mHandTarget[i].z - wz) * s_mPullK - v.z * pullC;
         float sq = fx*fx + fy*fy + fz*fz;
         if (sq > s_mPullMax * s_mPullMax)
         {
@@ -758,12 +984,39 @@ void w_mech_apply(void)
             float ey = tgt.s*cy - tgt.v.x*cz + tgt.v.y*cw + tgt.v.z*cx;
             float ez = tgt.s*cz + tgt.v.x*cy - tgt.v.y*cx + tgt.v.z*cw;
 
+            // Gains from the attachment's own rotational inertia, not from
+            // numbers picked by eye.
+            //
+            // This was the thing wrecking the arm. At a damping of 22 against
+            // an inertia of about 0.027 kg m^2, the damping term came out
+            // around eleven times what an explicit step at 72 Hz can take —
+            // anything past 2 diverges — so the aim pumped energy in every
+            // frame. With the torso bolted down the arm still swept steadily
+            // across the body and never settled, which is what gave it away:
+            // a fixed target cannot cause drift, only a controller adding
+            // energy can.
+            b3Matrix3 Ik = b3Body_GetLocalRotationalInertia(s_mTool[i]);
+            const float Ia = (Ik.cx.x + Ik.cy.y + Ik.cz.z) / 3.0f;
+            const float wAim = 6.2831853f / s_mAimPeriod;
+            const float kAim = Ia * wAim * wAim;
+            const float cAim = 2.0f * s_mAimZeta * Ia * wAim;
+
             b3Vec3 w = b3Body_GetAngularVelocity(s_mTool[i]);
-            const float kAim = 220.0f, cAim = 22.0f;
-            b3Vec3 t;
-            t.x = ex * kAim - w.x * cAim;
-            t.y = ey * kAim - w.y * cAim;
-            t.z = ez * kAim - w.z * cAim;
+            float tx = ex * kAim - w.x * cAim;
+            float ty = ey * kAim - w.y * cAim;
+            float tz = ez * kAim - w.z * cAim;
+
+            // Capped, so a heavy enough blow knocks the aim off line rather
+            // than the mount holding its angle through anything.
+            const float aimCap = s_mAimMax * b3Body_GetMass(s_mTool[i]);
+            const float tsq = tx*tx + ty*ty + tz*tz;
+            if (tsq > aimCap * aimCap)
+            {
+                const float s = aimCap / __builtin_sqrtf(tsq);
+                tx *= s; ty *= s; tz *= s;
+            }
+
+            b3Vec3 t; t.x = tx; t.y = ty; t.z = tz;
             b3Body_ApplyTorque(s_mTool[i], t, true);
         }
     }

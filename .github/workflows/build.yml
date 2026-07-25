@@ -115,6 +115,34 @@ jobs:
           path: bench-results.txt
           if-no-files-found: error
 
+  # Runs the WebXR pages headlessly and checks they actually draw.
+  #
+  # docs/mech.html shipped for three commits calling a function that was never
+  # defined. Under "use strict" that throws on the first frame, before the draw
+  # call, every frame — so the headset showed a cleared buffer and nothing else.
+  # Pure black, no error anywhere, indistinguishable from a page that failed to
+  # load. Nothing in CI looked at the pages, on the assumption that testing VR
+  # needs a headset.
+  #
+  # It does not. Only the poses and the GL calls come from the headset; stub
+  # those and the wasm load, the world build, the physics and the draw list all
+  # run in Node. How it feels still needs a person in a headset, and that is the
+  # only part that does.
+  pages:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Uses the committed wasm, so this catches page regressions even when the
+      # engine has not been rebuilt.
+      - name: Check the pages draw
+        run: node wasm/page-test.js mech.html
+
   # Rebuilds docs/box3d.wasm from wasm/bridge.c and the pinned Box3D revision,
   # and commits it back. The browser build is the only way to measure Box3D on
   # real Quest hardware without a PC — no sideloading, no adb, no cable — so the
@@ -182,6 +210,9 @@ jobs:
         run: |
           cp docs/box3d.wasm wasm/box3d.wasm
           node wasm/test.js
+          # And against the page, so an engine change that leaves the headset
+          # showing nothing is caught here rather than in a headset.
+          node wasm/page-test.js mech.html
 
       - name: Commit if changed
         if: steps.changed.outputs.needed == 'true'
