@@ -31,9 +31,12 @@
 #include <cstring>
 #include <vector>
 
+#include "benchmark.h"
 #include "gl_helpers.h"
 #include "math3d.h"
 #include "physics.h"
+
+#include <ctime>
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "Box3DQuest", __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "Box3DQuest", __VA_ARGS__)
@@ -57,6 +60,19 @@ namespace {
 constexpr float kPhysicsDt        = 1.0f / 72.0f;
 constexpr int   kMaxStepsPerFrame = 3;
 constexpr float kMaxAccumulated   = 0.25f; // discard anything beyond a quarter second
+
+// Frames to wait after the session starts before the automated benchmark begins,
+// giving the compositor and the first swapchain acquisitions time to settle so
+// startup cost is not charged to the first ramp level.
+constexpr int kFramesBeforeBenchmark = 120;
+
+// Monotonic wall clock in milliseconds. Used only for measurement.
+double nowMs()
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
+}
 
 struct Swapchain
 {
@@ -113,6 +129,10 @@ struct App
     // Timing
     XrTime lastDisplayTime    = 0;
     float  physicsAccumulator = 0.0f;
+
+    // Measurement
+    double lastFrameStartMs = 0.0;
+    long   frameIndex       = 0;
 };
 
 // Model matrix and colour arrive per instance rather than as uniforms, so the
@@ -708,6 +728,7 @@ void renderFrame(App& a)
 
     // Capped so a slow frame cannot spiral: falling behind must never cause more
     // physics work, which would make the next frame slower still.
+    const double stepStartMs = nowMs();
     int steps = 0;
     while (a.physicsAccumulator >= kPhysicsDt && steps < kMaxStepsPerFrame)
     {
@@ -720,8 +741,30 @@ void renderFrame(App& a)
         // Drop the backlog rather than carry a debt that can never be repaid.
         a.physicsAccumulator = 0.0f;
     }
+    const double stepMs = nowMs() - stepStartMs;
 
-    if (a.sessionState == XR_SESSION_STATE_FOCUSED)
+    // Wall-clock between frame starts, which is what the player actually feels —
+    // it includes compositor wait, render and everything else, not just our work.
+    const double frameStartMs = nowMs();
+    const double frameMs =
+        (a.lastFrameStartMs > 0.0) ? (frameStartMs - a.lastFrameStartMs) : 0.0;
+    a.lastFrameStartMs = frameStartMs;
+    ++a.frameIndex;
+
+    // Kick off the automated run once the session has settled. Deliberately
+    // unconditional: no menu to navigate and no button to find, so a broken HUD
+    // or an unmapped controller cannot prevent the measurement from happening.
+    if (a.frameIndex == kFramesBeforeBenchmark)
+    {
+        Benchmark_Start();
+    }
+    if (frameMs > 0.0)
+    {
+        Benchmark_Update(frameMs, stepMs);
+    }
+
+    // Throwing cubes during a run would corrupt the body count being measured.
+    if (a.sessionState == XR_SESSION_STATE_FOCUSED && !Benchmark_Active())
     {
         handleInput(a, frameState.predictedDisplayTime);
     }

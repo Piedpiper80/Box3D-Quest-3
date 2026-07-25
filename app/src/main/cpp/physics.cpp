@@ -107,9 +107,9 @@ void addBox(b3BodyType type, const float pos[3], const float half[3], float dens
     g_bodies.push_back(rec);
 }
 
-} // namespace
-
-void Physics_Init()
+// Shared world construction, so the benchmark scene and the normal scene cannot
+// drift apart in gravity, worker count or any other world-level setting.
+void createWorld(bool enableSleep)
 {
     b3WorldDef wd = b3DefaultWorldDef();
     wd.gravity.x  = 0.0f;
@@ -127,17 +127,36 @@ void Physics_Init()
     // bodies where synchronisation costs more than it saves. Real scenes are far
     // past that crossover.
     wd.workerCount = 4;
+    wd.enableSleep = enableSleep;
 
     g_world = b3CreateWorld(&wd);
 
     g_bodies.clear();
     g_bodies.reserve(kMaxBodies);
 
-    // Ground: a large, thin static box centered at the floor plane (y = 0).
-    const float groundPos[3]  = {0.0f, -0.05f, 0.0f};
-    const float groundHalf[3] = {6.0f, 0.05f, 6.0f};
+    // Ground: a large, thin static box centered at the floor plane (y = 0). Wide
+    // enough to catch the benchmark's largest pile without bodies rolling off the
+    // edge and falling forever, which would quietly flatter the measurement.
+    const float groundPos[3]   = {0.0f, -0.05f, 0.0f};
+    const float groundHalf[3]  = {20.0f, 0.05f, 20.0f};
     const float groundColor[3] = {0.35f, 0.37f, 0.42f};
     addBox(b3_staticBody, groundPos, groundHalf, 1.0f, nullptr, groundColor);
+}
+
+// Deterministic PRNG: the benchmark must build an identical scene every run, or
+// its numbers wander and regressions hide in the noise.
+unsigned g_rng = 0x9e3779b9u;
+float frnd(float lo, float hi)
+{
+    g_rng = g_rng * 1664525u + 1013904223u;
+    return lo + (hi - lo) * (static_cast<float>(g_rng >> 8) / 16777216.0f);
+}
+
+} // namespace
+
+void Physics_Init()
+{
+    createWorld(true);
 
     // A tower of cubes ~1.5 m in front of the player that settles under gravity.
     // A tiny per-layer horizontal offset makes the stack lean and tumble so the
@@ -155,6 +174,44 @@ void Physics_Init()
         const float half[3] = {cube, cube, cube};
         addBox(b3_dynamicBody, pos, half, 1.0f, nullptr, palette[i % 6]);
     }
+}
+
+void Physics_Reset(bool enableSleep)
+{
+    if (b3World_IsValid(g_world))
+    {
+        b3DestroyWorld(g_world);
+    }
+    g_rng = 0x9e3779b9u;
+    createWorld(enableSleep);
+}
+
+void Physics_SpawnPile(int count)
+{
+    const float cube    = 0.10f;
+    const float spacing = cube * 2.6f;
+    const int   perRow  = 12;
+
+    for (int i = 0; i < count; ++i)
+    {
+        const int cx = i % perRow;
+        const int cz = (i / perRow) % perRow;
+        const int cy = i / (perRow * perRow);
+
+        const float pos[3] = {
+            (static_cast<float>(cx) - perRow * 0.5f) * spacing + frnd(-0.01f, 0.01f),
+            0.5f + static_cast<float>(cy) * spacing,
+            (static_cast<float>(cz) - perRow * 0.5f) * spacing + frnd(-0.01f, 0.01f) - 2.0f,
+        };
+        const float half[3]  = {cube, cube, cube};
+        const float color[3] = {0.55f, 0.62f, 0.78f};
+        addBox(b3_dynamicBody, pos, half, 1.0f, nullptr, color);
+    }
+}
+
+int Physics_BodyCount()
+{
+    return static_cast<int>(g_bodies.size());
 }
 
 void Physics_Shutdown()

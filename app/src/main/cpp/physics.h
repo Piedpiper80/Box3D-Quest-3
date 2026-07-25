@@ -46,3 +46,27 @@ void Physics_SpawnBox(const float pos[3], const float vel[3], float halfExtent, 
 // Fill `items` with the current transform + color of every body (ground first).
 // Returns the number written, never exceeding maxItems.
 int Physics_BuildRenderItems(RenderItem* items, int maxItems);
+
+// ---------------------------------------------------------------------------
+// Benchmark support
+//
+// Used by the automated on-device benchmark (benchmark.h) to build controlled
+// scenes. Not used by normal gameplay.
+// ---------------------------------------------------------------------------
+
+// Tear the world down and rebuild it with only the ground, leaving it empty and
+// ready to be filled to a specific body count.
+//
+// `enableSleep` selects the regime being measured. With sleep on, settled bodies
+// leave the solver and cost almost nothing — the flattering number. With it off,
+// every body is solved every step regardless of whether it has come to rest,
+// which is what a fight actually looks like and the number that matters.
+void Physics_Reset(bool enableSleep);
+
+// Drop `count` dynamic cubes in a loose jittered cuboid, high enough that they
+// fall, collide and pile up. Mirrors the headless harness in bench/bench.c so
+// the two sets of numbers describe the same scene.
+void Physics_SpawnPile(int count);
+
+// Total bodies in the world, including the static ground.
+int Physics_BodyCount();
