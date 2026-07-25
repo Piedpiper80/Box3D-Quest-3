@@ -50,8 +50,9 @@
           It should lag, sag, and overshoot.</li>
       <li>Pull the <strong>right trigger</strong> to strengthen the heavy arm's actuator — this is the upgrade
           curve. Five levels; the row of markers above it shows where you are.</li>
-      <li>Pull the <strong>left trigger</strong> to <strong>recalibrate</strong> — the mech rebuilds around your
-          head where it is now. Use it if the arms sit at the wrong height, or whenever you sit or stand.</li>
+      <li><strong>Long-press the Meta button</strong> to recentre, exactly as in any other Quest game — the
+          mech rebuilds around your head where it is now. The <strong>left trigger</strong> does the same thing
+          if recentring is awkward while seated.</li>
       <li>Knock the stack over. The question is whether the weight difference reads
           <em>through your arms</em> rather than as a number.</li>
     </ul>
@@ -471,6 +472,19 @@
         }).then(function (space) {
           refSpace = space;
           placed = false; settleFrames = 0; headN = 0; headSum = [0, 0, 0];
+
+          // Long-pressing the Meta button is how Quest players expect to
+          // recentre, and it is the system's job — an app cannot capture that
+          // button. What it can do is listen for the reference space's reset
+          // event, which the runtime fires when the user recentres. So the
+          // familiar gesture rebuilds the mech around wherever they now are.
+          if (space.addEventListener) {
+            space.addEventListener("reset", function () {
+              placed = false; settleFrames = 0; headN = 0;
+              headSum[0] = 0; headSum[1] = 0; headSum[2] = 0;
+              setStatus("Recentred — rebuilding around you…");
+            });
+          }
           session.requestAnimationFrame(onXRFrame);
           setStatus("In VR — placing the mech around you…");
         });
