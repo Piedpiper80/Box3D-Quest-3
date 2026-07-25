@@ -50,6 +50,8 @@
           It should lag, sag, and overshoot.</li>
       <li>Pull the <strong>right trigger</strong> to strengthen the heavy arm's actuator — this is the upgrade
           curve. Five levels; the row of markers above it shows where you are.</li>
+      <li>Pull the <strong>left trigger</strong> to <strong>recalibrate</strong> — the mech rebuilds around your
+          head where it is now. Use it if the arms sit at the wrong height, or whenever you sit or stand.</li>
       <li>Knock the stack over. The question is whether the weight difference reads
           <em>through your arms</em> rather than as a number.</li>
     </ul>
@@ -202,7 +204,10 @@
   //   280 -> 61deg   380 -> 35deg   440 -> 31deg   520 -> 14deg   750 -> 11deg
   // Above ~750 the curve flattens and the heavy arm becomes indistinguishable
   // from the light one, so there is no point spending levels up there.
-  var TORQUE_LEVELS = [280, 380, 440, 520, 750];
+  // Shifted up after testing: the old bottom level left the arm at 61 degrees
+  // of tracking error, which reads as broken rather than heavy. Level 1 should
+  // be sluggish but usable.
+  var TORQUE_LEVELS = [420, 480, 540, 620, 780];
   var heavyLevel = 0;
   // Shoulder positions in world space, set when the scene is built.
   var shoulders = [[0,0,0],[0,0,0]];
@@ -369,7 +374,13 @@
   }
 
   // --- VR -----------------------------------------------------------------
-  var refSpace = null, placed = false;
+  var refSpace = null, placed = false, settleFrames = 0;
+  // Head samples are averaged before the mech is built. Placing on the very
+  // first frame that returns a pose uses whatever tracking reports before it
+  // has settled — typically a default standing height, which puts the arms
+  // above the head of anyone sitting down.
+  var SETTLE_FRAMES = 40;
+  var headSum = [0, 0, 0], headN = 0;
 
   function onXRFrame(t, frame) {
     var session = frame.session;
@@ -378,13 +389,17 @@
 
     var viewerPose = frame.getViewerPose(refSpace);
 
-    // Build the mech around wherever the player actually is, once we have a
-    // real head pose. Guessing at it beforehand puts the arms somewhere else.
+    // Build the mech around wherever the player actually is, from an average of
+    // several settled frames rather than the first pose that arrives.
     if (!placed && viewerPose) {
       var hp = viewerPose.transform.position;
-      buildScene(hp.x, hp.y, hp.z);
-      placed = true;
-      setStatus("In VR. Left hand light, right hand heavy. Right trigger upgrades.");
+      headSum[0] += hp.x; headSum[1] += hp.y; headSum[2] += hp.z; headN++;
+      settleFrames++;
+      if (settleFrames >= SETTLE_FRAMES) {
+        buildScene(headSum[0] / headN, headSum[1] / headN, headSum[2] / headN);
+        placed = true;
+        setStatus("In VR. Left trigger recalibrates to your seated height.");
+      }
     }
 
     // Hands drive the arm targets. Left hand → light arm, right hand → heavy.
@@ -426,17 +441,26 @@
 
         session.addEventListener("end", function () {
           inVR = false; refSpace = null; lastT = 0; placed = false;
+          settleFrames = 0; headN = 0; headSum = [0, 0, 0];
           enterBtn.textContent = "Enter VR";
           setStatus("Left VR. Tap Enter VR to go back in.");
           requestAnimationFrame(preview);
         });
 
-        // Right trigger steps the heavy arm's actuator up the upgrade curve and
-        // wraps at the top, so the whole range is reachable one-handed.
         session.addEventListener("selectstart", function (e) {
-          if (e.inputSource.handedness !== "right") return;
-          heavyLevel = (heavyLevel + 1) % TORQUE_LEVELS.length;
-          E.w_arm_limits(1, TORQUE_LEVELS[heavyLevel]);
+          if (e.inputSource.handedness === "right") {
+            // Step the heavy arm's actuator up the curve, wrapping at the top so
+            // the whole range is reachable one-handed.
+            heavyLevel = (heavyLevel + 1) % TORQUE_LEVELS.length;
+            E.w_arm_limits(1, TORQUE_LEVELS[heavyLevel]);
+          } else {
+            // Recalibrate: rebuild the mech around the head where it is now.
+            // Sitting down, standing up, or leaning all move the shoulders, and
+            // there is no way to guess which the player meant.
+            placed = false; settleFrames = 0; headN = 0;
+            headSum[0] = 0; headSum[1] = 0; headSum[2] = 0;
+            setStatus("Recalibrating — hold still for a second…");
+          }
         });
 
         return gl.makeXRCompatible().then(function () {
@@ -446,7 +470,7 @@
           });
         }).then(function (space) {
           refSpace = space;
-          placed = false;
+          placed = false; settleFrames = 0; headN = 0; headSum = [0, 0, 0];
           session.requestAnimationFrame(onXRFrame);
           setStatus("In VR — placing the mech around you…");
         });
