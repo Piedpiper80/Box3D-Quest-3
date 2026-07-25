@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Box3D Quest — piloting spike</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 20px 60px; background: #0b0d12; color: #e8ecf4;
+    font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 25px; margin: 0 0 4px; }
+  .sub { color: #93a0b8; margin: 0 0 20px; }
+  .card { background: #141821; border: 1px solid #232a38; border-radius: 12px; padding: 18px 20px; margin: 0 0 16px; }
+  canvas { width: 100%; aspect-ratio: 16/9; display: block; background: #05070c; border-radius: 10px; }
+  button {
+    font: inherit; font-weight: 600; color: #0b0d12; background: #4f9cf9;
+    border: 0; border-radius: 9px; padding: 14px 22px; cursor: pointer; font-size: 17px;
+  }
+  button:disabled { opacity: .45; cursor: default; }
+  .status { color: #93a0b8; margin: 10px 0 0; font-size: 15px; }
+  .warn { color: #f0a83a; }
+  ul { margin: 8px 0 0; padding-left: 20px; color: #b9c4d6; }
+  li { margin: 5px 0; }
+  strong { color: #e8ecf4; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Piloting spike</h1>
+  <p class="sub">Does driving a heavy arm with your own hand feel like moving something massive?</p>
+
+  <div class="card">
+    <canvas id="scene"></canvas>
+  </div>
+
+  <div class="card">
+    <button id="enter" disabled>Checking headset…</button>
+    <p class="status" id="status">Loading…</p>
+  </div>
+
+  <div class="card">
+    <p style="margin:0 0 4px"><strong>What you're testing</strong></p>
+    <ul>
+      <li><strong>Left hand</strong> drives a <strong>light</strong> arm — it should track you closely.</li>
+      <li><strong>Right hand</strong> drives a <strong>heavy</strong> arm — same actuator, eight times the mass.
+          It should lag, sag, and overshoot.</li>
+      <li>Pull the <strong>right trigger</strong> to strengthen the heavy arm's actuator — this is the upgrade
+          curve. Five levels; the row of markers above it shows where you are.</li>
+      <li>Knock the stack over. The question is whether the weight difference reads
+          <em>through your arms</em> rather than as a number.</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var canvas   = document.getElementById("scene");
+  var enterBtn = document.getElementById("enter");
+  var statusEl = document.getElementById("status");
+
+  function setStatus(msg, warn) {
+    statusEl.textContent = msg;
+    statusEl.className = warn ? "status warn" : "status";
+  }
+
+  var gl = canvas.getContext("webgl2", { xrCompatible: true, antialias: true, alpha: false });
+  if (!gl) { setStatus("WebGL2 unavailable in this browser.", true); return; }
+
+  // --- minimal maths ------------------------------------------------------
+  function mul(a, b) {
+    var o = new Float32Array(16);
+    for (var c = 0; c < 4; c++) for (var r = 0; r < 4; r++) {
+      o[c*4+r] = a[r]*b[c*4] + a[4+r]*b[c*4+1] + a[8+r]*b[c*4+2] + a[12+r]*b[c*4+3];
+    }
+    return o;
+  }
+  // Column-major TRS from position, quaternion and per-axis half extents.
+  function trs(p, q, s) {
+    var x=q[0], y=q[1], z=q[2], w=q[3];
+    var x2=x+x, y2=y+y, z2=z+z;
+    var xx=x*x2, xy=x*y2, xz=x*z2, yy=y*y2, yz=y*z2, zz=z*z2;
+    var wx=w*x2, wy=w*y2, wz=w*z2;
+    return new Float32Array([
+      (1-(yy+zz))*s[0], (xy+wz)*s[0],     (xz-wy)*s[0],     0,
+      (xy-wz)*s[1],     (1-(xx+zz))*s[1], (yz+wx)*s[1],     0,
+      (xz+wy)*s[2],     (yz-wx)*s[2],     (1-(xx+yy))*s[2], 0,
+      p[0], p[1], p[2], 1
+    ]);
+  }
+  function persp(fovy, aspect, n, f) {
+    var t = 1/Math.tan(fovy/2);
+    return new Float32Array([t/aspect,0,0,0, 0,t,0,0, 0,0,(f+n)/(n-f),-1, 0,0,2*f*n/(n-f),0]);
+  }
+  function lookAt(e, c, up) {
+    var z=[e[0]-c[0],e[1]-c[1],e[2]-c[2]];
+    var l=Math.hypot(z[0],z[1],z[2]); z=[z[0]/l,z[1]/l,z[2]/l];
+    var x=[up[1]*z[2]-up[2]*z[1], up[2]*z[0]-up[0]*z[2], up[0]*z[1]-up[1]*z[0]];
+    l=Math.hypot(x[0],x[1],x[2])||1; x=[x[0]/l,x[1]/l,x[2]/l];
+    var y=[z[1]*x[2]-z[2]*x[1], z[2]*x[0]-z[0]*x[2], z[0]*x[1]-z[1]*x[0]];
+    return new Float32Array([
+      x[0],y[0],z[0],0, x[1],y[1],z[1],0, x[2],y[2],z[2],0,
+      -(x[0]*e[0]+x[1]*e[1]+x[2]*e[2]), -(y[0]*e[0]+y[1]*e[1]+y[2]*e[2]), -(z[0]*e[0]+z[1]*e[1]+z[2]*e[2]), 1
+    ]);
+  }
+
+  // --- GL -----------------------------------------------------------------
+  function sh(type, src) {
+    var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { setStatus("Shader: " + gl.getShaderInfoLog(s), true); }
+    return s;
+  }
+  var prog = gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, [
+    "#version 300 es",
+    "layout(location=0) in vec3 aPos; layout(location=1) in vec3 aNrm;",
+    "uniform mat4 uVP; uniform mat4 uM;",
+    "out vec3 vN;",
+    "void main(){ vN = mat3(uM)*aNrm; gl_Position = uVP*uM*vec4(aPos,1.0); }"
+  ].join("\n")));
+  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, [
+    "#version 300 es", "precision mediump float;",
+    "in vec3 vN; uniform vec3 uC; out vec4 o;",
+    "void main(){",
+    "  vec3 n = normalize(vN);",
+    "  float d = max(dot(n, normalize(vec3(0.4,1.0,0.3))), 0.0);",
+    "  o = vec4(uC*(0.35+0.75*d), 1.0);",
+    "}"
+  ].join("\n")));
+  gl.linkProgram(prog);
+  var uVP = gl.getUniformLocation(prog, "uVP");
+  var uM  = gl.getUniformLocation(prog, "uM");
+  var uC  = gl.getUniformLocation(prog, "uC");
+
+  // Unit cube spanning [-1,1], flat per-face normals.
+  var V = [
+     1,-1,-1, 1,0,0,  1,-1, 1, 1,0,0,  1, 1, 1, 1,0,0,  1, 1,-1, 1,0,0,
+    -1,-1, 1,-1,0,0, -1,-1,-1,-1,0,0, -1, 1,-1,-1,0,0, -1, 1, 1,-1,0,0,
+    -1, 1,-1, 0,1,0,  1, 1,-1, 0,1,0,  1, 1, 1, 0,1,0, -1, 1, 1, 0,1,0,
+    -1,-1, 1, 0,-1,0, 1,-1, 1, 0,-1,0, 1,-1,-1, 0,-1,0,-1,-1,-1, 0,-1,0,
+    -1,-1, 1, 0,0,1, -1, 1, 1, 0,0,1,  1, 1, 1, 0,0,1,  1,-1, 1, 0,0,1,
+     1,-1,-1, 0,0,-1, 1, 1,-1, 0,0,-1,-1, 1,-1, 0,0,-1,-1,-1,-1, 0,0,-1
+  ];
+  var I = [];
+  for (var f = 0; f < 6; f++) { var b = f*4; I.push(b,b+1,b+2, b,b+2,b+3); }
+  var vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  var vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(V), gl.STATIC_DRAW);
+  var ebo = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(I), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,24,0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1,3,gl.FLOAT,false,24,12);
+  gl.bindVertexArray(null);
+  gl.enable(gl.DEPTH_TEST);
+
+  var PAL = [[.90,.30,.24],[.95,.61,.20],[.96,.85,.30],[.30,.69,.44],[.26,.52,.86],[.55,.36,.78]];
+
+  function draw(vp, items) {
+    gl.useProgram(prog);
+    gl.uniformMatrix4fv(uVP, false, vp);
+    gl.bindVertexArray(vao);
+    for (var i = 0; i < items.length; i++) {
+      gl.uniformMatrix4fv(uM, false, items[i].m);
+      gl.uniform3fv(uC, items[i].c);
+      gl.drawElements(gl.TRIANGLES, I.length, gl.UNSIGNED_SHORT, 0);
+    }
+    gl.bindVertexArray(null);
+  }
+
+  // --- arm configuration --------------------------------------------------
+  // Same actuator on both arms, eight times the mass on the right. The whole
+  // spike is whether that difference is felt rather than read.
+  var SHOULDER_Y = 1.35, FORWARD = -0.55, SPREAD = 0.30;
+  var ARM_HALF = [0.28, 0.09, 0.09];
+  var LIGHT_DENSITY = 1.0, HEAVY_DENSITY = 8.0;
+  var BASE_TORQUE = 60;
+  // The upgrade curve: what a stronger actuator buys.
+  var FORCE_LEVELS = [250, 500, 1000, 2000, 4000];
+  var heavyLevel = 1;
+
+  var E = null;
+
+  function buildScene() {
+    E.w_reset(1);
+    // Something to hit, so the arms have consequences.
+    for (var i = 0; i < 10; i++) {
+      E.w_spawn(0.0, 0.12 + i * 0.21, -1.5, 0, 0, 0, 0.10, i % 6);
+    }
+    E.w_arm_create(0, -SPREAD, SHOULDER_Y, FORWARD, ARM_HALF[0], ARM_HALF[1], ARM_HALF[2],
+                   LIGHT_DENSITY, FORCE_LEVELS[heavyLevel], BASE_TORQUE);
+    E.w_arm_create(1,  SPREAD, SHOULDER_Y, FORWARD, ARM_HALF[0], ARM_HALF[1], ARM_HALF[2],
+                   HEAVY_DENSITY, FORCE_LEVELS[heavyLevel], BASE_TORQUE);
+  }
+
+  function armItems() {
+    var ptr = E.w_arm_state() >>> 2;
+    var f = new Float32Array(E.memory.buffer);
+    var out = [];
+    for (var i = 0; i < 2; i++) {
+      var o = ptr + i * 7;
+      out.push({
+        m: trs([f[o], f[o+1], f[o+2]], [f[o+3], f[o+4], f[o+5], f[o+6]], ARM_HALF),
+        c: i === 0 ? [0.45, 0.85, 0.95] : [0.95, 0.45, 0.35]
+      });
+    }
+    return out;
+  }
+
+  function cubeItems() {
+    var n = E.w_count();
+    var ptr = E.w_state() >>> 2;
+    var f = new Float32Array(E.memory.buffer);
+    var out = [];
+    for (var i = 0; i < n; i++) {
+      var o = ptr + i * 9, h = f[o+7];
+      out.push({
+        m: trs([f[o], f[o+1], f[o+2]], [f[o+3], f[o+4], f[o+5], f[o+6]], [h, h, h]),
+        c: PAL[(f[o+8] | 0) % 6]
+      });
+    }
+    return out;
+  }
+
+  // Level readout as a row of markers — no font needed, readable at a glance.
+  function levelItems() {
+    var out = [];
+    for (var i = 0; i < FORCE_LEVELS.length; i++) {
+      var lit = i <= heavyLevel;
+      out.push({
+        m: trs([SPREAD - 0.12 + i * 0.06, SHOULDER_Y + 0.32, FORWARD], [0,0,0,1],
+               [0.018, 0.018, 0.018]),
+        c: lit ? [0.98, 0.72, 0.25] : [0.20, 0.23, 0.30]
+      });
+    }
+    return out;
+  }
+
+  function allItems() { return cubeItems().concat(armItems(), levelItems()); }
+
+  // --- wasm ---------------------------------------------------------------
+  var memRef = { mem: null };
+  var wasi = {
+    fd_write: function (fd, iovs, iovcnt, pnum) {
+      try {
+        var dv = new DataView(memRef.mem.buffer), w = 0;
+        for (var i = 0; i < iovcnt; i++) w += dv.getUint32(iovs + i*8 + 4, true);
+        dv.setUint32(pnum, w, true);
+      } catch (e) {}
+      return 0;
+    },
+    fd_close: function(){return 0;}, fd_fdstat_get: function(){return 0;}, fd_seek: function(){return 0;}
+  };
+
+  fetch("box3d.wasm")
+    .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.arrayBuffer(); })
+    .then(function (b) { return WebAssembly.instantiate(b, { wasi_snapshot_preview1: wasi }); })
+    .then(function (res) {
+      var inst = res.instance;
+      memRef.mem = inst.exports.memory;
+      inst.exports._initialize();
+      E = inst.exports;
+
+      if (typeof E.w_arm_create !== "function") {
+        setStatus("This box3d.wasm predates the piloting exports (w_arm_create). It needs rebuilding from wasm/bridge.c.", true);
+        return;
+      }
+      buildScene();
+      checkVR();
+      requestAnimationFrame(preview);
+    })
+    .catch(function (e) { setStatus("Could not load the engine: " + e.message, true); });
+
+  function checkVR() {
+    if (!navigator.xr) { setStatus("No WebXR here. Open this page in the Meta Quest Browser.", true); return; }
+    navigator.xr.isSessionSupported("immersive-vr").then(function (ok) {
+      if (ok) { enterBtn.disabled = false; enterBtn.textContent = "Enter VR"; setStatus("Ready. Tap Enter VR."); }
+      else { setStatus("This browser has WebXR but no VR device.", true); }
+    });
+  }
+
+  // --- 2D preview ---------------------------------------------------------
+  var inVR = false, lastT = 0;
+  function preview(t) {
+    if (inVR) return;
+    requestAnimationFrame(preview);
+    var dt = lastT ? Math.min((t - lastT) / 1000, 0.05) : 0.016; lastT = t;
+    // Sweep the targets so the difference is visible before entering VR.
+    var s = t / 1000;
+    var tx = Math.sin(s * 1.6) * 0.45;
+    var ty = SHOULDER_Y + Math.sin(s * 1.1) * 0.28;
+    E.w_arm_target(0, -SPREAD + tx, ty, FORWARD);
+    E.w_arm_target(1,  SPREAD + tx, ty, FORWARD);
+    E.w_step(dt);
+
+    var w = canvas.clientWidth * devicePixelRatio, h = canvas.clientHeight * devicePixelRatio;
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.02, 0.03, 0.07, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    var vp = mul(persp(1.0, canvas.width / canvas.height, 0.05, 60),
+                 lookAt([0, 1.5, 1.9], [0, 1.0, -1.0], [0, 1, 0]));
+    draw(vp, allItems());
+  }
+
+  // --- VR -----------------------------------------------------------------
+  var refSpace = null;
+
+  function onXRFrame(t, frame) {
+    var session = frame.session;
+    session.requestAnimationFrame(onXRFrame);
+    var dt = lastT ? Math.min((t - lastT) / 1000, 0.05) : 0.016; lastT = t;
+
+    // Hands drive the arm targets. Left hand → light arm, right hand → heavy.
+    var sources = session.inputSources;
+    for (var s = 0; s < sources.length; s++) {
+      var src = sources[s];
+      var space = src.gripSpace || src.targetRaySpace;
+      if (!space) continue;
+      var p = frame.getPose(space, refSpace);
+      if (!p) continue;
+      var idx = src.handedness === "right" ? 1 : 0;
+      var pos = p.transform.position;
+      E.w_arm_target(idx, pos.x, pos.y, pos.z);
+    }
+
+    E.w_step(dt);
+
+    var layer = session.renderState.baseLayer;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+    gl.clearColor(0.02, 0.03, 0.07, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    var pose = frame.getViewerPose(refSpace);
+    if (!pose) return;
+    var items = allItems();
+    for (var v = 0; v < pose.views.length; v++) {
+      var view = pose.views[v];
+      var vp = layer.getViewport(view);
+      gl.viewport(vp.x, vp.y, vp.width, vp.height);
+      draw(mul(view.projectionMatrix, view.transform.inverse.matrix), items);
+    }
+  }
+
+  enterBtn.addEventListener("click", function () {
+    if (enterBtn.disabled) return;
+    enterBtn.textContent = "Starting…";
+    navigator.xr.requestSession("immersive-vr", { optionalFeatures: ["local-floor", "hand-tracking"] })
+      .then(function (session) {
+        inVR = true; lastT = 0;
+
+        session.addEventListener("end", function () {
+          inVR = false; refSpace = null; lastT = 0;
+          enterBtn.textContent = "Enter VR";
+          setStatus("Left VR. Tap Enter VR to go back in.");
+          requestAnimationFrame(preview);
+        });
+
+        // Right trigger steps the heavy arm's actuator up the upgrade curve and
+        // wraps at the top, so the whole range is reachable one-handed.
+        session.addEventListener("selectstart", function (e) {
+          if (e.inputSource.handedness !== "right") return;
+          heavyLevel = (heavyLevel + 1) % FORCE_LEVELS.length;
+          E.w_arm_limits(1, FORCE_LEVELS[heavyLevel], BASE_TORQUE);
+        });
+
+        return gl.makeXRCompatible().then(function () {
+          session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
+          return session.requestReferenceSpace("local-floor").catch(function () {
+            return session.requestReferenceSpace("local");
+          });
+        }).then(function (space) {
+          refSpace = space;
+          buildScene();
+          session.requestAnimationFrame(onXRFrame);
+          setStatus("In VR.");
+        });
+      })
+      .catch(function (e) {
+        enterBtn.textContent = "Enter VR";
+        setStatus("Could not start VR: " + (e && e.message ? e.message : e), true);
+      });
+  });
+})();
+</script>
+</body>
+</html>
