@@ -16,7 +16,7 @@
 //   w_hand_state()                 8 floats per body: [x,y,z, qx,qy,qz,qw, half]
 //   w_mech_create(...)             the real machine: torso + two jointed arms
 //   w_mech_stand(x,y,z)            where the machine tries to stand
-//   w_mech_hand(i,x,y,z,active)    haul wrist i toward the player's hand
+//   w_mech_hand(i,x,y,z,active,q)  haul attachment i to the controller, and aim it
 //   w_mech_apply()                 apply leg + arm forces (call before w_step)
 //   w_mech_state()                 7 floats each: torso, upperL, foreL, upperR, foreR
 //   w_torso_create(...)            piloting spike: the body the arms hang from
@@ -466,6 +466,13 @@ float* w_hand_state(void)
 static b3BodyId s_mTorso;
 static b3BodyId s_mUpper[MECH_ARMS];
 static b3BodyId s_mFore[MECH_ARMS];
+// The attachment at the end of the arm. Not a hand — a mount. Today it is a
+// blunt block; the point is that it is a separate articulated body on a wrist,
+// so a sword, a gripper or a wrecking ball can be bolted there later and will
+// aim, swing and hit on its own terms.
+static b3BodyId s_mTool[MECH_ARMS];
+static b3JointId s_mWristJ[MECH_ARMS];
+static b3Quat s_mToolAim[MECH_ARMS];
 static b3JointId s_mShoulder[MECH_ARMS];
 static b3JointId s_mElbow[MECH_ARMS];
 static b3Vec3 s_mWrist[MECH_ARMS];      // wrist offset in forearm local space
@@ -482,7 +489,7 @@ static float s_mTorsoK = 6000.0f;
 static float s_mTorsoC = 900.0f;
 static float s_mTorsoMaxF = 9000.0f;
 
-static float s_mUpperLen, s_mForeLen;
+static float s_mUpperLen, s_mForeLen, s_mToolHalf;
 
 WASM_EXPORT("w_mech_create")
 void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
@@ -577,13 +584,47 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
         rj.motorSpeed = 0.0f;
         s_mElbow[i] = b3CreateRevoluteJoint(s_world, &rj);
 
-        // The point that tracks the controller: the far end of the forearm.
+        // --- attachment, on a wrist ---
+        b3BodyDef kd = b3DefaultBodyDef();
+        kd.type = b3_dynamicBody;
+        kd.position.x = x + sx; kd.position.y = y + sy;
+        kd.position.z = z - upperLen - foreLen;
+        kd.angularDamping = 0.25f;
+        s_mTool[i] = b3CreateBody(s_world, &kd);
+
+        b3ShapeDef ksd = b3DefaultShapeDef();
+        ksd.density = density;
+        ksd.baseMaterial.friction = 0.8f;
+        const float toolHalf = thickness * 1.3f;
+        s_mToolHalf = toolHalf;
+        b3BoxHull khull = b3MakeBoxHull(toolHalf, toolHalf, toolHalf);
+        b3Transform koff = b3Transform_identity;
+        koff.p.z = -toolHalf;
+        b3CreateTransformedHullShape(s_mTool[i], &ksd, &khull.base, koff, one);
+
+        // Wrist: spherical, with a tighter cone than the shoulder. It has to
+        // hold an aim, so its motor is what resists a sword being knocked aside.
+        b3SphericalJointDef wj = b3DefaultSphericalJointDef();
+        wj.base.bodyIdA = s_mFore[i];
+        wj.base.bodyIdB = s_mTool[i];
+        wj.base.localFrameA = b3Transform_identity;
+        wj.base.localFrameA.p.z = -foreLen;
+        wj.base.localFrameB = b3Transform_identity;
+        wj.base.collideConnected = false;
+        wj.enableConeLimit = true;
+        wj.coneAngle = 1.1f;
+        wj.enableMotor = true;
+        wj.maxMotorTorque = elbowTorque * 0.5f;
+        s_mWristJ[i] = b3CreateSphericalJoint(s_world, &wj);
+        s_mToolAim[i] = b3Quat_identity;
+
+        // The point that tracks the controller: the middle of the attachment.
         //
         // There is no separate hand body — the mech does not need one. What
         // matters is that this point ends up where the player's hand actually
         // is, so the arm's total length has to match their reach rather than
         // stopping a hand's length short at a wrist.
-        s_mWrist[i].x = 0.0f; s_mWrist[i].y = 0.0f; s_mWrist[i].z = -foreLen;
+        s_mWrist[i].x = 0.0f; s_mWrist[i].y = 0.0f; s_mWrist[i].z = -toolHalf;
         s_mHandActive[i] = 0;
     }
     s_mExists = 1;
@@ -597,11 +638,14 @@ void w_mech_stand(float x, float y, float z)
 }
 
 WASM_EXPORT("w_mech_hand")
-void w_mech_hand(int i, float x, float y, float z, int active)
+void w_mech_hand(int i, float x, float y, float z, int active,
+                 float qx, float qy, float qz, float qw)
 {
     if (i < 0 || i >= MECH_ARMS) return;
     s_mHandTarget[i].x = x; s_mHandTarget[i].y = y; s_mHandTarget[i].z = z;
     s_mHandActive[i] = active;
+    s_mToolAim[i].v.x = qx; s_mToolAim[i].v.y = qy; s_mToolAim[i].v.z = qz;
+    s_mToolAim[i].s = qw;
 }
 
 // How hard you can haul the wrist. This is the pilot's grip on the controls,
@@ -670,8 +714,8 @@ void w_mech_apply(void)
     {
         if (!s_mHandActive[i]) continue;
 
-        b3Pos bp = b3Body_GetPosition(s_mFore[i]);
-        b3Quat bq = b3Body_GetRotation(s_mFore[i]);
+        b3Pos bp = b3Body_GetPosition(s_mTool[i]);
+        b3Quat bq = b3Body_GetRotation(s_mTool[i]);
         b3Matrix3 m = b3MakeMatrixFromQuat(bq);
 
         // Wrist in world space.
@@ -679,7 +723,7 @@ void w_mech_apply(void)
         float wy = (float)bp.y + m.cz.y * s_mWrist[i].z;
         float wz = (float)bp.z + m.cz.z * s_mWrist[i].z;
 
-        b3Vec3 v = b3Body_GetLinearVelocity(s_mFore[i]);
+        b3Vec3 v = b3Body_GetLinearVelocity(s_mTool[i]);
         float fx = (s_mHandTarget[i].x - wx) * s_mPullK - v.x * s_mPullC;
         float fy = (s_mHandTarget[i].y - wy) * s_mPullK - v.y * s_mPullC;
         float fz = (s_mHandTarget[i].z - wz) * s_mPullK - v.z * s_mPullC;
@@ -692,18 +736,44 @@ void w_mech_apply(void)
 
         b3Vec3 f; f.x = fx; f.y = fy; f.z = fz;
         b3Pos at; at.x = wx; at.y = wy; at.z = wz;
-        b3Body_ApplyForce(s_mFore[i], f, at, true);
+        b3Body_ApplyForce(s_mTool[i], f, at, true);
+
+        // Aim. The attachment turns to face where the controller faces, which is
+        // what lets a sword be pointed rather than merely carried. Torque-based
+        // so it can be resisted or knocked off line.
+        {
+            // Shortest rotation from current to target, as a quaternion.
+            b3Quat cur = b3Body_GetRotation(s_mTool[i]);
+            b3Quat tgt = s_mToolAim[i];
+            float dot = cur.v.x*tgt.v.x + cur.v.y*tgt.v.y + cur.v.z*tgt.v.z + cur.s*tgt.s;
+            if (dot < 0.0f) { tgt.v.x = -tgt.v.x; tgt.v.y = -tgt.v.y; tgt.v.z = -tgt.v.z; tgt.s = -tgt.s; }
+            // err = tgt * conj(cur)
+            float cx = -cur.v.x, cy = -cur.v.y, cz = -cur.v.z, cw = cur.s;
+            float ex = tgt.s*cx + tgt.v.x*cw + tgt.v.y*cz - tgt.v.z*cy;
+            float ey = tgt.s*cy - tgt.v.x*cz + tgt.v.y*cw + tgt.v.z*cx;
+            float ez = tgt.s*cz + tgt.v.x*cy - tgt.v.y*cx + tgt.v.z*cw;
+
+            b3Vec3 w = b3Body_GetAngularVelocity(s_mTool[i]);
+            const float kAim = 26.0f, cAim = 3.0f;
+            b3Vec3 t;
+            t.x = ex * kAim - w.x * cAim;
+            t.y = ey * kAim - w.y * cAim;
+            t.z = ez * kAim - w.z * cAim;
+            b3Body_ApplyTorque(s_mTool[i], t, true);
+        }
     }
 }
 
-// 7 floats each for: torso, upper L, fore L, upper R, fore R — 35 total.
+// 7 floats each: torso, then upper/fore/attachment for each arm — 49 total.
 WASM_EXPORT("w_mech_state")
 float* w_mech_state(void)
 {
-    static float out[5 * 7];
+    static float out[7 * 7];
     if (!s_mExists) return out;
-    b3BodyId ids[5] = { s_mTorso, s_mUpper[0], s_mFore[0], s_mUpper[1], s_mFore[1] };
-    for (int i = 0; i < 5; i++)
+    b3BodyId ids[7] = { s_mTorso,
+                        s_mUpper[0], s_mFore[0], s_mTool[0],
+                        s_mUpper[1], s_mFore[1], s_mTool[1] };
+    for (int i = 0; i < 7; i++)
     {
         float* o = &out[i * 7];
         b3Pos p = b3Body_GetPosition(ids[i]);
@@ -717,8 +787,8 @@ float* w_mech_state(void)
 WASM_EXPORT("w_mech_lengths")
 float* w_mech_lengths(void)
 {
-    static float out[2];
-    out[0] = s_mUpperLen; out[1] = s_mForeLen;
+    static float out[3];
+    out[0] = s_mUpperLen; out[1] = s_mForeLen; out[2] = s_mToolHalf;
     return out;
 }
 

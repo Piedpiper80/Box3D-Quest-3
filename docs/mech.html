@@ -41,7 +41,9 @@
 
   <div class="card">
     <ul>
-      <li>A capped force <strong>hauls the end of each arm</strong> to where your hand is. The arm is not
+      <li>Each arm ends in an <strong>articulated mount</strong> on a wrist — a blunt block for now, but a
+          sword, gripper or wrecking ball bolts on there. It <strong>aims where you point</strong>.
+          A capped force hauls it to where your hand is. The arm is not
           told to match you — it gets dragged, and the joints work out the rest.</li>
       <li>Press <strong>A</strong> to change what the arms are made of:
           <strong>light → medium → heavy → very heavy</strong>. Amber markers on your right show which.</li>
@@ -335,7 +337,9 @@
 
       // Haul the matching wrist toward this controller.
       if (E && built) {
-        E.w_mech_hand(src.handedness === "right" ? 1 : 0, pos.x, pos.y, pos.z, 1);
+        // Position and aim — the attachment turns to face where you point.
+        E.w_mech_hand(src.handedness === "right" ? 1 : 0,
+                      pos.x, pos.y, pos.z, 1, q.x, q.y, q.z, q.w);
       }
       // A cycles the arm material.
       if (gp && gp.buttons && gp.buttons.length > 4 && src.handedness === "right") {
