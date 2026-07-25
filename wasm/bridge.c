@@ -249,6 +249,15 @@ int w_count(void)
     return s_count;
 }
 
+// Maximum bodies this build can hold. Exported so callers and tests can derive
+// the limit rather than hard-coding it — the previous hard-coded 96 in test.js
+// silently went stale the moment the cap was raised.
+WASM_EXPORT("w_capacity")
+int w_capacity(void)
+{
+    return MAX_CUBES;
+}
+
 WASM_EXPORT("w_state")
 float* w_state(void)
 {

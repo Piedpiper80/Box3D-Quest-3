@@ -80,14 +80,28 @@ const wasi = new WASI({ version: "preview1" });
     `y=${landed.p[1].toFixed(3)} h=${landed.h.toFixed(3)}`);
 
   // --- recycling: overflow the cube budget ---
-  for (let i = 0; i < 120; i++) E.w_spawn(0, 1, 0, 0, 0, -2, 0.06, 2);
-  check("cube cap respected", E.w_count() <= 96, `got ${E.w_count()}`);
+  // Derived from the module rather than hard-coded: this assertion previously
+  // baked in 96 and quietly went stale when the cap was raised.
+  const cap = E.w_capacity();
+  for (let i = 0; i < cap + 50; i++) E.w_spawn(0, 1, 0, 0, 0, -2, 0.06, 2);
+  check("cube cap respected", E.w_count() <= cap, `got ${E.w_count()}, cap ${cap}`);
+  check("recycling engaged at the cap", E.w_count() === cap, `got ${E.w_count()}, cap ${cap}`);
   for (let i = 0; i < 72; i++) E.w_step(1 / 72);
   const after = read();
   const nan2 = after.filter((c) => c.p.some((v) => !Number.isFinite(v))).length;
   check("stable after recycling storm", nan2 === 0, `${nan2} NaN`);
 
-  // --- perf: how expensive is a step at full load? ---
+  // --- benchmark scene construction ---
+  E.w_reset(0);
+  check("reset empties the world", E.w_count() === 0, `got ${E.w_count()}`);
+  E.w_fill(200);
+  check("fill builds the requested pile", E.w_count() === 200, `got ${E.w_count()}`);
+
+  // --- perf: how expensive is a step at a defined load? ---
+  // Measured on the 200-body scene just built, rather than on whatever bodies
+  // happened to survive the recycling storm — a controlled load makes this
+  // number reproducible and comparable between runs.
+  for (let i = 0; i < 30; i++) E.w_step(1 / 72); // let the pile form
   const t0 = process.hrtime.bigint();
   for (let i = 0; i < 200; i++) E.w_step(1 / 72);
   const usPerStep = Number(process.hrtime.bigint() - t0) / 200 / 1000;
