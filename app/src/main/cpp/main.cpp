@@ -33,9 +33,11 @@
 
 #include "benchmark.h"
 #include "gl_helpers.h"
+#include "hud.h"
 #include "math3d.h"
 #include "physics.h"
 
+#include <cstdio>
 #include <ctime>
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "Box3DQuest", __VA_ARGS__)
@@ -617,6 +619,94 @@ void handleInput(App& a, XrTime predictedTime)
 // Rendering
 // ---------------------------------------------------------------------------
 
+// Build the debug readout and append it to this frame's instances.
+//
+// Placed in world space just in front of the head rather than in view space, so
+// that a single instance buffer serves both eyes (see hud.h). The panel is
+// rebuilt every frame from the current head pose, which makes it head-locked
+// without any per-eye special casing.
+//
+// Returns the new instance count. Failure here must never cost a measurement,
+// so nothing in this path can abort the frame — worst case the text is absent.
+int appendHud(App& a, RenderItem* items, int count, int maxItems, uint32_t viewCount,
+              double frameMs, double stepMs)
+{
+    if (viewCount == 0)
+    {
+        return count;
+    }
+
+    // Head position: midpoint of the eyes. Orientation is taken from the left
+    // eye — the two differ only by IPD convergence, far below what a debug panel
+    // cares about.
+    float headPos[3] = {a.views[0].pose.position.x, a.views[0].pose.position.y,
+                        a.views[0].pose.position.z};
+    if (viewCount > 1)
+    {
+        headPos[0] = 0.5f * (headPos[0] + a.views[1].pose.position.x);
+        headPos[1] = 0.5f * (headPos[1] + a.views[1].pose.position.y);
+        headPos[2] = 0.5f * (headPos[2] + a.views[1].pose.position.z);
+    }
+
+    static const float kRightLocal[3]   = {1.0f, 0.0f, 0.0f};
+    static const float kUpLocal[3]      = {0.0f, 1.0f, 0.0f};
+    static const float kForwardLocal[3] = {0.0f, 0.0f, -1.0f};
+
+    float right[3], up[3], forward[3];
+    quatRotate(a.views[0].pose.orientation, kRightLocal, right);
+    quatRotate(a.views[0].pose.orientation, kUpLocal, up);
+    quatRotate(a.views[0].pose.orientation, kForwardLocal, forward);
+
+    // A metre ahead, offset down and left so it sits out of the way rather than
+    // over the middle of the scene.
+    constexpr float kDistance  = 1.0f;
+    constexpr float kPixel     = 0.006f;
+    const float     originX    = -0.28f;
+    const float     originY    = -0.14f;
+
+    float origin[3];
+    for (int i = 0; i < 3; ++i)
+    {
+        origin[i] = headPos[i] + forward[i] * kDistance + right[i] * originX + up[i] * originY;
+    }
+
+    const float fps = (frameMs > 0.0) ? static_cast<float>(1000.0 / frameMs) : 0.0f;
+
+    char line1[64];
+    char line2[64];
+    snprintf(line1, sizeof(line1), "FPS %d.%d  FRAME %d.%02d MS", static_cast<int>(fps),
+             static_cast<int>(fps * 10) % 10, static_cast<int>(frameMs),
+             static_cast<int>(frameMs * 100) % 100);
+    snprintf(line2, sizeof(line2), "STEP %d.%02d MS  BODIES %d", static_cast<int>(stepMs),
+             static_cast<int>(stepMs * 100) % 100, Physics_BodyCount());
+
+    // Amber when the frame missed 72 Hz, green when it did not — readable at a
+    // glance without parsing the digits.
+    const bool  missed    = frameMs > (1000.0 / 72.0) * 1.05;
+    const float okCol[3]  = {0.35f, 0.90f, 0.45f};
+    const float badCol[3] = {0.98f, 0.68f, 0.20f};
+    const float* col      = missed ? badCol : okCol;
+
+    const float lineDrop = 9.0f * kPixel;
+    float       cursor[3];
+
+    for (int i = 0; i < 3; ++i) cursor[i] = origin[i];
+    count = Hud_AppendText(items, count, maxItems, cursor, right, up, forward, kPixel, col, line1);
+
+    for (int i = 0; i < 3; ++i) cursor[i] = origin[i] - up[i] * lineDrop;
+    count = Hud_AppendText(items, count, maxItems, cursor, right, up, forward, kPixel, col, line2);
+
+    if (const char* status = Benchmark_StatusLine())
+    {
+        const float benchCol[3] = {0.55f, 0.75f, 0.98f};
+        for (int i = 0; i < 3; ++i) cursor[i] = origin[i] - up[i] * lineDrop * 2.0f;
+        count = Hud_AppendText(items, count, maxItems, cursor, right, up, forward, kPixel,
+                               benchCol, status);
+    }
+
+    return count;
+}
+
 // Push this frame's instance data to the GPU. Called once per frame, not once
 // per eye — the transforms are identical for both views, only the camera differs.
 void uploadInstances(App& a, const RenderItem* items, int count)
@@ -793,7 +883,8 @@ void renderFrame(App& a)
         if (posesValid)
         {
             static RenderItem items[kMaxBodies];
-            const int count = Physics_BuildRenderItems(items, kMaxBodies);
+            int count = Physics_BuildRenderItems(items, kMaxBodies);
+            count = appendHud(a, items, count, kMaxBodies, viewCountOut, frameMs, stepMs);
             // Uploaded once, drawn by both eyes.
             uploadInstances(a, items, count);
 

@@ -111,6 +111,15 @@ void addBox(b3BodyType type, const float pos[3], const float half[3], float dens
 // drift apart in gravity, worker count or any other world-level setting.
 void createWorld(bool enableSleep)
 {
+    // Always tear down first. Both Physics_Init and Physics_Reset route through
+    // here, and the benchmark rebuilds the world once per ramp level — without
+    // this, every rebuild would leak an entire Box3D world.
+    if (b3World_IsValid(g_world))
+    {
+        b3DestroyWorld(g_world);
+        g_world = b3_nullWorldId;
+    }
+
     b3WorldDef wd = b3DefaultWorldDef();
     wd.gravity.x  = 0.0f;
     wd.gravity.y  = -9.81f;
@@ -178,10 +187,8 @@ void Physics_Init()
 
 void Physics_Reset(bool enableSleep)
 {
-    if (b3World_IsValid(g_world))
-    {
-        b3DestroyWorld(g_world);
-    }
+    // Reseed so every benchmark level builds a byte-identical scene; createWorld
+    // handles tearing the previous world down.
     g_rng = 0x9e3779b9u;
     createWorld(enableSleep);
 }

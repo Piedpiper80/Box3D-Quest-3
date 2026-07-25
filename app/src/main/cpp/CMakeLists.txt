@@ -58,7 +58,8 @@ target_include_directories(native_app_glue PUBLIC
 add_library(box3dquest SHARED
     main.cpp
     physics.cpp
-    benchmark.cpp)
+    benchmark.cpp
+    hud.cpp)
 
 target_include_directories(box3dquest PRIVATE
     ${ANDROID_NDK}/sources/android/native_app_glue)
