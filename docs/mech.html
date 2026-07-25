@@ -41,8 +41,8 @@
 
   <div class="card">
     <ul>
-      <li>A capped force <strong>hauls each wrist</strong> toward your hand. The arm is not told to match
-          you — it gets dragged, and the joints work out the rest.</li>
+      <li>A capped force <strong>hauls the end of each arm</strong> to where your hand is. The arm is not
+          told to match you — it gets dragged, and the joints work out the rest.</li>
       <li>Press <strong>A</strong> to change what the arms are made of:
           <strong>light → medium → heavy → very heavy</strong>. Amber markers on your right show which.</li>
       <li>Heavier arms lag, overshoot, and <strong>drag the whole machine off its footing</strong> —
@@ -185,7 +185,10 @@
 
   // --- the machine ---------------------------------------------------------
   var E = null, built = false;
-  var UPPER_LEN = 0.40, FORE_LEN = 0.38, THICK = 0.07;
+  // Total reach 0.86 m from the shoulder — an upper arm plus a forearm plus
+  // the hand's length, so the arm's tip lands where the controller is instead
+  // of stopping short at a wrist.
+  var UPPER_LEN = 0.40, FORE_LEN = 0.46, THICK = 0.07;
   // Cone was 1.3 rad (~75 deg), which is a crane, not a shoulder. 2.2 rad
   // (~126 deg) is roughly a human shoulder's forward range.
   var SHOULDER_TORQUE = 1400, ELBOW_TORQUE = 900, CONE = 2.2;

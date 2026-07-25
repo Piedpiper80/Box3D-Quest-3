@@ -575,7 +575,12 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
         rj.motorSpeed = 0.0f;
         s_mElbow[i] = b3CreateRevoluteJoint(s_world, &rj);
 
-        // The wrist is the far end of the forearm, in its local frame.
+        // The point that tracks the controller: the far end of the forearm.
+        //
+        // There is no separate hand body — the mech does not need one. What
+        // matters is that this point ends up where the player's hand actually
+        // is, so the arm's total length has to match their reach rather than
+        // stopping a hand's length short at a wrist.
         s_mWrist[i].x = 0.0f; s_mWrist[i].y = 0.0f; s_mWrist[i].z = -foreLen;
         s_mHandActive[i] = 0;
     }
