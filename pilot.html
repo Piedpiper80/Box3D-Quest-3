@@ -45,8 +45,9 @@
   <div class="card">
     <p style="margin:0 0 4px"><strong>What you're testing</strong></p>
     <ul>
-      <li><strong>Hold grip</strong> to take hold of an arm — release and it goes slack and hangs. Grip means
-          "hold this" everywhere in VR, and here it is also the pilot letting go of the controls.</li>
+      <li><strong>Reach to a glowing handle and squeeze grip</strong> to take hold of that arm. You latch in —
+          after that the arms follow you with nothing held, and grip is free for other things.
+          <strong>B</strong> lets go.</li>
       <li><strong>Left hand</strong> drives a <strong>light</strong> arm — it should track you closely.</li>
       <li><strong>Right hand</strong> drives a <strong>heavy</strong> arm — same actuator, eight times the mass.
           It should lag, sag, and overshoot.</li>
@@ -66,6 +67,7 @@
 (function () {
   "use strict";
 
+  var diag = "";
   var canvas   = document.getElementById("scene");
   var enterBtn = document.getElementById("enter");
   var statusEl = document.getElementById("status");
@@ -218,8 +220,14 @@
 
   var E = null;
 
+  // How far the floor sits below the head. Only used when the runtime did not
+  // give us a floor-relative space, in which case we have no idea where the real
+  // floor is and a sensible seated guess beats putting it at head height.
+  var ASSUMED_EYE_HEIGHT = 1.15;
+
   function buildScene(headX, headY, headZ) {
-    E.w_reset(1);
+    var groundY = floorIsReal ? 0 : (headY - ASSUMED_EYE_HEIGHT);
+    E.w_reset(1, groundY);
 
     var cy = headY - SHOULDER_DROP;
     shoulders[0] = [headX - SHOULDER_SPREAD, cy, headZ];
@@ -234,9 +242,12 @@
     E.w_arm_create(1, shoulders[1][0], shoulders[1][1], shoulders[1][2],
                    ARM_LENGTH, ARM_THICK, HEAVY_DENSITY, TORQUE_LEVELS[heavyLevel], CONE);
 
-    // Something to hit, just beyond arm's reach.
-    for (var i = 0; i < 10; i++) {
-      E.w_spawn(headX, 0.12 + i * 0.21, headZ - 1.15, 0, 0, 0, 0.10, i % 6);
+    // Something to hit, stacked up from the floor wherever that turned out to be.
+    // Five high, not ten: ten 20 cm cubes is a two-metre tower, which for anyone
+    // seated looms overhead and is part of what "everything is above my head"
+    // was describing. Five tops out around chest height and is punchable.
+    for (var i = 0; i < 5; i++) {
+      E.w_spawn(headX, groundY + 0.12 + i * 0.21, headZ - 1.15, 0, 0, 0, 0.10, i % 6);
     }
 
     torsoItem = {
@@ -304,8 +315,20 @@
     return out;
   }
 
+  function handleItems() {
+    var out = [];
+    for (var i = 0; i < 2; i++) {
+      out.push({
+        m: trs(handles[i], [0,0,0,1], [0.055, 0.055, 0.055]),
+        // Bright while waiting to be grabbed, dim once held.
+        c: latched[i] ? [0.22, 0.26, 0.34] : [0.98, 0.80, 0.30]
+      });
+    }
+    return out;
+  }
+
   function allItems() {
-    var out = cubeItems().concat(armItems(), levelItems());
+    var out = cubeItems().concat(armItems(), levelItems(), handleItems());
     if (torsoItem) out.push(torsoItem);
     return out;
   }
@@ -337,7 +360,7 @@
         setStatus("This box3d.wasm predates the piloting exports (w_torso_create). It needs rebuilding from wasm/bridge.c.", true);
         return;
       }
-      buildScene(0, 1.55, 0);
+      floorIsReal = true; buildScene(0, 1.55, 0);
       checkVR();
       requestAnimationFrame(preview);
     })
@@ -379,8 +402,22 @@
 
   // --- VR -----------------------------------------------------------------
   var refSpace = null, placed = false, settleFrames = 0;
-  var gripHeld = [false, false];
+  // Whether the runtime actually gave us a floor-relative space. Everything
+  // vertical depends on this, and assuming it has been wrong three times.
+  var floorIsReal = false;
+  var spaceKind = "(none)";
+  // Latched, not held. You take hold of the controls once — reach to a handle
+  // and grip — and after that the arms follow you with nothing pressed. Holding
+  // a button through a whole fight is tiring, and grip is needed for the
+  // anchor-and-pull locomotion the design calls for, so it cannot be spent on
+  // keeping the arms alive.
+  var liveHeadY = 0;
+  var latched = [false, false];
+  var prevGrip = [false, false];
+  var prevB = false;
   var prevA = false;
+  var HANDLE_REACH = 0.20;   // how close a hand must be to grab
+  var handles = [[0,0,0],[0,0,0]];
   // Head samples are averaged before the mech is built. Placing on the very
   // first frame that returns a pose uses whatever tracking reports before it
   // has settled — typically a default standing height, which puts the arms
@@ -402,9 +439,15 @@
       headSum[0] += hp.x; headSum[1] += hp.y; headSum[2] += hp.z; headN++;
       settleFrames++;
       if (settleFrames >= 3) {
-        buildScene(headSum[0] / headN, headSum[1] / headN, headSum[2] / headN);
+        var mhx = headSum[0] / headN, mhy = headSum[1] / headN, mhz = headSum[2] / headN;
+        buildScene(mhx, mhy, mhz);
         placed = true;
-        setStatus("In VR. Hold grip to take an arm; A upgrades the heavy one.");
+        // Reported so a wrong guess about vertical space is visible instead of
+        // being inferred from "everything is above my head".
+        diag = "space: " + spaceKind + " · head y: " + mhy.toFixed(2) +
+               " · floor y: " + (floorIsReal ? "0.00" : (mhy - ASSUMED_EYE_HEIGHT).toFixed(2)) +
+               " · shoulders y: " + (mhy - SHOULDER_DROP).toFixed(2);
+        setStatus("In VR. Reach to the glowing handles and squeeze grip.");
       }
     }
 
@@ -420,6 +463,19 @@
       var yaw = Math.atan2(2 * (ho.w * ho.y + ho.x * ho.z),
                            1 - 2 * (ho.y * ho.y + ho.x * ho.x));
       E.w_torso_update(hp.x, hp.y - SHOULDER_DROP - 0.05, hp.z, yaw);
+      liveHeadY = hp.y;
+
+      // Cockpit handles, placed in front of the chest where hands naturally
+      // rest. They ride with the head like everything else.
+      var cs = Math.cos(yaw), sn = Math.sin(yaw);
+      for (var hh = 0; hh < 2; hh++) {
+        var lx = (hh === 0 ? -0.20 : 0.20), lz = -0.32;
+        handles[hh] = [
+          hp.x + (lx * cs + lz * sn),
+          hp.y - SHOULDER_DROP - 0.16,
+          hp.z + (-lx * sn + lz * cs)
+        ];
+      }
     }
 
     // Hands drive the arm targets, but only while the grip is held.
@@ -440,20 +496,47 @@
       if (!p) continue;
       var idx = src.handedness === "right" ? 1 : 0;
 
+      var pos = p.transform.position;
       var gp = src.gamepad;
-      // No gamepad (hand tracking) means always engaged — there is no grip
-      // button to hold, and refusing to move would just look broken.
-      var engaged = true;
-      if (gp && gp.buttons && gp.buttons.length > 1) {
-        engaged = gp.buttons[1].pressed || gp.buttons[1].value > 0.5;
-      }
-      gripHeld[idx] = engaged;
 
-      if (engaged) {
-        var pos = p.transform.position;
+      var gripNow = false;
+      if (gp && gp.buttons && gp.buttons.length > 1) {
+        gripNow = gp.buttons[1].pressed || gp.buttons[1].value > 0.5;
+      }
+
+      // Grabbing the handle latches that arm. Only the rising edge counts, and
+      // only within reach, so the gesture is "take hold of the controls" rather
+      // than a button that happens to be down.
+      if (gripNow && !prevGrip[idx] && !latched[idx]) {
+        var hd = handles[idx];
+        var dx = pos.x - hd[0], dy = pos.y - hd[1], dz = pos.z - hd[2];
+        if (Math.sqrt(dx*dx + dy*dy + dz*dz) < HANDLE_REACH) {
+          latched[idx] = true;
+          setStatus(latched[0] && latched[1]
+            ? "Both arms live. Grip is free — B lets go."
+            : "One arm live. Grab the other handle.");
+        }
+      }
+      prevGrip[idx] = gripNow;
+
+      // B / Y lets go, so there is a way out that is not the grip button.
+      if (gp && gp.buttons && gp.buttons.length > 5) {
+        var bNow = gp.buttons[5].pressed;
+        if (bNow && !prevB) { latched[0] = false; latched[1] = false;
+          setStatus("Let go. Grab the handles to take hold again."); }
+        prevB = bNow;
+      }
+
+      // Hand tracking has no grip button, so being near a handle is enough.
+      if (!gp && !latched[idx]) {
+        var h2 = handles[idx];
+        var ex = pos.x - h2[0], ey = pos.y - h2[1], ez = pos.z - h2[2];
+        if (Math.sqrt(ex*ex + ey*ey + ez*ez) < HANDLE_REACH) latched[idx] = true;
+      }
+
+      if (latched[idx]) {
         E.w_arm_target(idx, pos.x, pos.y, pos.z);
       } else {
-        // Slack: stop driving and let the limb hang under its own weight.
         E.w_arm_relax(idx);
       }
 
@@ -496,6 +579,7 @@
         session.addEventListener("end", function () {
           inVR = false; refSpace = null; lastT = 0; placed = false;
           settleFrames = 0; headN = 0; headSum = [0, 0, 0];
+          setStatus(diag ? ("Left VR — " + diag) : "Left VR.");
           enterBtn.textContent = "Enter VR";
           setStatus("Left VR. Tap Enter VR to go back in.");
           requestAnimationFrame(preview);
@@ -511,8 +595,14 @@
 
         return gl.makeXRCompatible().then(function () {
           session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
-          return session.requestReferenceSpace("local-floor").catch(function () {
-            return session.requestReferenceSpace("local");
+          return session.requestReferenceSpace("local-floor").then(function (sp) {
+            floorIsReal = true; spaceKind = "local-floor";
+            return sp;
+          }).catch(function () {
+            return session.requestReferenceSpace("local").then(function (sp) {
+              floorIsReal = false; spaceKind = "local (no floor!)";
+              return sp;
+            });
           });
         }).then(function (space) {
           refSpace = space;
