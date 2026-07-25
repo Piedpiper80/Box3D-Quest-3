@@ -260,6 +260,46 @@ thresholds later.
 > mech. Treat that as a hypothesis for Step 8 to confirm or destroy, not a
 > number to design against.
 
+## Measured: Phase 0.5, two heavyweight mechs colliding
+
+The load the game actually has to survive. Mech held at roughly 1.6 m × 3.2 m
+while voxel size varies; both mechs driven into each other at 3 m/s; sleep
+disabled; SIMD and 4 workers; **every voxel a separate dynamic body**.
+
+| mech | voxels/mech | voxel | total bodies | mean | p99 |
+|---|---:|---:|---:|---:|---:|
+| 5×10×4 | 200 | 32 cm | 400 | 1.17 ms | 1.50 |
+| 6×12×4 | 288 | 27 cm | 576 | 2.08 | 2.74 |
+| 8×16×5 | 640 | 20 cm | 1280 | 3.77 | 5.39 |
+| 10×20×6 | 1200 | 16 cm | 2400 | **10.23** | **15.09** |
+
+Cost climbs faster than body count at the top: 1.9× the bodies from 1280 to 2400
+costs 2.7× the time, because a colliding mass packs contacts far denser than a
+loose pile does. The knee is somewhere around 1300 bodies.
+
+**Applying the same speculative 3× mobile penalty**, and budgeting ~4 ms of a
+13.9 ms frame for physics, the affordable zone is roughly **200–300 voxels per
+mech at 27–32 cm** — a mech about 5–6 voxels wide and 10–12 tall. 20 cm voxels
+would land near 11 ms and 16 cm would be hopeless.
+
+**But this is the fully-shattered case, and that is the point.** Every voxel here
+is an independent dynamic body, which only happens when a mech has been reduced
+entirely to debris. The Phase 2 design keeps intact structure merged into static
+chunks and promotes voxels only as they break loose, so a mech still 80% intact
+might cost two compound bodies plus a few hundred live fragments.
+
+So the real conclusion is not "use 32 cm voxels". It is:
+
+> **Merging is not an optimisation, it is what makes fine voxels possible at
+> all.** The pessimistic floor bounds a fully-dynamic mech at ~300 voxels; the
+> merged design should permit far finer voxels, because the binding constraint
+> becomes *how much debris is live at once*, not how many voxels a mech contains.
+
+That converges with the sleep result above from a different direction, and both
+point at the same Phase 2 priority: aggressive promotion/demotion and a hard
+budget on live debris. Voxel size should be chosen *after* merging exists, and
+the debris budget is the number worth designing against.
+
 ## Step 6 — Multithreading
 
 The API is confirmed (see Step 1): `b3WorldDef.workerCount`, plus optional

@@ -259,6 +259,7 @@ mechs, buildings and terrain affordable at once.
 - **Demotion**: dynamic voxels that come to rest and are supported re-merge to
   static or get culled. Non-optional — without it you leak bodies and the frame
   budget dies ten seconds into every fight
+- **A hard budget on live debris**, enforced by culling the oldest fragments
 - Skin and interior layers fall straight out of this: the shell is
   dynamic-capable, the layers beneath stay merged until exposed
 - **Structural queries** land here too — "is this limb still attached to the
@@ -373,7 +374,8 @@ Phase 2 stabilises.
 
 | Question | Decide by | Notes |
 |---|---|---|
-| Voxel size | Phase 0.5, empirically | Drives destruction fidelity, body counts, mech silhouette, and whether Phase 7 is possible at all |
+| Voxel size | **After Phase 2, not before** | Phase 0.5 measured it: fully-shattered mechs bound out at ~300 voxels each, but merging changes the constraint entirely. Pick this once merging exists |
+| Live debris budget | Phase 2 | The measurements say *this*, not voxel size, is the number worth designing against |
 | Mech scale | Phase 0.5, empirically | "Giants" is a feeling, not a number; the number drives voxel count, arena size, and how good the on-foot escape feels |
 | Target refresh rate | Phase 0 | 72 Hz rock-solid beats 90 Hz with drops for a physics-heavy game; revisit once the Phase 0 number is known |
 | Hands or controllers for combat | Phase 1 spike | Split answers are fine and probably correct |
