@@ -605,9 +605,12 @@ void w_mech_hand(int i, float x, float y, float z, int active)
 // How hard you can haul the wrist. This is the pilot's grip on the controls,
 // not the joint strength — the joints have their own ceilings and will give way
 // first if they are the weaker link.
-static float s_mPullK = 900.0f;
-static float s_mPullC = 60.0f;
-static float s_mPullMax = 2500.0f;
+// Loose enough that the arm is dragged rather than commanded, damped enough
+// that it does not flail. Beyond this, feel is not something measurement here
+// can settle — it needs a person in the headset.
+static float s_mPullK = 2000.0f;
+static float s_mPullC = 180.0f;
+static float s_mPullMax = 3000.0f;
 
 WASM_EXPORT("w_mech_tune")
 void w_mech_tune(float pullK, float pullC, float pullMax, float torsoMaxF)
