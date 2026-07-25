@@ -36,6 +36,7 @@
   <div class="card">
     <button id="enter" disabled>Checking headset…</button>
     <button id="resetFloor" style="background:#2b3242;color:#e8ecf4;margin-left:10px">Reset floor</button>
+    <button id="resetSpan" style="background:#2b3242;color:#e8ecf4;margin-left:10px">Reset arm span</button>
     <p class="status" id="status">Loading…</p>
   </div>
 
@@ -52,10 +53,15 @@
           the arm sits where your hand is whatever it weighs; the weight is in the momentum, not in
           a sag.</li>
       <li>Punch the blocks. Watch the torso get pulled when you commit to a swing.</li>
+      <li><strong>Setting your arm span:</strong> after the floor, both controller markers turn
+          <strong>green</strong>. Hold your arms <strong>straight out to the sides</strong> and
+          <strong>pull a trigger</strong>. The machine's arms are then built the length of yours —
+          measured, not guessed — so its elbows sit where your elbows are. Remembered, so it is
+          asked once.</li>
       <li><strong>Setting the floor:</strong> the grid starts <strong>amber</strong> and follows your lower
           controller. Rest that controller on the actual ground and <strong>pull the trigger</strong>. The grid
           turns grey and stays there. It is remembered, so you only do this once.</li>
-      <li>To redo it, use the <strong>Reset floor</strong> button on this page before entering VR. It is
+      <li>To redo either, use the <strong>Reset floor</strong> or <strong>Reset arm span</strong> buttons on this page. They are
           deliberately not a controller gesture — anything you might press in a fight must never wipe your
           calibration.</li>
     </ul>
@@ -180,6 +186,13 @@
     setStatus("Floor cleared. Enter VR, rest a controller on the ground and pull the trigger.");
   });
 
+  var spanBtn = document.getElementById("resetSpan");
+  if (spanBtn) spanBtn.addEventListener("click", function () {
+    armSpan = null; built = false;
+    try { localStorage.removeItem("box3d.armSpan"); } catch (e) {}
+    setStatus("Arm span cleared. In VR, hold both arms straight out and pull a trigger.");
+  });
+
   function setFloor(y) {
     floorY = y;
     try { localStorage.setItem("box3d.floorY", String(y)); } catch (e) {}
@@ -189,10 +202,45 @@
 
   // --- the machine ---------------------------------------------------------
   var E = null, built = false;
-  // Total reach 0.86 m from the shoulder — an upper arm plus a forearm plus
-  // the hand's length, so the arm's tip lands where the controller is instead
-  // of stopping short at a wrist.
-  var UPPER_LEN = 0.40, FORE_LEN = 0.46, THICK = 0.07;
+  // The arm has to be the length of *your* arm.
+  //
+  // It was 1.04 m from shoulder to tip while the controller never got further
+  // than 0.70 m away and averaged 0.52 — twice the distance it had to span. An
+  // arm that long has nowhere to put the extra except a permanent double fold,
+  // which is why the elbow sat at angles that had nothing to do with yours.
+  //
+  // With the hand mapped 1:1 there is no way around this: the linkage must
+  // match the pilot or the pose can never agree. A mech can still be huge — the
+  // limbs are thick and the torso is heavy — but the joints have to sit where
+  // yours do. Shoulder to grip is about a third of standing height, so it comes
+  // from the head height the headset reports rather than from a guess.
+  // So the machine is measured off you, standing there, with your arms out —
+  // the same way the floor is measured off the controller you put on it.
+  // Guessing it from a height ratio was the wrong answer to the right problem.
+  var THICK = 0.06;
+  var TOOL_LEN = 2 * THICK * 1.0;      // must match the mount in w_mech_create
+  var UPPER_LEN = 0.26, FORE_LEN = 0.21, SHOULDER_HALF = 0.20;
+
+  // Wingspan, fingertip to fingertip, as the headset measured it.
+  var armSpan = null;
+  try {
+    var savedSpan = localStorage.getItem("box3d.armSpan");
+    if (savedSpan !== null) armSpan = parseFloat(savedSpan);
+  } catch (e) {}
+
+  function sizeArm() {
+    if (!armSpan) return;                       // not measured yet
+    // Shoulder breadth is a little under a quarter of a span; the rest is arm.
+    SHOULDER_HALF = armSpan * 0.11;
+    var bones = Math.max(0.20, armSpan * 0.5 - SHOULDER_HALF - TOOL_LEN);
+    UPPER_LEN = bones * 0.55;
+    FORE_LEN = bones * 0.45;
+  }
+
+  function setSpan(w) {
+    armSpan = w;
+    try { localStorage.setItem("box3d.armSpan", String(w)); } catch (e) {}
+  }
   // These two are joint friction — how stiff the mechanism is — not motors
   // driving the arm anywhere. At the 1400 and 900 N m they used to carry, the
   // arm was being hauled by the hand and braked by its own joints at the same
@@ -259,8 +307,10 @@
   function buildWorld(hx, hz) {
     // headY is set from the live pose each frame; use it here too.
     E.w_reset(1, floorY);
+    sizeArm();                      // headY is live by now, so this fits you
     E.w_mech_create(hx, chestY(), hz, UPPER_LEN, FORE_LEN, THICK,
-                    DENSITIES[level], SHOULDER_TORQUE, ELBOW_TORQUE, CONE);
+                    DENSITIES[level], SHOULDER_TORQUE, ELBOW_TORQUE, CONE,
+                    SHOULDER_HALF);
     var L = E.w_mech_lengths() >>> 2, lf = new Float32Array(E.memory.buffer);
     segLen = [lf[L], lf[L + 1], lf[L + 2]];
     // Blocks at arm's length so a punch lands without stepping forward.
@@ -366,6 +416,7 @@
     // loop. Deciding inside the loop meant each controller overwrote the last.
     var trigCount = 0;
     var floorCandidate = null;
+    var handPos = [];
 
     for (var i = 0; i < srcs.length; i++) {
       var src = srcs[i];
@@ -376,6 +427,7 @@
       if (!p) { lines.push("  " + label + ": NOT TRACKED"); continue; }
 
       var pos = p.transform.position, q = p.transform.orientation;
+      handPos.push(pos);
       var gp = src.gamepad;
       var grip = false, trig = false;
       if (gp && gp.buttons) {
@@ -406,20 +458,49 @@
       }
 
       // Small marker exactly on the controller — the truth your hand knows.
-      items.push({ m: trs([pos.x, pos.y, pos.z], [q.x,q.y,q.z,q.w], 0.022), c: [0.62,0.66,0.74] });
+      // Turns green while the arm span is being measured, so you can see the
+      // headset has both hands before you pull.
+      items.push({ m: trs([pos.x, pos.y, pos.z], [q.x,q.y,q.z,q.w],
+                          (!calibrating && armSpan === null) ? 0.05 : 0.022),
+                   c: (!calibrating && armSpan === null) ? [0.35,0.85,0.45] : [0.62,0.66,0.74] });
 
       lines.push("  " + label + ": x " + pos.x.toFixed(2) + " y " + pos.y.toFixed(2) +
                  " z " + pos.z.toFixed(2) + (gp ? ("  grip " + (grip?"YES":"no") +
                  "  trigger " + (trig?"YES":"no")) : "  (no gamepad)"));
     }
-    // One decision per frame, after every controller has been read.
+    // Fingertip to fingertip, near enough — the controllers sit in your hands.
+    var handSpan = null;
+    if (handPos.length === 2) {
+      handSpan = Math.hypot(handPos[0].x - handPos[1].x,
+                            handPos[0].y - handPos[1].y,
+                            handPos[0].z - handPos[1].z);
+    }
+
+    // One decision per frame, after every controller has been read. Rising
+    // edge, so a held trigger acts once rather than every frame it stays down.
+    var pulled = (trigCount > 0 && !prevTrig);
     if (calibrating) {
-      // Rising edge, so a held trigger sets the floor once rather than every
-      // frame it stays down.
-      if (trigCount > 0 && !prevTrig && floorCandidate !== null) {
+      if (pulled && floorCandidate !== null) {
         setFloor(floorCandidate);
         setStatus("Floor set at " + floorCandidate.toFixed(2) +
-                  " m. Use Reset floor on the page if you need to redo it.");
+                  " m. Now hold your arms straight out and pull a trigger.");
+      }
+    } else if (armSpan === null) {
+      // Arms out, fingertip to fingertip. This is the measurement the machine
+      // is built from, so it is taken off you rather than guessed at.
+      lines.push("ARM SPAN NOT SET — hold both arms straight out to the sides "
+                 + "and pull a trigger");
+      if (handSpan !== null) lines.push("  measuring: " + handSpan.toFixed(2) + " m");
+      if (pulled && handSpan !== null) {
+        if (handSpan < 0.9) {
+          setStatus("That was only " + handSpan.toFixed(2) +
+                    " m — stretch both arms right out and pull again.", true);
+        } else {
+          setSpan(handSpan);
+          built = false;                 // rebuild the machine at your size
+          setStatus("Arm span set at " + handSpan.toFixed(2) +
+                    " m. Use Reset arm span on the page to redo it.");
+        }
       }
     }
     prevTrig = trigCount > 0;
@@ -475,7 +556,7 @@
       }
       lines.push("arm material " + (level+1) + " of " + DENSITIES.length +
                  "  (density " + DENSITIES[level] + ")");
-    } else if (E && floorY !== null && !built) {
+    } else if (E && floorY !== null && armSpan !== null && !built) {
       // Take the head height before building, or the first frame constructs the
       // machine around a guess and only corrects on the next one.
       headY = hp.y;
