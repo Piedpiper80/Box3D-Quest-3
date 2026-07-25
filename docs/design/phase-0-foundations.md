@@ -30,8 +30,8 @@ more in it.
 | SIMD | disabled | enabled | 5 |
 | Threading | none | 4 workers | 6 |
 | Backface culling | disabled | enabled, `GL_CW` | 7 |
-| Perf HUD | none | not yet | 2 |
-| On-device benchmark | none | not yet | 2b |
+| Perf HUD | none | head-locked readout, drawn as instances | 2 |
+| On-device benchmark | none | automatic on launch, logs to logcat | 2b |
 | Headless benchmark | none | `bench/`, runs in CI | 2c |
 | Web build cap | 96 cubes, scalar, single-threaded | unchanged, deliberately | — |
 
@@ -307,6 +307,37 @@ Run the Step 2b benchmark on-device and capture the log. It produces:
 
 Put those numbers in `ROADMAP.md`. Phase 0.5 immediately stress-tests them with
 a realistic destruction load — a heavyweight, per the roadmap.
+
+### How to run it
+
+The benchmark starts **automatically**, about two seconds after the session
+settles. There is no menu and no button, deliberately: neither a broken HUD nor
+an unmapped controller can prevent a measurement.
+
+```bash
+# Grab the APK from the CI run's Artifacts section, then:
+adb install -r app-debug.apk
+adb logcat -c                       # clear the buffer first
+# launch the app from the headset's Unknown Sources library, then:
+adb logcat -s Box3DQuest:I | tee bench-device.txt
+```
+
+Put the headset on long enough to confirm it launched, then put it down. A full
+run is roughly two minutes. Every result line starts with `BENCH,` so the run
+greps cleanly out of surrounding noise:
+
+```bash
+grep '^.*BENCH,' bench-device.txt
+```
+
+Columns are `bodies, regime, frame_mean, frame_p50, frame_p99, step_mean,
+step_p50, step_p99` — all milliseconds. **`frame` is the whole frame** including
+compositor wait and rendering, which is what the player feels; **`step` is the
+solver alone**. Comparing them is what answers whether physics or rendering hit
+the wall first.
+
+The app returns to the normal throw-cubes scene when the run finishes, so it
+stays usable afterwards.
 
 ### Who does what
 
