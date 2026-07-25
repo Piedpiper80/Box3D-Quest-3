@@ -45,14 +45,17 @@
   <div class="card">
     <p style="margin:0 0 4px"><strong>What you're testing</strong></p>
     <ul>
+      <li><strong>Hold grip</strong> to take hold of an arm — release and it goes slack and hangs. Grip means
+          "hold this" everywhere in VR, and here it is also the pilot letting go of the controls.</li>
       <li><strong>Left hand</strong> drives a <strong>light</strong> arm — it should track you closely.</li>
       <li><strong>Right hand</strong> drives a <strong>heavy</strong> arm — same actuator, eight times the mass.
           It should lag, sag, and overshoot.</li>
-      <li>Pull the <strong>right trigger</strong> to strengthen the heavy arm's actuator — this is the upgrade
-          curve. Five levels; the row of markers above it shows where you are.</li>
-      <li><strong>Long-press the Meta button</strong> to recentre, exactly as in any other Quest game — the
-          mech rebuilds around your head where it is now. The <strong>left trigger</strong> does the same thing
-          if recentring is awkward while seated.</li>
+      <li>Press <strong>A</strong> to strengthen the heavy arm's actuator — the upgrade curve, five levels, shown
+          by the row of markers. The trigger is left free on purpose: it is the attack button everywhere else
+          in VR and will be here too.</li>
+      <li>The shoulders <strong>follow your head continuously</strong>, so sitting, standing or leaning all
+          just work — there is nothing to calibrate. <strong>Long-press the Meta button</strong> to recentre as
+          usual if the world itself is offset.</li>
       <li>Knock the stack over. The question is whether the weight difference reads
           <em>through your arms</em> rather than as a number.</li>
     </ul>
@@ -376,6 +379,8 @@
 
   // --- VR -----------------------------------------------------------------
   var refSpace = null, placed = false, settleFrames = 0;
+  var gripHeld = [false, false];
+  var prevA = false;
   // Head samples are averaged before the mech is built. Placing on the very
   // first frame that returns a pose uses whatever tracking reports before it
   // has settled — typically a default standing height, which puts the arms
@@ -396,14 +401,36 @@
       var hp = viewerPose.transform.position;
       headSum[0] += hp.x; headSum[1] += hp.y; headSum[2] += hp.z; headN++;
       settleFrames++;
-      if (settleFrames >= SETTLE_FRAMES) {
+      if (settleFrames >= 3) {
         buildScene(headSum[0] / headN, headSum[1] / headN, headSum[2] / headN);
         placed = true;
-        setStatus("In VR. Left trigger recalibrates to your seated height.");
+        setStatus("In VR. Hold grip to take an arm; A upgrades the heavy one.");
       }
     }
 
-    // Hands drive the arm targets. Left hand → light arm, right hand → heavy.
+    // Shoulders follow the head continuously rather than being placed once.
+    // This is what makes them the player's shoulders instead of a rig sitting at
+    // a remembered spot in the room, and it is why no height calibration step is
+    // needed any more.
+    if (placed && viewerPose) {
+      var hp = viewerPose.transform.position;
+      var ho = viewerPose.transform.orientation;
+      // Yaw only: the body turns with the player but must not pitch or roll
+      // with their neck, or looking down would tip the whole mech.
+      var yaw = Math.atan2(2 * (ho.w * ho.y + ho.x * ho.z),
+                           1 - 2 * (ho.y * ho.y + ho.x * ho.x));
+      E.w_torso_update(hp.x, hp.y - SHOULDER_DROP - 0.05, hp.z, yaw);
+    }
+
+    // Hands drive the arm targets, but only while the grip is held.
+    //
+    // Grip means "hold this" everywhere in VR, so it is what engages the arm —
+    // and it doubles as the design's own verb: let go and the limb goes slack,
+    // which is what a pilot releasing the controls should feel like.
+    //
+    // xr-standard gamepad mapping for Touch controllers:
+    //   buttons[0] trigger   buttons[1] grip   buttons[3] stick press
+    //   buttons[4] A/X       buttons[5] B/Y    axes[2],[3] stick
     var sources = session.inputSources;
     for (var s = 0; s < sources.length; s++) {
       var src = sources[s];
@@ -412,8 +439,34 @@
       var p = frame.getPose(space, refSpace);
       if (!p) continue;
       var idx = src.handedness === "right" ? 1 : 0;
-      var pos = p.transform.position;
-      E.w_arm_target(idx, pos.x, pos.y, pos.z);
+
+      var gp = src.gamepad;
+      // No gamepad (hand tracking) means always engaged — there is no grip
+      // button to hold, and refusing to move would just look broken.
+      var engaged = true;
+      if (gp && gp.buttons && gp.buttons.length > 1) {
+        engaged = gp.buttons[1].pressed || gp.buttons[1].value > 0.5;
+      }
+      gripHeld[idx] = engaged;
+
+      if (engaged) {
+        var pos = p.transform.position;
+        E.w_arm_target(idx, pos.x, pos.y, pos.z);
+      } else {
+        // Slack: stop driving and let the limb hang under its own weight.
+        E.w_arm_relax(idx);
+      }
+
+      // A / X steps the upgrade curve. Trigger is left free deliberately — it
+      // is the attack button everywhere else in VR and will be here too.
+      if (gp && gp.buttons && gp.buttons.length > 4 && idx === 1) {
+        var aDown = gp.buttons[4].pressed;
+        if (aDown && !prevA) {
+          heavyLevel = (heavyLevel + 1) % TORQUE_LEVELS.length;
+          E.w_arm_limits(1, TORQUE_LEVELS[heavyLevel]);
+        }
+        prevA = aDown;
+      }
     }
 
     E.w_step(dt);
@@ -448,20 +501,12 @@
           requestAnimationFrame(preview);
         });
 
+        // Left menu/trigger recalibrates, as a fallback to the Meta button.
         session.addEventListener("selectstart", function (e) {
-          if (e.inputSource.handedness === "right") {
-            // Step the heavy arm's actuator up the curve, wrapping at the top so
-            // the whole range is reachable one-handed.
-            heavyLevel = (heavyLevel + 1) % TORQUE_LEVELS.length;
-            E.w_arm_limits(1, TORQUE_LEVELS[heavyLevel]);
-          } else {
-            // Recalibrate: rebuild the mech around the head where it is now.
-            // Sitting down, standing up, or leaning all move the shoulders, and
-            // there is no way to guess which the player meant.
-            placed = false; settleFrames = 0; headN = 0;
-            headSum[0] = 0; headSum[1] = 0; headSum[2] = 0;
-            setStatus("Recalibrating — hold still for a second…");
-          }
+          if (e.inputSource.handedness === "right") return;
+          placed = false; settleFrames = 0; headN = 0;
+          headSum[0] = 0; headSum[1] = 0; headSum[2] = 0;
+          setStatus("Recalibrating — hold still for a second…");
         });
 
         return gl.makeXRCompatible().then(function () {

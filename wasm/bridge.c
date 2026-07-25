@@ -10,8 +10,10 @@
 //   w_state()                      pointer to packed floats, 9 per cube:
 //                                  [x,y,z, qx,qy,qz,qw, halfExtent, colorIdx]
 //   w_torso_create(...)            piloting spike: the body the arms hang from
+//   w_torso_update(x,y,z,yaw)      move the torso with the head, every frame
 //   w_arm_create(i,...)            an arm pivoting at a shoulder on the torso
 //   w_arm_target(i,x,y,z)          swing arm i toward the hand
+//   w_arm_relax(i)                 let arm i hang slack (grip released)
 //   w_arm_limits(i,torque)         retune arm i's actuator (the upgrade slider)
 //   w_arm_state()                  8 floats per arm: [x,y,z, qx,qy,qz,qw, length]
 //
@@ -289,19 +291,26 @@ int w_capacity(void)
 #define ARM_COUNT 2
 static b3JointId s_armJoint[ARM_COUNT];
 static b3BodyId s_armBody[ARM_COUNT];
-static b3Vec3 s_shoulder[ARM_COUNT];
+static b3Vec3 s_shoulderLocal[ARM_COUNT];  // offset from the torso origin
+static b3Vec3 s_shoulder[ARM_COUNT];       // same point in world space, updated each frame
 static float s_armLength[ARM_COUNT];
 static int s_armExists[ARM_COUNT] = {0, 0};
 static b3BodyId s_torso;
 static int s_torsoExists = 0;
 
-// Build the torso the arms hang from. Positioned at the player's chest so the
-// arms are theirs rather than something standing in front of them.
+// Build the torso the arms hang from.
+//
+// Kinematic rather than static, because shoulders belong to the player, not to
+// the room. A static torso has to be placed once and then never moves, so any
+// lean, step or change of posture leaves the mech behind and needs a manual
+// recalibration to fix. Driven from the head every frame instead, the shoulders
+// simply are where the player's shoulders are, and the height question stops
+// existing rather than being repeatedly patched.
 WASM_EXPORT("w_torso_create")
 void w_torso_create(float x, float y, float z, float hx, float hy, float hz)
 {
     b3BodyDef bd = b3DefaultBodyDef();
-    bd.type = b3_staticBody;
+    bd.type = b3_kinematicBody;
     bd.position.x = x;
     bd.position.y = y;
     bd.position.z = z;
@@ -312,6 +321,43 @@ void w_torso_create(float x, float y, float z, float hx, float hy, float hz)
     b3BoxHull hull = b3MakeBoxHull(hx, hy, hz);
     b3CreateHullShape(s_torso, &sd, &hull.base);
     s_torsoExists = 1;
+}
+
+// Move the torso to follow the head. Called every frame.
+//
+// Only yaw is applied, not full head rotation: the body should turn with the
+// player but not pitch and roll with their neck, or looking down would tip the
+// whole mech over.
+WASM_EXPORT("w_torso_update")
+void w_torso_update(float x, float y, float z, float yaw)
+{
+    if (!s_torsoExists)
+    {
+        return;
+    }
+
+    const float half = yaw * 0.5f;
+    b3Quat q;
+    q.v.x = 0.0f;
+    q.v.y = __builtin_sinf(half);
+    q.v.z = 0.0f;
+    q.s = __builtin_cosf(half);
+
+    b3Pos p;
+    p.x = x; p.y = y; p.z = z;
+    b3Body_SetTransform(s_torso, p, q);
+
+    // Shoulders ride with the torso, so their world positions have to follow —
+    // the arm targeting works from these.
+    const float c = q.s * q.s - q.v.y * q.v.y;      // cos(yaw)
+    const float sn = 2.0f * q.s * q.v.y;            // sin(yaw)
+    for (int i = 0; i < ARM_COUNT; i++)
+    {
+        const float lx = s_shoulderLocal[i].x, ly = s_shoulderLocal[i].y, lz = s_shoulderLocal[i].z;
+        s_shoulder[i].x = x + (lx * c + lz * sn);
+        s_shoulder[i].y = y + ly;
+        s_shoulder[i].z = z + (-lx * sn + lz * c);
+    }
 }
 
 // One arm: a segment pivoting at (sx, sy, sz) and reaching `length` forward.
@@ -325,6 +371,10 @@ void w_arm_create(int i, float sx, float sy, float sz, float length, float thick
     }
 
     const float half = length * 0.5f;
+    b3Pos torsoPos0 = b3Body_GetPosition(s_torso);
+    s_shoulderLocal[i].x = sx - (float)torsoPos0.x;
+    s_shoulderLocal[i].y = sy - (float)torsoPos0.y;
+    s_shoulderLocal[i].z = sz - (float)torsoPos0.z;
     s_shoulder[i].x = sx;
     s_shoulder[i].y = sy;
     s_shoulder[i].z = sz;
@@ -359,15 +409,11 @@ void w_arm_create(int i, float sx, float sy, float sz, float length, float thick
     //
     // localFrameB is in the arm's own space, and the arm body's origin is the
     // shoulder by construction, so identity is correct there.
-    b3Pos torsoPos = b3Body_GetPosition(s_torso);
-
     b3SphericalJointDef jd = b3DefaultSphericalJointDef();
     jd.base.bodyIdA = s_torso;
     jd.base.bodyIdB = s_armBody[i];
     jd.base.localFrameA = b3Transform_identity;
-    jd.base.localFrameA.p.x = sx - (float)torsoPos.x;
-    jd.base.localFrameA.p.y = sy - (float)torsoPos.y;
-    jd.base.localFrameA.p.z = sz - (float)torsoPos.z;
+    jd.base.localFrameA.p = s_shoulderLocal[i];
     jd.base.localFrameB = b3Transform_identity;
     jd.base.collideConnected = false;
     jd.enableMotor = true;
@@ -433,6 +479,19 @@ void w_arm_target(int i, float x, float y, float z)
         w.x = ax * k; w.y = ay * k; w.z = az * k;
     }
     b3SphericalJoint_SetMotorVelocity(s_armJoint[i], w);
+}
+
+// Let the limb go slack: stop driving it and let it hang under its own weight.
+// Released grip should feel like letting go, not like a frozen arm.
+WASM_EXPORT("w_arm_relax")
+void w_arm_relax(int i)
+{
+    if (i < 0 || i >= ARM_COUNT || !s_armExists[i])
+    {
+        return;
+    }
+    b3Vec3 zero = {0.0f, 0.0f, 0.0f};
+    b3SphericalJoint_SetMotorVelocity(s_armJoint[i], zero);
 }
 
 // Retune the actuator — the upgrade slider.
