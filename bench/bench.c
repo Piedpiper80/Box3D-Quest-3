@@ -168,10 +168,143 @@ static void runCase(int bodyCount, unsigned workerCount, bool enableSleep)
     b3DestroyWorld(world);
 }
 
+// ---------------------------------------------------------------------------
+// Phase 0.5 — the worst case
+//
+// Not a pile of loose cubes but the load the game actually has to survive: two
+// mech-sized voxel assemblies driven into each other. This is the hardest
+// sustained load anywhere in the roadmap, and knowing whether it fits decides
+// voxel size, mech size and chunking *before* three phases get built on the
+// assumption that it does.
+//
+// Deliberately models a HEAVYWEIGHT rather than an average mech. Sizing the
+// engine against a mid-weight means discovering the ceiling three phases late.
+//
+// Every voxel here is a separate dynamic body, which is the pessimistic case:
+// the real Phase 2 design keeps intact structure merged into static chunks and
+// only promotes voxels to dynamic bodies as they break loose. So this is a
+// lower bound on performance, not an estimate of it — if this fits, the real
+// thing comfortably fits.
+// ---------------------------------------------------------------------------
+
+// Build one mech as a solid block of voxels, `w` x `h` x `d`, centred at
+// (cx, 0, cz) and moving at `vx` along x.
+static int addMech(b3WorldId world, int w, int h, int d, float voxel, float cx, float cz,
+                   float vx)
+{
+    const float half = voxel * 0.5f;
+    const float step = voxel;
+    int count = 0;
+
+    for (int y = 0; y < h; ++y)
+    {
+        for (int z = 0; z < d; ++z)
+        {
+            for (int x = 0; x < w; ++x)
+            {
+                b3BodyDef bd = b3DefaultBodyDef();
+                bd.type = b3_dynamicBody;
+                bd.position.x = cx + ((float)x - w * 0.5f) * step;
+                bd.position.y = half + 0.02f + (float)y * step;
+                bd.position.z = cz + ((float)z - d * 0.5f) * step;
+                bd.linearVelocity.x = vx;
+
+                b3BodyId body = b3CreateBody(world, &bd);
+
+                b3ShapeDef sd = b3DefaultShapeDef();
+                sd.density = 1.0f;
+                sd.baseMaterial.friction = 0.6f;
+                sd.baseMaterial.restitution = 0.05f;
+
+                b3BoxHull hull = b3MakeBoxHull(half, half, half);
+                b3CreateHullShape(body, &sd, &hull.base);
+                ++count;
+            }
+        }
+    }
+    return count;
+}
+
+// Two mechs of `w x h x d` voxels each, closing at `speed` and colliding.
+static void runMechCase(int w, int h, int d, float voxel, float speed, unsigned workerCount)
+{
+    s_rng = 0x9e3779b9u;
+
+    b3WorldDef wd = b3DefaultWorldDef();
+    wd.gravity.x = 0.0f;
+    wd.gravity.y = -9.81f;
+    wd.gravity.z = 0.0f;
+    wd.workerCount = workerCount;
+    wd.enableSleep = false; // a fight: nothing is allowed to settle
+
+    b3WorldId world = b3CreateWorld(&wd);
+    addGround(world);
+
+    const float gap = (float)w * voxel * 2.0f;
+    int bodies = 0;
+    bodies += addMech(world, w, h, d, voxel, -gap * 0.5f, 0.0f, speed);
+    bodies += addMech(world, w, h, d, voxel, gap * 0.5f, 0.0f, -speed);
+
+    for (int i = 0; i < WARMUP_STEPS; ++i)
+    {
+        b3World_Step(world, DT, SUB_STEPS);
+    }
+
+    double* samples = (double*)malloc(sizeof(double) * MEASURE_STEPS);
+    if (samples == NULL)
+    {
+        fprintf(stderr, "out of memory\n");
+        exit(1);
+    }
+
+    double total = 0.0;
+    for (int i = 0; i < MEASURE_STEPS; ++i)
+    {
+        const double t0 = nowSeconds();
+        b3World_Step(world, DT, SUB_STEPS);
+        const double ms = (nowSeconds() - t0) * 1000.0;
+        samples[i] = ms;
+        total += ms;
+    }
+
+    qsort(samples, MEASURE_STEPS, sizeof(double), compareDouble);
+    const double mean = total / MEASURE_STEPS;
+    const double p50 = samples[MEASURE_STEPS / 2];
+    const double p99 = samples[(int)(MEASURE_STEPS * 0.99)];
+
+    printf("%dx%dx%d,%d,%.0f,%u,%.4f,%.4f,%.4f\n", w, h, d, bodies, voxel * 100.0f,
+           workerCount, mean, p50, p99);
+    fflush(stdout);
+
+    free(samples);
+    b3DestroyWorld(world);
+}
+
+static void runMechSuite(unsigned workerCount)
+{
+    printf("mech,bodies,voxel_cm,workers,mean_ms,p50_ms,p99_ms\n");
+
+    // Voxel size is the variable under test. A mech roughly 1.6 m wide and 3.2 m
+    // tall is held constant while the voxel gets finer, so the trade between
+    // destruction fidelity and cost is visible directly.
+    runMechCase(4, 8, 3, 0.40f, 3.0f, workerCount);  //  96 voxels/mech, coarse
+    runMechCase(5, 10, 4, 0.32f, 3.0f, workerCount); // 200 voxels/mech
+    runMechCase(6, 12, 4, 0.27f, 3.0f, workerCount); // 288 voxels/mech
+    runMechCase(8, 16, 5, 0.20f, 3.0f, workerCount); // 640 voxels/mech
+    runMechCase(10, 20, 6, 0.16f, 3.0f, workerCount); // 1200 voxels/mech, fine
+}
+
 int main(int argc, char** argv)
 {
     const unsigned workerCount = (argc > 1) ? (unsigned)atoi(argv[1]) : 1u;
     const int maxBodies = (argc > 2) ? atoi(argv[2]) : 4000;
+    const int mechMode = (argc > 3) && (strcmp(argv[3], "mech") == 0);
+
+    if (mechMode)
+    {
+        runMechSuite(workerCount);
+        return 0;
+    }
 
     // The ramp. Doubling keeps the run short while still showing the shape of
     // the curve and where it bends.

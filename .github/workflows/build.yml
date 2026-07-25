@@ -104,6 +104,8 @@ jobs:
             ./build/bench-simd/bench 2 3200
             echo "## config: simd, 4 workers"
             ./build/bench-simd/bench 4 3200
+            echo "## phase 0.5: two heavyweight mechs colliding, simd, 4 workers"
+            ./build/bench-simd/bench 4 0 mech
           } | tee bench-results.txt
 
       - name: Upload benchmark results
