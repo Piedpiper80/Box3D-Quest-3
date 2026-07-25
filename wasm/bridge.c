@@ -11,7 +11,7 @@
 //                                  [x,y,z, qx,qy,qz,qw, halfExtent, colorIdx]
 //   w_hand_create(i,...)           follow test: one free body chasing your hand
 //   w_hand_target(i,x,y,z)         drive body i toward the controller
-//   w_hand_limits(i,force)         retune body i's actuator
+//   w_hand_limits(i,hertz,damping) retune body i's spring (the weight knob)
 //   w_hand_state()                 8 floats per body: [x,y,z, qx,qy,qz,qw, half]
 //   w_torso_create(...)            piloting spike: the body the arms hang from
 //   w_torso_update(x,y,z,yaw)      move the torso with the head, every frame
@@ -297,7 +297,7 @@ static int s_handExists[HAND_COUNT] = {0, 0};
 
 WASM_EXPORT("w_hand_create")
 void w_hand_create(int i, float x, float y, float z, float half, float density,
-                   float maxForce, float maxTorque)
+                   float maxForce, float maxTorque, float hertz, float damping)
 {
     if (i < 0 || i >= HAND_COUNT)
     {
@@ -322,19 +322,33 @@ void w_hand_create(int i, float x, float y, float z, float half, float density,
     b3BoxHull hull = b3MakeBoxHull(half, half, half);
     b3CreateHullShape(s_handBody[i], &sd, &hull.base);
 
+    // Spring-driven, not velocity-driven.
+    //
+    // Measured: capping a velocity motor's force does NOT produce graded weight.
+    // It is a cliff — below the threshold the body cannot hold itself up and
+    // falls to the floor, above it tracking is perfect, and there is nothing
+    // usable between. A 3 kg body tracked identically at 50 N and at 1500 N.
+    //
+    // A spring grades properly, because lag and overshoot fall out of the mass
+    // it is pulling: same spring, heavier body, more trailing and more
+    // follow-through. That is what dragging something heavy actually feels like,
+    // and it is what makes mass legible rather than binary.
     b3MotorJointDef jd = b3DefaultMotorJointDef();
     jd.base.bodyIdA = s_handAnchor[i];
     jd.base.bodyIdB = s_handBody[i];
-    jd.maxVelocityForce = maxForce;
-    jd.maxVelocityTorque = maxTorque;
+    jd.linearHertz = hertz;
+    jd.linearDampingRatio = damping;
+    jd.maxSpringForce = maxForce;
+    jd.angularHertz = hertz;
+    jd.angularDampingRatio = damping;
+    jd.maxSpringTorque = maxTorque;
     s_handJoint[i] = b3CreateMotorJoint(s_world, &jd);
 
     s_handExists[i] = 1;
 }
 
-#define HAND_GAIN 16.0f
-#define HAND_MAX_SPEED 14.0f
-
+// The spring pulls body B toward body A's frame, so moving the anchor moves the
+// target. The anchor is static, which in Box3D still permits repositioning it.
 WASM_EXPORT("w_hand_target")
 void w_hand_target(int i, float x, float y, float z)
 {
@@ -342,28 +356,24 @@ void w_hand_target(int i, float x, float y, float z)
     {
         return;
     }
-    b3Pos p = b3Body_GetPosition(s_handBody[i]);
-    float vx = (x - (float)p.x) * HAND_GAIN;
-    float vy = (y - (float)p.y) * HAND_GAIN;
-    float vz = (z - (float)p.z) * HAND_GAIN;
-    float sq = vx*vx + vy*vy + vz*vz;
-    if (sq > HAND_MAX_SPEED * HAND_MAX_SPEED)
-    {
-        float k = HAND_MAX_SPEED / __builtin_sqrtf(sq);
-        vx *= k; vy *= k; vz *= k;
-    }
-    b3Vec3 v; v.x = vx; v.y = vy; v.z = vz;
-    b3MotorJoint_SetLinearVelocity(s_handJoint[i], v);
+    b3Pos p; p.x = x; p.y = y; p.z = z;
+    b3Body_SetTransform(s_handAnchor[i], p, b3Quat_identity);
 }
 
+// Stiffness is the knob: softer spring means more trailing and more overshoot,
+// and the same spring on a heavier body feels heavier. Unlike a force cap this
+// grades smoothly instead of falling off a cliff.
 WASM_EXPORT("w_hand_limits")
-void w_hand_limits(int i, float maxForce)
+void w_hand_limits(int i, float hertz, float damping)
 {
     if (i < 0 || i >= HAND_COUNT || !s_handExists[i])
     {
         return;
     }
-    b3MotorJoint_SetMaxVelocityForce(s_handJoint[i], maxForce);
+    b3MotorJoint_SetLinearHertz(s_handJoint[i], hertz);
+    b3MotorJoint_SetLinearDampingRatio(s_handJoint[i], damping);
+    b3MotorJoint_SetAngularHertz(s_handJoint[i], hertz);
+    b3MotorJoint_SetAngularDampingRatio(s_handJoint[i], damping);
 }
 
 // 8 floats per hand: position, rotation, half extent.
