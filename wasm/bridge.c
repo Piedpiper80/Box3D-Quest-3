@@ -18,7 +18,7 @@
 //   w_mech_stand(x,y,z)            where the machine tries to stand
 //   w_mech_hand(i,x,y,z,active)    haul wrist i toward the player's hand
 //   w_mech_apply()                 apply leg + arm forces (call before w_step)
-//   w_mech_state()                 7 floats each: torso, then upper/fore/hand x2
+//   w_mech_state()                 7 floats each: torso, upperL, foreL, upperR, foreR
 //   w_torso_create(...)            piloting spike: the body the arms hang from
 //   w_torso_update(x,y,z,yaw)      move the torso with the head, every frame
 //   w_arm_create(i,...)            an arm pivoting at a shoulder on the torso
@@ -466,8 +466,6 @@ float* w_hand_state(void)
 static b3BodyId s_mTorso;
 static b3BodyId s_mUpper[MECH_ARMS];
 static b3BodyId s_mFore[MECH_ARMS];
-static b3BodyId s_mHand[MECH_ARMS];
-static b3JointId s_mWristJ[MECH_ARMS];
 static b3JointId s_mShoulder[MECH_ARMS];
 static b3JointId s_mElbow[MECH_ARMS];
 static b3Vec3 s_mWrist[MECH_ARMS];      // wrist offset in forearm local space
@@ -484,7 +482,7 @@ static float s_mTorsoK = 6000.0f;
 static float s_mTorsoC = 900.0f;
 static float s_mTorsoMaxF = 9000.0f;
 
-static float s_mUpperLen, s_mForeLen, s_mHandHalf;
+static float s_mUpperLen, s_mForeLen;
 
 WASM_EXPORT("w_mech_create")
 void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
@@ -577,45 +575,8 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
         rj.motorSpeed = 0.0f;
         s_mElbow[i] = b3CreateRevoluteJoint(s_world, &rj);
 
-        // --- hand ---
-        //
-        // The controller sits in the player's hand, not their wrist, so the
-        // chain needs one more link or the mapping is off by a hand's length and
-        // the fist is not what lands a punch.
-        b3BodyDef hd = b3DefaultBodyDef();
-        hd.type = b3_dynamicBody;
-        hd.position.x = x + sx; hd.position.y = y + sy;
-        hd.position.z = z - upperLen - foreLen;
-        hd.angularDamping = 0.2f;
-        s_mHand[i] = b3CreateBody(s_world, &hd);
-
-        b3ShapeDef hsd = b3DefaultShapeDef();
-        hsd.density = density;
-        hsd.baseMaterial.friction = 0.8f;
-        const float handHalf = thickness * 1.25f;
-        s_mHandHalf = handHalf;
-        b3BoxHull hhull = b3MakeBoxHull(handHalf, handHalf, handHalf);
-        b3Transform hoff = b3Transform_identity;
-        hoff.p.z = -handHalf;
-        b3CreateTransformedHullShape(s_mHand[i], &hsd, &hhull.base, hoff, one);
-
-        // Wrist: a spherical joint with a tight cone, since a wrist bends a lot
-        // less than a shoulder.
-        b3SphericalJointDef wj = b3DefaultSphericalJointDef();
-        wj.base.bodyIdA = s_mFore[i];
-        wj.base.bodyIdB = s_mHand[i];
-        wj.base.localFrameA = b3Transform_identity;
-        wj.base.localFrameA.p.z = -foreLen;
-        wj.base.localFrameB = b3Transform_identity;
-        wj.base.collideConnected = false;
-        wj.enableConeLimit = true;
-        wj.coneAngle = 1.0f;
-        wj.enableMotor = true;
-        wj.maxMotorTorque = elbowTorque * 0.4f;
-        s_mWristJ[i] = b3CreateSphericalJoint(s_world, &wj);
-
-        // The grip point is the middle of the hand, in its local frame.
-        s_mWrist[i].x = 0.0f; s_mWrist[i].y = 0.0f; s_mWrist[i].z = -handHalf;
+        // The wrist is the far end of the forearm, in its local frame.
+        s_mWrist[i].x = 0.0f; s_mWrist[i].y = 0.0f; s_mWrist[i].z = -foreLen;
         s_mHandActive[i] = 0;
     }
     s_mExists = 1;
@@ -699,16 +660,16 @@ void w_mech_apply(void)
     {
         if (!s_mHandActive[i]) continue;
 
-        b3Pos bp = b3Body_GetPosition(s_mHand[i]);
-        b3Quat bq = b3Body_GetRotation(s_mHand[i]);
+        b3Pos bp = b3Body_GetPosition(s_mFore[i]);
+        b3Quat bq = b3Body_GetRotation(s_mFore[i]);
         b3Matrix3 m = b3MakeMatrixFromQuat(bq);
 
-        // The grip point, in world space — where the controller actually is.
+        // Wrist in world space.
         float wx = (float)bp.x + m.cz.x * s_mWrist[i].z;
         float wy = (float)bp.y + m.cz.y * s_mWrist[i].z;
         float wz = (float)bp.z + m.cz.z * s_mWrist[i].z;
 
-        b3Vec3 v = b3Body_GetLinearVelocity(s_mHand[i]);
+        b3Vec3 v = b3Body_GetLinearVelocity(s_mFore[i]);
         float fx = (s_mHandTarget[i].x - wx) * s_mPullK - v.x * s_mPullC;
         float fy = (s_mHandTarget[i].y - wy) * s_mPullK - v.y * s_mPullC;
         float fz = (s_mHandTarget[i].z - wz) * s_mPullK - v.z * s_mPullC;
@@ -721,20 +682,18 @@ void w_mech_apply(void)
 
         b3Vec3 f; f.x = fx; f.y = fy; f.z = fz;
         b3Pos at; at.x = wx; at.y = wy; at.z = wz;
-        b3Body_ApplyForce(s_mHand[i], f, at, true);
+        b3Body_ApplyForce(s_mFore[i], f, at, true);
     }
 }
 
-// 7 floats each for: torso, then upper/fore/hand for each arm — 49 total.
+// 7 floats each for: torso, upper L, fore L, upper R, fore R — 35 total.
 WASM_EXPORT("w_mech_state")
 float* w_mech_state(void)
 {
-    static float out[7 * 7];
+    static float out[5 * 7];
     if (!s_mExists) return out;
-    b3BodyId ids[7] = { s_mTorso,
-                        s_mUpper[0], s_mFore[0], s_mHand[0],
-                        s_mUpper[1], s_mFore[1], s_mHand[1] };
-    for (int i = 0; i < 7; i++)
+    b3BodyId ids[5] = { s_mTorso, s_mUpper[0], s_mFore[0], s_mUpper[1], s_mFore[1] };
+    for (int i = 0; i < 5; i++)
     {
         float* o = &out[i * 7];
         b3Pos p = b3Body_GetPosition(ids[i]);
@@ -748,8 +707,8 @@ float* w_mech_state(void)
 WASM_EXPORT("w_mech_lengths")
 float* w_mech_lengths(void)
 {
-    static float out[3];
-    out[0] = s_mUpperLen; out[1] = s_mForeLen; out[2] = s_mHandHalf;
+    static float out[2];
+    out[0] = s_mUpperLen; out[1] = s_mForeLen;
     return out;
 }
 
