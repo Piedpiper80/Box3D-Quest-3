@@ -408,6 +408,24 @@ float w_hand_mass(int i)
     return b3Body_GetMass(s_handBody[i]);
 }
 
+// 8 floats per body: position, rotation, half extent.
+WASM_EXPORT("w_hand_state")
+float* w_hand_state(void)
+{
+    static float out[HAND_COUNT * 8];
+    for (int i = 0; i < HAND_COUNT; i++)
+    {
+        float* o = &out[i * 8];
+        if (!s_handExists[i]) continue;
+        b3Pos p = b3Body_GetPosition(s_handBody[i]);
+        b3Quat q = b3Body_GetRotation(s_handBody[i]);
+        o[0] = (float)p.x; o[1] = (float)p.y; o[2] = (float)p.z;
+        o[3] = q.v.x; o[4] = q.v.y; o[5] = q.v.z; o[6] = q.s;
+        o[7] = s_handHalf[i];
+    }
+    return out;
+}
+
 // ---------------------------------------------------------------------------
 // Piloting spike — an arm that swings from a shoulder
 //
