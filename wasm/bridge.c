@@ -486,6 +486,36 @@ static b3JointId s_mElbow[MECH_ARMS];
 static b3Vec3 s_mWrist[MECH_ARMS];      // wrist offset in forearm local space
 // How far the mount can turn away from the forearm before the joint stops it.
 static float s_mWristCone = 1.35f;
+static float s_mShoulderHalf = 0.20f;   // set from the player's measured span
+
+// How hard and how fast the joints drive toward the pose IK asks for.
+// The torque ceiling is the actuator's strength: it is why a heavy arm is
+// slower than a light one at the same setting.
+static float s_mDrivePeriod = 0.18f;
+static float s_mDriveZeta = 1.0f;
+static float s_mDriveTorque = 25.0f;    // N m per kg of the bone being driven
+static float s_mJointHertz = 4.0f;
+
+// The actuator's stiffness, in newton metres per radian.
+//
+// Box3D's springs are mass-normalised by design: a 3 kg arm and a 26 kg arm
+// given the same hertz track a punch identically, measured at 19.1 cm against
+// 17.9 cm. That is correct for a spring and useless for this game, where the
+// whole point is that a heavy arm is harder to swing.
+//
+// A real actuator has a torque, not a frequency. Holding stiffness fixed and
+// solving k = I*w^2 for each joint's own inertia gives a heavy limb a lower
+// natural frequency for free — which is exactly what being heavy means.
+static float s_mActStiffness = 8000.0f;
+// The elbow's spring pushes back on the upper arm, so the shoulder has to be
+// the stiffer of the two or the pair settles on a compromise pose that is
+// neither of their targets.
+static float s_mShoulderStiffMul = 1.0f;
+static void tuneJointSprings(void);
+static float s_mJointDamping = 1.0f;
+static b3Vec3 s_mIKElbow[MECH_ARMS];
+static b3Vec3 s_mIKWrist[MECH_ARMS];
+static b3Quat s_mShoulderFrame[MECH_ARMS];
 static b3Vec3 s_mHandTarget[MECH_ARMS];
 static int s_mHandActive[MECH_ARMS] = {0, 0};
 static int s_mExists = 0;
@@ -510,6 +540,7 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
     // rather than assumed, so the machine's joints line up with theirs.
     if (!(shoulderHalf > 0.06f)) shoulderHalf = 0.20f;
     if (shoulderHalf > 0.40f) shoulderHalf = 0.40f;
+    s_mShoulderHalf = shoulderHalf;
 
     // Box3D asserts a spherical cone limit of at most a quarter turn, and this
     // is built with NDEBUG so that assert is gone. Handing it 2.2 rad, as this
@@ -584,6 +615,7 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
         sj.base.localFrameA.q.v.y = 0.0f;
         sj.base.localFrameA.q.v.z = 0.0f;
         sj.base.localFrameA.q.s = 0.92387953f;
+        s_mShoulderFrame[i] = sj.base.localFrameA.q;
         sj.base.localFrameB = b3Transform_identity;
         sj.base.collideConnected = false;
         sj.enableConeLimit = true;
@@ -597,6 +629,13 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
         // stop the arm moving.
         sj.enableMotor = shoulderTorque > 0.0f;
         sj.maxMotorTorque = shoulderTorque;
+        // The shoulder is driven by a spring toward the orientation IK asks
+        // for. Box3D solves this implicitly, so unlike a torque applied from
+        // outside it cannot be stiffened into instability — which is what put a
+        // ceiling on the previous attempt and left the arm short of its pose.
+        sj.enableSpring = true;
+        sj.hertz = s_mJointHertz;
+        sj.dampingRatio = s_mJointDamping;
         s_mShoulder[i] = b3CreateSphericalJoint(s_world, &sj);
 
         // --- forearm ---
@@ -653,6 +692,9 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
         rj.enableMotor = elbowTorque > 0.0f;
         rj.maxMotorTorque = elbowTorque;
         rj.motorSpeed = 0.0f;
+        rj.enableSpring = true;
+        rj.hertz = s_mJointHertz;
+        rj.dampingRatio = s_mJointDamping;
         s_mElbow[i] = b3CreateRevoluteJoint(s_world, &rj);
 
         // --- attachment, on a wrist ---
@@ -719,6 +761,7 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
         s_mHandActive[i] = 0;
     }
     s_mExists = 1;
+    tuneJointSprings();
 }
 
 // Where the machine is trying to stand. Follows the player.
@@ -874,6 +917,40 @@ void w_mech_aim(float period, float zeta, float maxTorquePerKg)
     s_mAimPeriod = period; s_mAimZeta = zeta; s_mAimMax = maxTorquePerKg;
 }
 
+WASM_EXPORT("w_mech_joint_spring")
+void w_mech_joint_spring(float stiffness, float damping)
+{
+    s_mActStiffness = stiffness; s_mJointDamping = damping;
+    if (s_mExists) tuneJointSprings();
+}
+
+WASM_EXPORT("w_mech_shoulder_mul")
+void w_mech_shoulder_mul(float mul)
+{
+    s_mShoulderStiffMul = mul;
+    if (s_mExists) tuneJointSprings();
+}
+
+WASM_EXPORT("w_mech_drive")
+void w_mech_drive(float period, float zeta, float torquePerKg)
+{
+    s_mDrivePeriod = period; s_mDriveZeta = zeta; s_mDriveTorque = torquePerKg;
+}
+
+// Where IK wants the elbow and wrist, so a pose that is merely unreachable can
+// be told apart from a pose that was solved wrongly.
+WASM_EXPORT("w_mech_ik_target")
+float* w_mech_ik_target(void)
+{
+    static float out[MECH_ARMS * 6];
+    for (int i = 0; i < MECH_ARMS; i++)
+    {
+        out[i*6+0] = s_mIKElbow[i].x; out[i*6+1] = s_mIKElbow[i].y; out[i*6+2] = s_mIKElbow[i].z;
+        out[i*6+3] = s_mIKWrist[i].x; out[i*6+4] = s_mIKWrist[i].y; out[i*6+5] = s_mIKWrist[i].z;
+    }
+    return out;
+}
+
 WASM_EXPORT("w_mech_swivel")
 void w_mech_swivel(float period, float zeta, float maxTorquePerKg)
 {
@@ -897,6 +974,281 @@ WASM_EXPORT("w_mech_upright")
 void w_mech_upright(float period, float zeta, float maxTorquePerKg)
 {
     s_mUprightPeriod = period; s_mUprightZeta = zeta; s_mUprightMax = maxTorquePerKg;
+}
+
+// ---------------------------------------------------------------------------
+// Two-bone inverse kinematics for an arm
+//
+// Dragging the far end of a jointed chain with a force and hoping the joints
+// work out the rest is not how anyone builds a VR arm, and this spike spent
+// several rounds proving it: the elbow has no defined answer, the pose the
+// player sees has no relationship to their own, and every fix was a new
+// controller fighting the last one.
+//
+// Every VR body rig — VRIK, FinalIK, the Movement SDK — solves the arm
+// analytically instead. A shoulder, an elbow and a wrist is the textbook
+// two-bone problem: the distance from shoulder to wrist fixes the elbow's bend
+// exactly by the law of cosines, and the one remaining freedom, where the elbow
+// sits on its circle, is chosen deliberately rather than left to chance.
+//
+// What is *not* copied from those rigs is how the result is applied. They pose
+// the skeleton directly, which would throw away the mass, the collisions and
+// the momentum this whole game is built on. Here the solution is a target, and
+// capped torques drive the real bodies toward it — so the machine still has to
+// physically get there, a heavy arm still takes longer, and a punch still
+// shoves the torso. That split is the point: IK decides the pose, physics
+// decides what it costs.
+// ---------------------------------------------------------------------------
+
+typedef struct { float x, y, z; } V3;
+
+static V3 v3(float x, float y, float z) { V3 r = {x, y, z}; return r; }
+static V3 v3sub(V3 a, V3 b) { return v3(a.x-b.x, a.y-b.y, a.z-b.z); }
+static V3 v3add(V3 a, V3 b) { return v3(a.x+b.x, a.y+b.y, a.z+b.z); }
+static V3 v3mul(V3 a, float s) { return v3(a.x*s, a.y*s, a.z*s); }
+static float v3dot(V3 a, V3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
+static V3 v3cross(V3 a, V3 b) {
+    return v3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x);
+}
+static float v3len(V3 a) { return __builtin_sqrtf(v3dot(a, a)); }
+static V3 v3norm(V3 a) {
+    const float l = v3len(a);
+    return (l > 1e-6f) ? v3mul(a, 1.0f / l) : v3(0.0f, 0.0f, 1.0f);
+}
+
+// Orientation of a bone that runs along its own -Z from origin toward `tip`,
+// hinging about `hinge`. Returned as a quaternion in world space.
+static b3Quat boneQuat(V3 from, V3 tip, V3 hinge)
+{
+    const V3 zAxis = v3norm(v3sub(from, tip));     // bone extends along -Z
+    V3 xAxis = v3sub(hinge, v3mul(zAxis, v3dot(hinge, zAxis)));
+    if (v3len(xAxis) < 1e-4f)
+    {
+        // Hinge parallel to the bone: any perpendicular will do.
+        V3 alt = (__builtin_fabsf(zAxis.y) < 0.9f) ? v3(0,1,0) : v3(1,0,0);
+        xAxis = v3sub(alt, v3mul(zAxis, v3dot(alt, zAxis)));
+    }
+    xAxis = v3norm(xAxis);
+    const V3 yAxis = v3cross(zAxis, xAxis);
+
+    // Built by hand rather than through b3MakeQuatFromMatrix. Handing that
+    // function a basis produced an orientation that left both the explicit
+    // torque drive and the joint springs applying exactly zero — the arm sat at
+    // its construction pose, to the millimetre, no matter how hard either was
+    // pushed. A target that produces no error is a target equal to the current
+    // rotation, which is what pointed here. This is Shepperd's method on the
+    // columns, and it is unambiguous about which way round the basis goes.
+    const float m00 = xAxis.x, m10 = xAxis.y, m20 = xAxis.z;
+    const float m01 = yAxis.x, m11 = yAxis.y, m21 = yAxis.z;
+    const float m02 = zAxis.x, m12 = zAxis.y, m22 = zAxis.z;
+
+    b3Quat q;
+    const float tr = m00 + m11 + m22;
+    if (tr > 0.0f)
+    {
+        const float sc = __builtin_sqrtf(tr + 1.0f) * 2.0f;
+        q.s = 0.25f * sc;
+        q.v.x = (m21 - m12) / sc;
+        q.v.y = (m02 - m20) / sc;
+        q.v.z = (m10 - m01) / sc;
+    }
+    else if (m00 > m11 && m00 > m22)
+    {
+        const float sc = __builtin_sqrtf(1.0f + m00 - m11 - m22) * 2.0f;
+        q.s = (m21 - m12) / sc;
+        q.v.x = 0.25f * sc;
+        q.v.y = (m01 + m10) / sc;
+        q.v.z = (m02 + m20) / sc;
+    }
+    else if (m11 > m22)
+    {
+        const float sc = __builtin_sqrtf(1.0f + m11 - m00 - m22) * 2.0f;
+        q.s = (m02 - m20) / sc;
+        q.v.x = (m01 + m10) / sc;
+        q.v.y = 0.25f * sc;
+        q.v.z = (m12 + m21) / sc;
+    }
+    else
+    {
+        const float sc = __builtin_sqrtf(1.0f + m22 - m00 - m11) * 2.0f;
+        q.s = (m10 - m01) / sc;
+        q.v.x = (m02 + m20) / sc;
+        q.v.y = (m12 + m21) / sc;
+        q.v.z = 0.25f * sc;
+    }
+    return b3NormalizeQuat(q);
+}
+
+// Drive a body toward a world orientation with a capped torque.
+//
+// Gains come from the body's own rotational inertia and are expressed as a
+// response period and a damping ratio, because every time this file has used
+// raw numbers instead it has been unstable. The cap is what the actuator can
+// deliver: it is why a heavy arm is slower than a light one at the same
+// setting, and it is the whole weight-class mechanic.
+static void driveTo(b3BodyId body, b3BodyId reaction, b3Quat want,
+                    float period, float zeta, float maxTorque)
+{
+    b3Quat cur = b3Body_GetRotation(body);
+    if (cur.v.x*want.v.x + cur.v.y*want.v.y + cur.v.z*want.v.z + cur.s*want.s < 0.0f)
+    {
+        want = b3NegateQuat(want);
+    }
+    // err = want * conj(cur); its vector part is the rotation to apply.
+    const b3Quat err = b3MulQuat(want, b3Conjugate(cur));
+
+    b3Matrix3 Ib = b3Body_GetLocalRotationalInertia(body);
+    float I = (Ib.cx.x + Ib.cy.y + Ib.cz.z) / 3.0f;
+    if (I < 1e-4f) I = 1e-4f;
+
+    const float w0 = 6.2831853f / period;
+    const float k = I * w0 * w0;
+    const float c = 2.0f * zeta * I * w0;
+
+    b3Vec3 wB = b3Body_GetAngularVelocity(body);
+    b3Vec3 wA = b3Body_GetAngularVelocity(reaction);
+
+    float tx = err.v.x * k - (wB.x - wA.x) * c;
+    float ty = err.v.y * k - (wB.y - wA.y) * c;
+    float tz = err.v.z * k - (wB.z - wA.z) * c;
+
+    const float sq = tx*tx + ty*ty + tz*tz;
+    if (sq > maxTorque * maxTorque)
+    {
+        const float s = maxTorque / __builtin_sqrtf(sq);
+        tx *= s; ty *= s; tz *= s;
+    }
+
+    b3Vec3 t; t.x = tx; t.y = ty; t.z = tz;
+    b3Body_ApplyTorque(body, t, true);
+    // Equal and opposite into whatever it is mounted on, so the machine gets
+    // shoved by its own arm instead of the torque appearing from nowhere.
+    t.x = -tx; t.y = -ty; t.z = -tz;
+    b3Body_ApplyTorque(reaction, t, true);
+}
+
+// Set each joint's spring rate from what it actually has to swing.
+static void tuneJointSprings(void)
+{
+    for (int i = 0; i < MECH_ARMS; i++)
+    {
+        const float mU = b3Body_GetMass(s_mUpper[i]);
+        const float mF = b3Body_GetMass(s_mFore[i]);
+        const float mT = b3Body_GetMass(s_mTool[i]);
+        const float L1 = s_mUpperLen, L2 = s_mForeLen;
+
+        b3Matrix3 iu = b3Body_GetLocalRotationalInertia(s_mUpper[i]);
+        b3Matrix3 ifo = b3Body_GetLocalRotationalInertia(s_mFore[i]);
+
+        // The shoulder swings the whole arm; the elbow only swings what is
+        // past it.
+        float Ishoulder = iu.cx.x + mU * (L1*0.5f)*(L1*0.5f)
+                        + mF * (L1 + L2*0.5f)*(L1 + L2*0.5f)
+                        + mT * (L1 + L2)*(L1 + L2);
+        float Ielbow = ifo.cx.x + mF * (L2*0.5f)*(L2*0.5f) + mT * L2*L2;
+        if (Ishoulder < 1e-3f) Ishoulder = 1e-3f;
+        if (Ielbow < 1e-3f) Ielbow = 1e-3f;
+
+        float hz1 = __builtin_sqrtf(s_mActStiffness * s_mShoulderStiffMul / Ishoulder) / 6.2831853f;
+        float hz2 = __builtin_sqrtf(s_mActStiffness / Ielbow) / 6.2831853f;
+        // Below about 1.5 Hz the arm is unusable rather than heavy; above 60 it
+        // is past what the step can resolve cleanly.
+        if (hz1 < 1.5f) hz1 = 1.5f; if (hz1 > 60.0f) hz1 = 60.0f;
+        if (hz2 < 1.5f) hz2 = 1.5f; if (hz2 > 60.0f) hz2 = 60.0f;
+
+        b3SphericalJoint_SetSpringHertz(s_mShoulder[i], hz1);
+        b3SphericalJoint_SetSpringDampingRatio(s_mShoulder[i], s_mJointDamping);
+        b3RevoluteJoint_SetSpringHertz(s_mElbow[i], hz2);
+        b3RevoluteJoint_SetSpringDampingRatio(s_mElbow[i], s_mJointDamping);
+    }
+}
+
+// Solve arm i and drive its two bones toward the solution.
+static void armIK(int i)
+{
+    b3WorldTransform tx = b3Body_GetTransform(s_mTorso);
+    const b3Vec3 localShoulder = { (i == 0) ? -s_mShoulderHalf : s_mShoulderHalf, 0.17f, 0.0f };
+    const b3Vec3 rotated = b3RotateVector(tx.q, localShoulder);
+    const V3 S = v3((float)tx.p.x + rotated.x, (float)tx.p.y + rotated.y, (float)tx.p.z + rotated.z);
+
+    // Where the end of the mount has to be, and which way it points.
+    const V3 H = v3(s_mHandTarget[i].x, s_mHandTarget[i].y, s_mHandTarget[i].z);
+    const b3Vec3 fwdLocal = { 0.0f, 0.0f, -1.0f };
+    const b3Vec3 fwd = b3RotateVector(s_mToolAim[i], fwdLocal);
+    const float toolLen = 2.0f * s_mToolHalf;
+
+    // The wrist sits one mount-length back along the aim, so the far face of
+    // the mount — not the wrist — is what lands on your hand.
+    const V3 W = v3sub(H, v3mul(v3(fwd.x, fwd.y, fwd.z), toolLen));
+
+    const float L1 = s_mUpperLen, L2 = s_mForeLen;
+    V3 toW = v3sub(W, S);
+    float d = v3len(toW);
+
+    // Out of reach is normal — you can hold a controller further away than the
+    // machine's arm goes. It stretches out toward you and stops, which is what
+    // an arm does.
+    const float dMin = __builtin_fabsf(L1 - L2) + 0.02f;
+    const float dMax = L1 + L2 - 0.01f;
+    if (d < dMin) d = dMin;
+    if (d > dMax) d = dMax;
+    const V3 dir = v3norm(toW);
+
+    // Law of cosines: how far along the shoulder-to-wrist line the elbow sits,
+    // and how far off it.
+    const float a = (d*d + L1*L1 - L2*L2) / (2.0f * d);
+    float hSq = L1*L1 - a*a;
+    if (hSq < 0.0f) hSq = 0.0f;
+    const float h = __builtin_sqrtf(hSq);
+
+    // The one free choice in the whole solve: which way round the circle the
+    // elbow sits. Straight down, which is where a person's elbow is, and the
+    // reason it no longer ends up pointing at the ceiling.
+    V3 pole = v3sub(v3(0.0f, -1.0f, 0.0f), v3mul(dir, v3dot(v3(0.0f, -1.0f, 0.0f), dir)));
+    if (v3len(pole) < 1e-3f)
+    {
+        // Arm pointing straight up or down; use forward instead.
+        pole = v3sub(v3(0.0f, 0.0f, -1.0f), v3mul(dir, v3dot(v3(0.0f, 0.0f, -1.0f), dir)));
+    }
+    pole = v3norm(pole);
+
+    const V3 E = v3add(S, v3add(v3mul(dir, a), v3mul(pole, h)));
+
+    // The elbow hinges about the normal to the bend plane.
+    // Negated deliberately.
+    //
+    // cross(upper, forearm) points the way that makes the bend a *positive*
+    // rotation about it, and the elbow's limits only allow negative — folding
+    // is negative, straight is zero. Left unflipped the shoulder still aimed
+    // correctly, so the elbow landed within a couple of centimetres, while the
+    // forearm was asked to bend into its own hard stop and the wrist ended up
+    // 38 cm out. The elbow being right while the wrist got worse as the spring
+    // stiffened is what gave it away.
+    V3 hinge = v3mul(v3cross(v3sub(E, S), v3sub(W, E)), -1.0f);
+    if (v3len(hinge) < 1e-4f) hinge = v3cross(pole, dir);
+    hinge = v3norm(hinge);
+
+    s_mIKElbow[i].x = E.x; s_mIKElbow[i].y = E.y; s_mIKElbow[i].z = E.z;
+    s_mIKWrist[i].x = W.x; s_mIKWrist[i].y = W.y; s_mIKWrist[i].z = W.z;
+
+    const b3Quat qUpper = boneQuat(S, E, hinge);
+    const b3Quat qFore = boneQuat(E, W, hinge);
+
+    // Hand the solution to the joints as spring targets.
+    //
+    // The shoulder spring works in joint-frame terms: frame B relative to frame
+    // A, where A carries the tilt built into the shoulder mount, so the target
+    // has to be expressed in that frame rather than in world.
+    const b3Quat qFrameA = b3MulQuat(tx.q, s_mShoulderFrame[i]);
+    b3SphericalJoint_SetTargetRotation(s_mShoulder[i],
+        b3NormalizeQuat(b3MulQuat(b3Conjugate(qFrameA), qUpper)));
+
+    // The elbow only has one angle to be told about, and the law of cosines
+    // already gave it: straight is zero, folded is negative.
+    const float cosInterior = (L1*L1 + L2*L2 - d*d) / (2.0f * L1 * L2);
+    const float interior = __builtin_acosf(cosInterior < -1.0f ? -1.0f
+                                         : (cosInterior > 1.0f ? 1.0f : cosInterior));
+    b3RevoluteJoint_SetTargetAngle(s_mElbow[i], interior - 3.14159265f);
 }
 
 WASM_EXPORT("w_mech_apply")
@@ -985,28 +1337,15 @@ void w_mech_apply(void)
         b3Body_ApplyTorque(s_mTorso, t, true);
     }
 
-    // Arms: haul each wrist toward the hand. Applied at the wrist, not the
-    // centre of mass, so it swings the forearm and torques back through the
-    // elbow and shoulder the way pulling a real arm does.
+    // Arms.
+    //
+    // Each arm is solved as a two-bone IK problem and then physically driven to
+    // that solution. Nothing here drags the hand end and hopes: the pose is
+    // worked out first, the bodies have to earn their way there.
     for (int i = 0; i < MECH_ARMS; i++)
     {
-        // The machine carries its own arm.
-        //
-        // This is the thing that was wrong. Without it the only force holding
-        // the arm up was the pull toward your hand, so the arm hung below that
-        // hand by however far it took to stretch the spring against its own
-        // weight — 13 cm of droop for the lightest arm and 38 cm for the
-        // heaviest, nearly all of it straight down. In the headset that reads
-        // exactly as what it is: the arm is not following your hand. Worse, at
-        // the heavy end the pull had nothing left over to fold the elbow with,
-        // so the limb locked out straight and stopped articulating at all.
-        //
-        // It was being defended as the weight signal, and it is not one. Your
-        // own arm does not sag when you hold it out; the muscles carry it, and
-        // what you feel as heavy is how hard it is to get moving and how hard
-        // to stop. Any powered joint does the same. So the weight is carried
-        // here, and mass shows up where it belongs — in the momentum, through
-        // the capped force below.
+        // The machine carries its own arm, so the drive torque below is spent
+        // moving the limb rather than holding it up against gravity.
         {
             b3BodyId parts[3] = { s_mUpper[i], s_mFore[i], s_mTool[i] };
             for (int k = 0; k < 3; k++)
@@ -1019,121 +1358,9 @@ void w_mech_apply(void)
             }
         }
 
-        // Hold the elbow down.
-        //
-        // Rotates the whole limb about its own shoulder-to-wrist line, which
-        // moves the elbow around that circle without disturbing where the hand
-        // ends up — the one direction the hand's pull cannot control. The
-        // reaction goes into the torso, so this adds no free momentum.
-        {
-            b3Pos sp = b3Body_GetPosition(s_mUpper[i]);   // shoulder
-            b3Pos ep = b3Body_GetPosition(s_mFore[i]);    // elbow
-            b3Pos wp = b3Body_GetPosition(s_mTool[i]);    // wrist
-
-            float ax[3] = { (float)(wp.x - sp.x), (float)(wp.y - sp.y), (float)(wp.z - sp.z) };
-            float axLen = __builtin_sqrtf(ax[0]*ax[0] + ax[1]*ax[1] + ax[2]*ax[2]);
-
-            // With the arm folded right up the axis is too short to be a
-            // meaningful direction, and the swivel is meaningless anyway.
-            if (axLen > 0.12f)
-            {
-                ax[0] /= axLen; ax[1] /= axLen; ax[2] /= axLen;
-
-                float off[3] = { (float)(ep.x - sp.x), (float)(ep.y - sp.y), (float)(ep.z - sp.z) };
-                const float offAx = off[0]*ax[0] + off[1]*ax[1] + off[2]*ax[2];
-                float u[3] = { off[0] - ax[0]*offAx, off[1] - ax[1]*offAx, off[2] - ax[2]*offAx };
-                const float uLen = __builtin_sqrtf(u[0]*u[0] + u[1]*u[1] + u[2]*u[2]);
-
-                // Straight down, with the component along the arm removed:
-                // down - ax * (down . ax), where down is (0,-1,0) so the dot
-                // product is just -ax[1].
-                float d[3] = { ax[0]*ax[1], -1.0f + ax[1]*ax[1], ax[2]*ax[1] };
-                const float dLen = __builtin_sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
-
-                if (uLen > 0.02f && dLen > 0.02f)
-                {
-                    u[0] /= uLen; u[1] /= uLen; u[2] /= uLen;
-                    d[0] /= dLen; d[1] /= dLen; d[2] /= dLen;
-
-                    // Signed angle from where the elbow is to where it should be.
-                    const float cosT = u[0]*d[0] + u[1]*d[1] + u[2]*d[2];
-                    const float crx = u[1]*d[2] - u[2]*d[1];
-                    const float cry = u[2]*d[0] - u[0]*d[2];
-                    const float crz = u[0]*d[1] - u[1]*d[0];
-                    const float sinT = crx*ax[0] + cry*ax[1] + crz*ax[2];
-                    const float theta = __builtin_atan2f(sinT, cosT);
-
-                    // Inertia of the limb about that line, so the gains mean
-                    // the same thing at every weight class.
-                    const float rArm = uLen;
-                    float I = (b3Body_GetMass(s_mFore[i]) + b3Body_GetMass(s_mTool[i])) * rArm * rArm;
-                    if (I < 0.02f) I = 0.02f;
-
-                    b3Vec3 wU = b3Body_GetAngularVelocity(s_mUpper[i]);
-                    b3Vec3 wT = b3Body_GetAngularVelocity(s_mTorso);
-                    const float spin = (wU.x - wT.x)*ax[0] + (wU.y - wT.y)*ax[1] + (wU.z - wT.z)*ax[2];
-
-                    const float w0 = 6.2831853f / s_mSwivelPeriod;
-                    float tq = I * w0 * w0 * theta - 2.0f * s_mSwivelZeta * I * w0 * spin;
-
-                    const float cap = s_mSwivelMax * (b3Body_GetMass(s_mUpper[i])
-                                    + b3Body_GetMass(s_mFore[i]) + b3Body_GetMass(s_mTool[i]));
-                    if (tq > cap) tq = cap;
-                    if (tq < -cap) tq = -cap;
-
-                    b3Vec3 t;
-                    t.x = ax[0]*tq; t.y = ax[1]*tq; t.z = ax[2]*tq;
-                    b3Body_ApplyTorque(s_mUpper[i], t, true);
-                    t.x = -t.x; t.y = -t.y; t.z = -t.z;
-                    b3Body_ApplyTorque(s_mTorso, t, true);
-                }
-            }
-        }
-
         if (!s_mHandActive[i]) continue;
 
-        b3Pos bp = b3Body_GetPosition(s_mTool[i]);
-        b3Quat bq = b3Body_GetRotation(s_mTool[i]);
-        b3Matrix3 m = b3MakeMatrixFromQuat(bq);
-
-        // Wrist in world space.
-        float wx = (float)bp.x + m.cz.x * s_mWrist[i].z;
-        float wy = (float)bp.y + m.cz.y * s_mWrist[i].z;
-        float wz = (float)bp.z + m.cz.z * s_mWrist[i].z;
-
-        // Damping is sized to the body the force is applied to, not to the arm
-        // behind it.
-        //
-        // It used to come from the whole arm's mass while acting on the mount
-        // alone. That was survivable while the mount was a 5 kg block, and blew
-        // up the moment it was made a sensible size: at 0.26 kg the damping
-        // came out about eight times what an explicit step can take, and the
-        // arm flung itself up and backwards over the shoulder. An explicit
-        // damper is unconditionally unstable past c*h/m = 2, so the ceiling
-        // below is a real limit and not a tuning knob.
-        const float toolMass = b3Body_GetMass(s_mTool[i]);
-        float pullC = 2.0f * s_mPullZeta * __builtin_sqrtf(s_mPullK * toolMass);
-
-        // 72 Hz is what the page and the tests both run at; the margin leaves
-        // room for a frame that arrives late.
-        const float stepH = 1.0f / 72.0f;
-        const float cMax = 0.9f * toolMass / stepH;
-        if (pullC > cMax) pullC = cMax;
-
-        b3Vec3 v = b3Body_GetLinearVelocity(s_mTool[i]);
-        float fx = (s_mHandTarget[i].x - wx) * s_mPullK - v.x * pullC;
-        float fy = (s_mHandTarget[i].y - wy) * s_mPullK - v.y * pullC;
-        float fz = (s_mHandTarget[i].z - wz) * s_mPullK - v.z * pullC;
-        float sq = fx*fx + fy*fy + fz*fz;
-        if (sq > s_mPullMax * s_mPullMax)
-        {
-            float k = s_mPullMax / __builtin_sqrtf(sq);
-            fx *= k; fy *= k; fz *= k;
-        }
-
-        b3Vec3 f; f.x = fx; f.y = fy; f.z = fz;
-        b3Pos at; at.x = wx; at.y = wy; at.z = wz;
-        b3Body_ApplyForce(s_mTool[i], f, at, true);
+        armIK(i);
 
         // Aim. The attachment turns to face where the controller faces, which is
         // what lets a sword be pointed rather than merely carried. Torque-based
@@ -1226,7 +1453,6 @@ void w_mech_apply(void)
     }
 }
 
-// 7 floats each: torso, then upper/fore/attachment for each arm — 49 total.
 WASM_EXPORT("w_mech_state")
 float* w_mech_state(void)
 {
