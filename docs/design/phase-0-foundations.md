@@ -8,6 +8,11 @@ in-headset, measured on-device with the perf HUD. Write the number into
 [`ROADMAP.md`](ROADMAP.md) when you have it. Stretch target: ≥1000 dynamic
 boxes, which is roughly what one destructible mech needs.
 
+> **On 72 Hz.** Quest 3 also offers 80, 90 and 120. For a physics-heavy game a
+> rock-solid 72 beats a dropping 90 every time — inconsistent frame timing is
+> what makes people sick, not the absolute number. 72 is the working default;
+> revisit once this phase's number is known and the frame budget is understood.
+
 Nothing here is a game feature. The scene at the end of Phase 0 looks almost
 identical to the scene at the start — it just runs with an order of magnitude
 more in it.

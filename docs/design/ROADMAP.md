@@ -20,37 +20,120 @@ never changes is an ordering nobody is using.
 3. **Measure before you design.** The perf HUD (Phase 0) exists so that every
    later decision is made against real numbers instead of intuition. Quest 3 is
    a fixed budget; the numbers decide the design, not the other way round.
-4. **Shippable at Phase 5.** Two destructible mechs, a killable core, one arena
-   is a complete game. Everything from Phase 6 on is expansion on something
-   that already exists. Protect that property.
+4. **Keep a playable spine.** From Phase 5 on there is always a complete
+   game — two destructible mechs, a killable core, one arena — and every later
+   phase is an addition to something that already works. This isn't about
+   shipping early; it's so quality can be judged by *playing* rather than by
+   imagining the finished thing.
+5. **Take the time.** There is no deadline. Where there's a fast path and a
+   right path, take the right one — including tooling, rework, and throwing
+   away things that turned out wrong.
 
 ---
 
-## Decisions already made
+## What "top tier indie" means here
 
-**Piloting: you *are* the mech, with diegetic controls.** Modelled on
-[Underdogs](https://www.roadtovr.com/underdogs-vr-mech-preview-quest-pc-vr/) —
-you sit in a cockpit as a pilot avatar visibly gripping controls, and your real
-arm motion maps 1:1 to the mech's arms at scale. This is the single most
-important decision in the project and it pays off three ways:
+The bar is a top-tier indie VR game, not a tech demo that runs well. Distribution
+is sideload / SideQuest / itch, so **store policy does not constrain the design**
+— content, structure and length are open.
 
-- **Mass is felt, not displayed.** Your hand becomes a target; the mech's arm is
-  a motorised Box3D joint chasing that target with a *limited* torque. A heavy
-  arm lags behind your hand. Upgrading a joint's strength changes how the mech
-  feels in your body, which turns the material and joint-strength systems
-  (Phase 3) into core game feel rather than a stats screen.
-- **Locomotion is physics-native.** Underdogs' grip-to-anchor movement — plant a
-  fist, pull yourself along — is a constraint plus an impulse, which Box3D does
-  natively. No separate character controller, and no artificial stick locomotion,
-  which means no nausea.
+One distinction is worth keeping though: disregard *policy*, not *physiology*.
+Frame rate targets and comfort mitigations aren't platform rules, they're facts
+about human vestibular systems. A VR game that makes people sick isn't bold,
+it's unplayable. Those stay.
+
+None of what separates top-tier from good-prototype is systems work, which is
+exactly why it needs to be written down next to the systems:
+
+- **Coherent art direction.** Not realism — *coherence*. The current look is
+  flat-shaded coloured cubes; whatever replaces it needs to be a deliberate
+  choice that a voxel mech, a town, and deep space can all live inside.
+- **Audio.** For a giant mech, sound does more work than graphics to convey
+  mass. Servo whine, hydraulic hiss, metal under stress, the boom of a footfall,
+  the crunch of an impact, engine tone shifting as systems fail. This is the
+  highest-leverage polish investment in the whole project and it's routinely
+  underrated by engineers.
+- **Game feel.** Hit stop, haptics, cockpit shake, particulate, oil spray,
+  debris. The difference between "the solver resolved a collision" and "I hit
+  him."
+- **Content volume.** Opponents, arenas, builds, environments.
+- **Comfort and absence of jank.** In VR this is a correctness requirement, not
+  polish.
+- **Playtesting with people who aren't you.** Nothing else substitutes.
+
+These are **tracks, not a phase**. Polish bolted on at the end doesn't produce
+top tier; each gets a first pass when the system it decorates lands, starting
+with audio and game feel at Phase 4.
+
+---
+
+## Decisions made
+
+### Combat: you *are* the mech, with diegetic controls
+
+Your real arm motion maps 1:1 to the mech's arms at scale, and you see a pilot
+avatar gripping controls in the cockpit — the
+[Underdogs](https://www.roadtovr.com/underdogs-vr-mech-preview-quest-pc-vr/)
+presentation. Two reasons this is the spine of the whole design:
+
+- **Mass is felt, not displayed.** Your hand is a target; the mech's arm is a
+  motorised Box3D joint chasing it with a *limited* torque, so a heavy arm lags
+  behind your hand. Upgrading joint strength changes how the mech feels in your
+  body — which turns the material and joint systems (Phase 3) into core game
+  feel rather than a stats screen.
 - **The cockpit hides the seams.** A pilot avatar holding grips gives tracking
-  latency and hand/mech mismatch somewhere to live. Direct un-mediated limb
-  mapping has no such cover.
+  latency and hand/mech mismatch somewhere to live. Un-mediated limb mapping has
+  no such cover.
 
-**Consequence for hand tracking (Phase 1):** the anchor/release verb is the
-whole locomotion scheme, and on controllers it's the grip button. With hands
-it becomes a fist clench — detectable, but with no haptic confirmation of the
-moment the anchor bites. That is the specific thing the spike has to answer.
+### Locomotion: a consequence of the build and the damage state
+
+Not a menu setting and not one scheme — how you move falls out of what your mech
+*is* and what's left of it:
+
+| Mech state | How you move |
+|---|---|
+| Legs intact | Walk / stride, stick-driven |
+| Built without legs — a deliberate build choice | Arm-drag: anchor a fist, pull yourself along |
+| Legs destroyed mid-fight | Arm-drag, forced |
+| Mech dead | On foot, your own legs (Phase 5) |
+
+This is the strongest structural idea in the project so far, because it makes
+four other systems pay off at once:
+
+- **Destruction gets mechanical consequence**, not just visual. Losing a leg
+  changes how you play, immediately.
+- **Legless becomes a real build** with a real trade — mass budget freed for
+  arms and armour, paid for in mobility. Not a broken mech, a different one.
+- **The tension curve is automatic.** As a fight goes badly your movement
+  degrades, which is exactly the drama the fight wants, with no scripting.
+- **It ends where the game already goes.** Walk → drag → eject and run is one
+  continuous ladder into the on-foot escape.
+
+**Build order note — the fallback is easier than the primary.** Arm-drag is
+physics-native: an anchor constraint plus an impulse, which Box3D does directly.
+Physical bipedal walking is genuinely hard — an emergent rigid-body gait is
+research-grade, and the realistic answer is a driven gait with physics reaction
+rather than a truly simulated walk. So **build arm-drag first**: it's cheap, it's
+what everything degrades to, and it makes a legless mech fully playable long
+before walking works.
+
+**Comfort:** stick-driven movement inside a cockpit is close to the best case
+for VR locomotion. The cockpit frame is a static rest frame in your field of
+view — the main mitigation for vection sickness — and a giant mech is slow with
+low acceleration, which is the other. This is well-precedented in cockpit games.
+The instinct is sound; it isn't something to design around.
+
+**Roomscale is a separate axis.** Inside a cockpit your real steps move you *in
+the cockpit* — leaning, dodging, looking around your instruments — and that works
+alongside every row of the table above. Whether roomscale can additionally drive
+the mech itself (your steps becoming giant steps) is only coherent for an
+exposed, cockpit-less build and is bounded by guardian size. Left open.
+
+**Consequence for hand tracking (Phase 1):** the anchor/release verb is now
+load-bearing — it's the fallback locomotion for every mech that loses its legs.
+On controllers it's the grip button; with hands it's a fist clench, detectable
+but with no haptic confirmation of the moment the anchor bites. That's the
+specific thing the spike has to answer.
 
 ---
 
@@ -65,7 +148,8 @@ system, replace the per-body draw call with instancing, decouple physics from
 the render rate, and build the perf HUD.
 
 **Exit criterion is a number**, not a feature: the maximum dynamic body count
-that holds 72 Hz in-headset. That number is an input to every phase below.
+that holds a stable frame rate in-headset. That number is an input to every
+phase below.
 
 ### Phase 0.5 — Worst-case spike
 Before designing anything on top: spawn the genuine worst case — two
@@ -74,19 +158,22 @@ hardest sustained load in the entire project. If it doesn't fit, it changes
 voxel size, mech size and chunking *now*, rather than after three phases have
 been built on the assumption. Cheap to run; potentially saves months.
 
-### Phase 1 — Sandbox + hand tracking
-The test room, minimal: flat room, spawn menu, object inspector, perf HUD
-always visible. This is the development harness for everything that follows, so
-it comes early and grows continuously.
+### Phase 1 — Sandbox + spikes
+The test room, minimal: flat room, spawn menu, object inspector, perf HUD always
+visible. This is the development harness for everything that follows, so it comes
+early and grows continuously.
 
-Then two spikes:
-- **Hand tracking** — test the *hard* case (fast, aggressive, occluded combat
-  motion and the fist-clench anchor), not the easy case. Hand tracking is good
-  on Quest 3 for deliberate manipulation and weakest at exactly what a fighting
-  game is made of. A legitimate outcome is "hands for cockpit, sandbox and
-  on-foot; controllers for fights."
-- **Piloting feel** — force-limited motor targets driving a mech arm from a
-  hand pose. The smallest possible version: one arm, one target, one weight.
+Then three spikes:
+- **Arm-drag locomotion** — anchor a fist, pull. Physics-native, and the
+  fallback the whole locomotion ladder rests on. Cheapest of the three and the
+  one with the most downstream value.
+- **Piloting feel** — force-limited motor targets driving a mech arm from a hand
+  pose. Smallest possible version: one arm, one target, one weight.
+- **Hand tracking** — test the *hard* cases: fast, aggressive, occluded combat
+  motion, and the fist-clench anchor. Hand tracking is good on Quest 3 for
+  deliberate manipulation and weakest at exactly what a fight is made of. A
+  legitimate outcome is "hands for cockpit, sandbox and on-foot; controllers for
+  fights."
 
 ### Phase 2 — Voxel core
 The unified static/dynamic system. **The deformable skin idea and the
@@ -102,6 +189,8 @@ mechs, buildings and terrain affordable at once.
   budget dies ten seconds into every fight
 - Skin and interior layers fall straight out of this: the shell is
   dynamic-capable, the layers beneath stay merged until exposed
+- **Structural queries** land here too — "is this limb still attached to the
+  core?" is what the locomotion ladder reads to know a leg is gone
 
 ### Phase 3 — Materials and joint strength
 A curated table of ~20 materials: mass, density, bond strength, thermal
@@ -114,11 +203,12 @@ properties.
 
 Joint strength belongs here: Box3D's joint motors carry force/torque limits and
 the load on a joint can be read back, which is exactly what "strong enough to
-move more massive blocks" and "snaps under load" are built from. It also feeds
-directly back into piloting feel from Phase 1.
+move more massive blocks" and "snaps under load" are built from. It feeds
+straight back into piloting feel from Phase 1.
 
 ### Phase 4 — The mech
-A jointed voxel assembly. Build-your-mech from Phase 3 materials.
+A jointed voxel assembly. Build-your-mech from Phase 3 materials — including
+the choice to build without legs.
 
 - **The core** — a component at chest centre; destroy it and the mech dies.
   Cheap to implement, and it's the win condition, so it should exist early.
@@ -129,14 +219,21 @@ A jointed voxel assembly. Build-your-mech from Phase 3 materials.
   as particles and decals sells the rest. A real fluid sim would be beautiful
   and unaffordable.
 - **Overheating** picks up the temperature spike from Phase 1 and gives it a job.
+- **First audio and game-feel pass.** The mech is the first thing in the project
+  that has to *feel* like something, so the quality tracks start here rather
+  than at the end.
 
-### Phase 5 — The fight *(shippable)*
-One arena, one opponent, win/lose. The complete game.
+### Phase 5 — The fight *(playable spine complete)*
+One arena, one opponent, win/lose. A complete game.
 
-**Escaping your fallen mech on foot** belongs here: the loss state that isn't a
-game over. Mechanically it's the roomscale locomotion that already exists, which
-is why the scale contrast lands so hard for so little work — and it's where the
-oxygen spike from Phase 1 finds its purpose.
+**Escaping your fallen mech on foot** belongs here: the last rung of the
+locomotion ladder and a loss state that isn't a game over. Mechanically it's the
+roomscale locomotion that already exists, which is why the scale contrast lands
+so hard for so little work — and it's where the oxygen spike from Phase 1 finds
+its purpose.
+
+This is the first point where the game can be honestly judged by playing it, so
+it's also the first real playtesting milestone.
 
 ### Phase 6 — Meta layer
 Credits, upgrades, add-ons, reputation, opponent roster, arena and environment
@@ -159,13 +256,16 @@ engage.
 
 Almost none of this constrains architecture, which is why it defers safely. The
 two parts that *are* technical:
-- **Iron Man flight** — a new locomotion mode with a serious comfort/nausea
-  risk. Spike it early even though you build it late.
+- **Iron Man flight** — a new locomotion mode with a serious comfort risk. Spike
+  it early even though you build it late.
 - **Zero-g space combat** — a different physics config, cheap once flight works.
 
 ---
 
 ## Cross-cutting tracks
+
+**Art direction, audio, game feel, comfort** — see the quality bar above. First
+pass at Phase 4, continuous from there.
 
 **Environment systems** — temperature (freeze the water, make people shiver) and
 oxygen (remove it, watch them collapse). Cheap sandbox spikes; run them whenever
@@ -177,6 +277,10 @@ when the game gives them meaning.
 **NPCs, animals, plants, water** — sandbox residents first, content later. Don't
 build an AI system; build one creature that does one thing and see whether the
 room feels alive.
+
+**Tooling** — with no deadline, tools pay for themselves. A mech editor, a
+material tuner and a scenario loader in the sandbox will each cost days and save
+weeks. Build them when the third round of manual fiddling annoys you, not before.
 
 **Template repo** — do it, but not first. You extract a template from a
 foundation that's proven, and this one is about to be substantially rewritten in
@@ -192,9 +296,13 @@ Phase 2 stabilises.
 |---|---|---|
 | Voxel size | Phase 0.5, empirically | Drives destruction fidelity, body counts, mech silhouette, and whether Phase 7 is possible at all |
 | Mech scale | Phase 0.5, empirically | "Giants" is a feeling, not a number; the number drives voxel count, arena size, and how good the on-foot escape feels |
+| Target refresh rate | Phase 0 | 72 Hz rock-solid beats 90 Hz with drops for a physics-heavy game; revisit once the Phase 0 number is known |
 | Hands or controllers for combat | Phase 1 spike | Split answers are fine and probably correct |
-| Cockpit fidelity | Phase 4 | Full interior sells scale but costs frame budget; measure against the Phase 0 number |
-| Fight pacing | Phase 5 | Underdogs is physically exhausting by design. Decide whether that's the goal |
+| How legged walking is driven | Phase 4 | Fully physical gait is research-grade; expect a driven gait with physics reaction |
+| Roomscale driving the mech directly | Phase 4 | Only coherent for a cockpit-less build; bounded by guardian size |
+| Cockpit fidelity | Phase 4 | Full interior sells scale and is the comfort rest frame, but costs frame budget |
+| Fight pacing and physical intensity | Phase 5 | Underdogs is exhausting by design. Decide whether an hour-long session should be sustainable |
+| Art direction | Phase 4 | Needs to survive a voxel mech, a town, and deep space |
 
 ---
 
@@ -208,13 +316,15 @@ Everything from the original notes, and where it lives.
 | Worst-case destruction load test | 0.5 |
 | Test room / sandbox | 1, grows throughout |
 | Hand tracking (responsiveness, no batteries, nothing to break) | 1 |
+| Arm-drag locomotion (Underdogs-style anchor and pull) | 1 — spike; becomes the damage fallback at 4 |
 | Deformable skin over static-until-revealed layers | 2 |
 | Loose voxels dynamic, fixed voxels static | 2 (same system as above) |
 | Voxel materials with bonding, mass, density | 3 |
 | Joints with strength / power to move massive blocks | 3 |
 | The heart / core at the chest | 4 |
 | Oil and hydraulic fluid as a blood-like resource, arteries, failure | 4 |
-| Build your mech from materials | 4 |
+| Build your mech from materials, including legless builds | 4 |
+| Stick-driven walking; locomotion degrading with damage | 4 |
 | Mech fight, arenas, opponents | 5 |
 | Escaping your fallen mech on foot | 5 |
 | Credits, upgrades, add-ons, reputation | 6 |
@@ -223,4 +333,5 @@ Everything from the original notes, and where it lives.
 | Iron Man flight, space combat | 8 |
 | Temperature, oxygen | Cross-cutting; promoted at 4 and 5 |
 | NPC AI, animals, plants, water | Cross-cutting |
+| Art direction, audio, game feel, comfort | Cross-cutting; first pass at 4 |
 | Template repo for future Box3D VR games | Cross-cutting; notes now, extraction after 2 |
