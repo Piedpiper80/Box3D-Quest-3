@@ -82,6 +82,54 @@ Step 4 is better than optimising blind.
 **Done when:** you can read live frame and step times inside the headset while
 throwing cubes.
 
+## Step 2b — Automated benchmark mode
+
+The stress test must not be a human throwing cubes until it feels bad. That
+isn't reproducible, it depends on how fast someone can pull a trigger, and it
+produces one fuzzy data point instead of a curve.
+
+Build it into the app as a mode that runs unattended:
+
+- **Ramp** the body count — 50, 100, 200, 400, 800, … — spawning automatically.
+- **Hold each level** long enough to measure properly (a few seconds), in two
+  regimes, because they cost wildly different amounts:
+  - **settled** — bodies at rest and asleep. Nearly free, and the easy number
+    that flatters the engine.
+  - **agitated** — bodies in motion and colliding, re-thrown on a timer so
+    nothing gets to sleep. This is the fight, and it's the number that matters.
+- **Record** at each level: mean and 99th-percentile frame time, physics step
+  time, render time, body count, draw calls.
+- **Stop** when 99th-percentile frame time misses the budget consistently.
+- **Emit** results to `logcat` in a parseable form, so a run is captured with
+  `adb logcat` and handed straight back for analysis.
+
+Launch it, put the headset down, come back in two minutes. The output is a
+curve — where the knee is, and whether physics or rendering hit the wall first —
+rather than a single number of unclear provenance.
+
+## Step 2c — Headless physics benchmark
+
+Half of this question doesn't need a headset at all. Box3D is a physics-only
+library: it can be stepped with no VR, no rendering and no Android, in a plain
+desktop binary. The repo already has the precedent — `wasm/test.js` is a
+simulation harness of exactly this kind.
+
+Build a small native benchmark target that steps the same scenes and reports
+step time against body count, so that the following can be answered **without
+the headset in the loop at all**:
+
+- Does step time grow linearly with body count, or worse?
+- Does SIMD (Step 5) actually help, and by how much?
+- Does threading (Step 6) actually scale, and at what worker count does it stop
+  paying?
+- Did a change to the physics code make things slower?
+
+> **What it cannot tell you:** absolute Quest numbers. A desktop or CI CPU is far
+> faster than the XR2 Gen 2, and this benchmark says nothing about GPU or render
+> cost. It gives *relative* scaling and regression detection — enough to tune
+> and verify the physics work before it ever reaches hardware. The absolute
+> ceiling still comes from Step 2b on the device.
+
 ## Step 3 — Fixed timestep
 
 `physics.cpp:164` currently steps Box3D with whatever `dt` the frame loop hands
@@ -166,15 +214,33 @@ active worker count.
 
 ## Step 8 — Measure
 
-Spawn dynamic boxes until 72 Hz breaks. Record:
+Run the Step 2b benchmark on-device and capture the log. It produces:
 
-- max dynamic bodies at stable 72 Hz, settled
-- max dynamic bodies at stable 72 Hz, **in motion and colliding** — this is the
-  number that actually matters, and it will be much lower
-- physics step time and render time at that point, so you know which one you hit
+- max dynamic bodies at a stable frame rate, settled
+- max dynamic bodies at a stable frame rate, **in motion and colliding** — the
+  number that actually matters, and much lower than the settled one
+- physics step time and render time at the knee, so you know which one you hit
+- the shape of the curve either side of it
 
 Put those numbers in `ROADMAP.md`. Phase 0.5 immediately stress-tests them with
-a realistic destruction load.
+a realistic destruction load — a heavyweight, per the roadmap.
+
+### Who does what
+
+The split matters, because two parts of this cannot be done from a development
+machine at all:
+
+| Task | Who |
+|---|---|
+| All eight steps, plus both benchmark harnesses | Claude |
+| Verifying it compiles | CI — `.github/workflows/build.yml` builds the APK on every push |
+| Relative physics scaling, SIMD and threading gains, regressions | Claude, via the Step 2c headless benchmark |
+| Installing the APK and launching the benchmark | You — `adb install` the CI artifact |
+| Absolute frame rate and render cost on real hardware | Only the headset can answer this |
+| Reading the result | `adb logcat` during the run, then hand the log back |
+
+Device involvement is one install, one launch, and roughly two minutes of
+waiting — not a person throwing cubes until it feels bad.
 
 ---
 
