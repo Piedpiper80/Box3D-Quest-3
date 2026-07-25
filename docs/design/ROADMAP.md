@@ -15,6 +15,15 @@ never changes is an ordering nobody is using.
 1. **Prove each idea in its simplest form first.** Every new system starts as a
    throwaway spike with a yes/no question attached. If the spike can't be
    phrased as a question, the idea isn't understood well enough to build yet.
+
+   **And build up from there one confirmed layer at a time.** This was broken
+   badly on the piloting spike: shoulders, joints, motors, cone limits and an
+   upgrade curve were all built and shipped before anyone had confirmed that a
+   cube follows a controller. When it felt wrong there was no way to tell which
+   of five layers was at fault, and three rounds went into fixing the wrong one.
+   The order is always: does the input arrive → does it render where it should →
+   does one body follow it → does a joint follow it → does the game feel right.
+   Each answered in the headset before the next is written.
 2. **Every milestone ends with something testable in the headset.** Not a
    passing unit test — something you put the Quest on and try.
 3. **Measure before you design.** The perf HUD (Phase 0) exists so that every
