@@ -53,6 +53,13 @@ exactly why it needs to be written down next to the systems:
   the crunch of an impact, engine tone shifting as systems fail. This is the
   highest-leverage polish investment in the whole project and it's routinely
   underrated by engineers.
+  - **Source:** ElevenLabs, generated through the web app and exported as
+    files — not the API. So audio is an asset pipeline, not a runtime
+    dependency: generate, audition, commit.
+  - Convert to Ogg/Opus before committing. Raw wav will bloat the APK fast, and
+    a mech needs a lot of individual sounds.
+  - Confirm the plan tier grants commercial use rights before selling anything
+    built with it.
 - **Game feel.** Hit stop, haptics, cockpit shake, particulate, oil spray,
   debris. The difference between "the solver resolved a collision" and "I hit
   him."
@@ -84,6 +91,67 @@ presentation. Two reasons this is the spine of the whole design:
 - **The cockpit hides the seams.** A pilot avatar holding grips gives tracking
   latency and hand/mech mismatch somewhere to live. Un-mediated limb mapping has
   no such cover.
+
+### Combat: momentum is the mechanic, responsiveness is the upgrade
+
+Fights are physical, and they're built on committed motion. Once a mech's arm is
+moving it *stays* moving — let a punch go and you can't easily pull it back, and
+neither can your opponent. You win by baiting commitment and punishing the
+recovery.
+
+The important part: **none of that is scripted.** Most fighting games simulate
+commitment with animation lockout frames. Here it falls straight out of rigid
+bodies with mass and torque-limited joints — a heavy arm genuinely cannot
+reverse quickly, because reversing it is a physics problem. You don't implement
+attack commitment; you implement mass and torque limits, and commitment emerges.
+That's the game's real differentiator and it's worth protecting.
+
+**Responsiveness is the upgrade axis.** A better mech tracks your hand more
+closely, asymptotically approaching 1:1. This is the same force-limited motor
+target the piloting design already uses, so the upgrade curve *is* the torque
+curve — progression is felt in your body rather than read off a stat screen.
+
+> **Calibration caution:** don't actually reach 1:1 at the top. A mech that
+> tracks your hand perfectly stops feeling like a mech and starts feeling like
+> your own arm, which loses the fantasy exactly where the player has earned the
+> most. Keep a little lag and follow-through even at the ceiling.
+
+### Weight classes
+
+Progression runs up through weight classes — small, fast mechs at the start,
+working up to something that can fight a god.
+
+**Weight class sets mass; upgrades set torque.** Keeping those on separate axes
+is what stops the two systems collapsing into each other. A light mech needs
+little torque to feel near-1:1. A heavyweight needs enormous torque just to
+match that responsiveness, and even fully upgraded its momentum once moving is
+vastly greater — so the best heavyweight feels sharp *for its weight*, hits like
+a truck, and still can't change its mind. That's the fantasy, and it comes out
+of the physics rather than a balance table.
+
+> **The starting mech should still feel heavy.** A lightweight is light
+> *relative to a heavyweight*, not light in absolute terms. If the first mech in
+> the game feels weightless the fantasy never lands.
+
+Weight class ends up doing six jobs at once, which is usually the sign of a
+correct concept:
+
+| It defines | How |
+|---|---|
+| Mass budget | The build constraint in Phase 4 — and what a legless build frees up |
+| Feel band | Light is twitchy and near-1:1; heavy is committed and devastating |
+| Physical intensity | See below — it doubles as a comfort setting |
+| Progression ladder | The climb from circuit fighter to god-killer |
+| Circuit structure | How Phase 6's roster and tournaments are organised |
+| Worst-case perf load | Heavyweights are the load Phase 0.5 must model |
+
+**Physical intensity scales inversely with weight, and that's a feature.** A
+lightweight means rapid, small, constant arm movement — a genuine cardio
+workout. A heavyweight means slow, deliberate, consequential swings — far less
+physical load per minute, but far more demanding of timing and reading. So the
+climb from light to heavy is also a climb from athletic to tactical, and a long
+session in a heavyweight stays sustainable even if lightweight fights are
+exhausting. The game gets an intensity range without ever labelling one.
 
 ### Locomotion: a consequence of the build and the damage state
 
@@ -158,6 +226,10 @@ hardest sustained load in the entire project. If it doesn't fit, it changes
 voxel size, mech size and chunking *now*, rather than after three phases have
 been built on the assumption. Cheap to run; potentially saves months.
 
+**Model a heavyweight, not an average mech.** The top of the weight ladder is
+the load the game has to survive, and sizing the engine against a mid-weight
+means discovering the ceiling three phases too late.
+
 ### Phase 1 — Sandbox + spikes
 The test room, minimal: flat room, spawn menu, object inspector, perf HUD always
 visible. This is the development harness for everything that follows, so it comes
@@ -207,8 +279,10 @@ move more massive blocks" and "snaps under load" are built from. It feeds
 straight back into piloting feel from Phase 1.
 
 ### Phase 4 — The mech
-A jointed voxel assembly. Build-your-mech from Phase 3 materials — including
-the choice to build without legs.
+A jointed voxel assembly. Build-your-mech from Phase 3 materials, against a
+**mass budget set by weight class** — which is what makes a legless build a real
+decision rather than a handicap: dropping the legs frees budget for arms and
+armour, paid for in the locomotion ladder above.
 
 - **The core** — a component at chest centre; destroy it and the mech dies.
   Cheap to implement, and it's the win condition, so it should exist early.
@@ -237,7 +311,12 @@ it's also the first real playtesting milestone.
 
 ### Phase 6 — Meta layer
 Credits, upgrades, add-ons, reputation, opponent roster, arena and environment
-variety. The *One Must Fall* circuit.
+variety. The *One Must Fall* circuit, organised by weight class — you climb the
+ladder, and building back down a class for a different kind of fight stays a
+legitimate choice rather than a step backwards.
+
+Upgrades buy torque, which the player feels as responsiveness, so the shop has
+a direct line to how the mech handles in their hands.
 
 ### Phase 7 — Travel and the open world
 Town-to-town voxel world with fuel as the constraint.
@@ -301,7 +380,8 @@ Phase 2 stabilises.
 | How legged walking is driven | Phase 4 | Fully physical gait is research-grade; expect a driven gait with physics reaction |
 | Roomscale driving the mech directly | Phase 4 | Only coherent for a cockpit-less build; bounded by guardian size |
 | Cockpit fidelity | Phase 4 | Full interior sells scale and is the comfort rest frame, but costs frame budget |
-| Fight pacing and physical intensity | Phase 5 | Underdogs is exhausting by design. Decide whether an hour-long session should be sustainable |
+| How close to 1:1 at the top of the upgrade curve | Phase 5 | Must stop short of perfect tracking or the best mech stops feeling like a mech |
+| How many weight classes, and their spread | Phase 6 | Needs enough separation that each feels distinct, few enough that each gets content |
 | Art direction | Phase 4 | Needs to survive a voxel mech, a town, and deep space |
 
 ---
@@ -325,9 +405,14 @@ Everything from the original notes, and where it lives.
 | Oil and hydraulic fluid as a blood-like resource, arteries, failure | 4 |
 | Build your mech from materials, including legless builds | 4 |
 | Stick-driven walking; locomotion degrading with damage | 4 |
+| Mass budget per weight class | 4 |
 | Mech fight, arenas, opponents | 5 |
+| Momentum and committed attacks — emergent, not scripted | 5 (falls out of 3) |
+| Physical fights; intensity varying by weight class | 5 |
 | Escaping your fallen mech on foot | 5 |
 | Credits, upgrades, add-ons, reputation | 6 |
+| Weight classes, climbing from light mechs to god-killers | 6 |
+| Responsiveness as the upgrade axis, approaching 1:1 | 6 (mechanism from 3) |
 | Town-to-town travel, fuel | 7 |
 | Alien disclosure, hybrids, the returning gods, the flex timer | 8 |
 | Iron Man flight, space combat | 8 |
