@@ -648,14 +648,18 @@ int appendHud(App& a, RenderItem* items, int count, int maxItems, uint32_t viewC
         headPos[2] = 0.5f * (headPos[2] + a.views[1].pose.position.z);
     }
 
-    static const float kRightLocal[3]   = {1.0f, 0.0f, 0.0f};
-    static const float kUpLocal[3]      = {0.0f, 1.0f, 0.0f};
-    static const float kForwardLocal[3] = {0.0f, 0.0f, -1.0f};
+    static const float kRightLocal[3] = {1.0f, 0.0f, 0.0f};
+    static const float kUpLocal[3]    = {0.0f, 1.0f, 0.0f};
+    // View space looks down -Z, so +Z points back toward the viewer.
+    static const float kBackLocal[3]  = {0.0f, 0.0f, 1.0f};
 
-    float right[3], up[3], forward[3];
+    float right[3], up[3], back[3];
     quatRotate(a.views[0].pose.orientation, kRightLocal, right);
     quatRotate(a.views[0].pose.orientation, kUpLocal, up);
-    quatRotate(a.views[0].pose.orientation, kForwardLocal, forward);
+    quatRotate(a.views[0].pose.orientation, kBackLocal, back);
+
+    // Forward for placement is simply the other way.
+    const float forward[3] = {-back[0], -back[1], -back[2]};
 
     // A metre ahead, offset down and left so it sits out of the way rather than
     // over the middle of the scene.
@@ -691,16 +695,16 @@ int appendHud(App& a, RenderItem* items, int count, int maxItems, uint32_t viewC
     float       cursor[3];
 
     for (int i = 0; i < 3; ++i) cursor[i] = origin[i];
-    count = Hud_AppendText(items, count, maxItems, cursor, right, up, forward, kPixel, col, line1);
+    count = Hud_AppendText(items, count, maxItems, cursor, right, up, back, kPixel, col, line1);
 
     for (int i = 0; i < 3; ++i) cursor[i] = origin[i] - up[i] * lineDrop;
-    count = Hud_AppendText(items, count, maxItems, cursor, right, up, forward, kPixel, col, line2);
+    count = Hud_AppendText(items, count, maxItems, cursor, right, up, back, kPixel, col, line2);
 
     if (const char* status = Benchmark_StatusLine())
     {
         const float benchCol[3] = {0.55f, 0.75f, 0.98f};
         for (int i = 0; i < 3; ++i) cursor[i] = origin[i] - up[i] * lineDrop * 2.0f;
-        count = Hud_AppendText(items, count, maxItems, cursor, right, up, forward, kPixel,
+        count = Hud_AppendText(items, count, maxItems, cursor, right, up, back, kPixel,
                                benchCol, status);
     }
 
