@@ -14,6 +14,11 @@
 //   w_hand_limits(i,k,c,maxF)      retune body i's spring constant
 //   w_hand_apply()                 apply the follow forces (call before w_step)
 //   w_hand_state()                 8 floats per body: [x,y,z, qx,qy,qz,qw, half]
+//   w_mech_create(...)             the real machine: torso + two jointed arms
+//   w_mech_stand(x,y,z)            where the machine tries to stand
+//   w_mech_hand(i,x,y,z,active)    haul wrist i toward the player's hand
+//   w_mech_apply()                 apply leg + arm forces (call before w_step)
+//   w_mech_state()                 7 floats each: torso, upperL, foreL, upperR, foreR
 //   w_torso_create(...)            piloting spike: the body the arms hang from
 //   w_torso_update(x,y,z,yaw)      move the torso with the head, every frame
 //   w_arm_create(i,...)            an arm pivoting at a shoulder on the torso
@@ -423,6 +428,268 @@ float* w_hand_state(void)
         o[3] = q.v.x; o[4] = q.v.y; o[5] = q.v.z; o[6] = q.s;
         o[7] = s_handHalf[i];
     }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// The mech — an actual jointed machine, not a feel that was tuned
+//
+// Everything before this faked weight: a spring constant chosen so that lag
+// looked right, a damping dial chosen so that impacts looked right. That is what
+// you do when you have no physics engine. With one, you build the machine and
+// the feel is whatever the machine does.
+//
+//   torso (dynamic, held up by a limited spring — the legs)
+//     |
+//     +-- spherical joint (shoulder, cone-limited)
+//           |
+//           upper arm (dynamic)
+//             |
+//             +-- revolute joint (elbow, angle-limited)
+//                   |
+//                   forearm (dynamic)
+//
+// The player's hand is not a target the arm is told to match. A force pulls the
+// *wrist* toward it, capped, exactly as if you had hold of the wrist and were
+// dragging it. Every other behaviour is a consequence:
+//
+//   - weight comes from the segments' mass, not a tuned constant
+//   - lag comes from having to accelerate that mass through joints
+//   - reach limits come from the arm's length and its cone limit
+//   - overshoot has nowhere to go but the torso, so a committed punch drags the
+//     whole machine forward and off balance
+//   - joint strength is a real quantity: the motors' torque ceiling, and what
+//     the joint gives way under
+// ---------------------------------------------------------------------------
+
+#define MECH_ARMS 2
+static b3BodyId s_mTorso;
+static b3BodyId s_mUpper[MECH_ARMS];
+static b3BodyId s_mFore[MECH_ARMS];
+static b3JointId s_mShoulder[MECH_ARMS];
+static b3JointId s_mElbow[MECH_ARMS];
+static b3Vec3 s_mWrist[MECH_ARMS];      // wrist offset in forearm local space
+static b3Vec3 s_mHandTarget[MECH_ARMS];
+static int s_mHandActive[MECH_ARMS] = {0, 0};
+static int s_mExists = 0;
+
+// The torso is held at a target by a spring with a hard force ceiling. That
+// ceiling is the machine's footing: push the arms hard enough and the legs
+// cannot hold it, so it staggers. It is not a cheat to keep the torso upright,
+// it is the legs having finite strength.
+static b3Vec3 s_mTorsoTarget;
+static float s_mTorsoK = 6000.0f;
+static float s_mTorsoC = 900.0f;
+static float s_mTorsoMaxF = 9000.0f;
+
+static float s_mUpperLen, s_mForeLen;
+
+WASM_EXPORT("w_mech_create")
+void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
+                   float thickness, float density, float shoulderTorque,
+                   float elbowTorque, float coneAngle)
+{
+    s_mUpperLen = upperLen;
+    s_mForeLen = foreLen;
+    s_mTorsoTarget.x = x; s_mTorsoTarget.y = y; s_mTorsoTarget.z = z;
+
+    // Torso: a real dynamic body. Everything the arms do pushes back on this.
+    b3BodyDef td = b3DefaultBodyDef();
+    td.type = b3_dynamicBody;
+    td.position.x = x; td.position.y = y; td.position.z = z;
+    td.angularDamping = 4.0f;   // a mech is not a spinning top
+    td.linearDamping = 1.0f;
+    s_mTorso = b3CreateBody(s_world, &td);
+
+    b3ShapeDef tsd = b3DefaultShapeDef();
+    tsd.density = density * 1.5f;   // the body outweighs the arms
+    tsd.baseMaterial.friction = 0.6f;
+    b3BoxHull thull = b3MakeBoxHull(0.26f, 0.30f, 0.16f);
+    b3CreateHullShape(s_mTorso, &tsd, &thull.base);
+
+    for (int i = 0; i < MECH_ARMS; i++)
+    {
+        const float side = (i == 0) ? -1.0f : 1.0f;
+        const float sx = side * 0.26f;   // shoulder, in torso local space
+        const float sy = 0.20f;
+
+        // --- upper arm ---
+        b3BodyDef ud = b3DefaultBodyDef();
+        ud.type = b3_dynamicBody;
+        ud.position.x = x + sx; ud.position.y = y + sy; ud.position.z = z;
+        ud.angularDamping = 0.6f;
+        s_mUpper[i] = b3CreateBody(s_world, &ud);
+
+        b3ShapeDef usd = b3DefaultShapeDef();
+        usd.density = density;
+        usd.baseMaterial.friction = 0.6f;
+        b3BoxHull uhull = b3MakeBoxHull(thickness, thickness, upperLen * 0.5f);
+        b3Transform uoff = b3Transform_identity;
+        uoff.p.z = -upperLen * 0.5f;      // hangs forward from the shoulder
+        b3Vec3 one = {1.0f, 1.0f, 1.0f};
+        b3CreateTransformedHullShape(s_mUpper[i], &usd, &uhull.base, uoff, one);
+
+        b3SphericalJointDef sj = b3DefaultSphericalJointDef();
+        sj.base.bodyIdA = s_mTorso;
+        sj.base.bodyIdB = s_mUpper[i];
+        sj.base.localFrameA = b3Transform_identity;
+        sj.base.localFrameA.p.x = sx;
+        sj.base.localFrameA.p.y = sy;
+        sj.base.localFrameB = b3Transform_identity;
+        sj.base.collideConnected = false;
+        sj.enableConeLimit = true;
+        sj.coneAngle = coneAngle;
+        sj.enableMotor = true;
+        sj.maxMotorTorque = shoulderTorque;
+        s_mShoulder[i] = b3CreateSphericalJoint(s_world, &sj);
+
+        // --- forearm ---
+        b3BodyDef fd = b3DefaultBodyDef();
+        fd.type = b3_dynamicBody;
+        fd.position.x = x + sx; fd.position.y = y + sy; fd.position.z = z - upperLen;
+        fd.angularDamping = 0.6f;
+        s_mFore[i] = b3CreateBody(s_world, &fd);
+
+        b3ShapeDef fsd = b3DefaultShapeDef();
+        fsd.density = density;
+        fsd.baseMaterial.friction = 0.6f;
+        b3BoxHull fhull = b3MakeBoxHull(thickness * 0.9f, thickness * 0.9f, foreLen * 0.5f);
+        b3Transform foff = b3Transform_identity;
+        foff.p.z = -foreLen * 0.5f;
+        b3CreateTransformedHullShape(s_mFore[i], &fsd, &fhull.base, foff, one);
+
+        // Elbow: a hinge about the arm's local X, which bends the way an elbow
+        // bends and cannot hyperextend.
+        b3RevoluteJointDef rj = b3DefaultRevoluteJointDef();
+        rj.base.bodyIdA = s_mUpper[i];
+        rj.base.bodyIdB = s_mFore[i];
+        rj.base.localFrameA = b3Transform_identity;
+        rj.base.localFrameA.p.z = -upperLen;
+        rj.base.localFrameB = b3Transform_identity;
+        rj.base.collideConnected = false;
+        rj.enableLimit = true;
+        rj.lowerAngle = -2.2f;    // fully folded
+        rj.upperAngle = 0.05f;    // just short of straight
+        rj.enableMotor = true;
+        rj.maxMotorTorque = elbowTorque;
+        rj.motorSpeed = 0.0f;
+        s_mElbow[i] = b3CreateRevoluteJoint(s_world, &rj);
+
+        // The wrist is the far end of the forearm, in its local frame.
+        s_mWrist[i].x = 0.0f; s_mWrist[i].y = 0.0f; s_mWrist[i].z = -foreLen;
+        s_mHandActive[i] = 0;
+    }
+    s_mExists = 1;
+}
+
+// Where the machine is trying to stand. Follows the player.
+WASM_EXPORT("w_mech_stand")
+void w_mech_stand(float x, float y, float z)
+{
+    s_mTorsoTarget.x = x; s_mTorsoTarget.y = y; s_mTorsoTarget.z = z;
+}
+
+WASM_EXPORT("w_mech_hand")
+void w_mech_hand(int i, float x, float y, float z, int active)
+{
+    if (i < 0 || i >= MECH_ARMS) return;
+    s_mHandTarget[i].x = x; s_mHandTarget[i].y = y; s_mHandTarget[i].z = z;
+    s_mHandActive[i] = active;
+}
+
+// How hard you can haul the wrist. This is the pilot's grip on the controls,
+// not the joint strength — the joints have their own ceilings and will give way
+// first if they are the weaker link.
+static float s_mPullK = 2500.0f;
+static float s_mPullC = 180.0f;
+static float s_mPullMax = 4000.0f;
+
+WASM_EXPORT("w_mech_tune")
+void w_mech_tune(float pullK, float pullC, float pullMax, float torsoMaxF)
+{
+    s_mPullK = pullK; s_mPullC = pullC; s_mPullMax = pullMax;
+    s_mTorsoMaxF = torsoMaxF;
+}
+
+WASM_EXPORT("w_mech_apply")
+void w_mech_apply(void)
+{
+    if (!s_mExists) return;
+
+    // Legs: hold the torso at its target, but only up to a finite force. Beyond
+    // that the machine is moved by whatever moved it.
+    {
+        b3Pos p = b3Body_GetPosition(s_mTorso);
+        b3Vec3 v = b3Body_GetLinearVelocity(s_mTorso);
+        float fx = (s_mTorsoTarget.x - (float)p.x) * s_mTorsoK - v.x * s_mTorsoC;
+        float fy = (s_mTorsoTarget.y - (float)p.y) * s_mTorsoK - v.y * s_mTorsoC;
+        float fz = (s_mTorsoTarget.z - (float)p.z) * s_mTorsoK - v.z * s_mTorsoC;
+        float sq = fx*fx + fy*fy + fz*fz;
+        if (sq > s_mTorsoMaxF * s_mTorsoMaxF)
+        {
+            float k = s_mTorsoMaxF / __builtin_sqrtf(sq);
+            fx *= k; fy *= k; fz *= k;
+        }
+        b3Vec3 f; f.x = fx; f.y = fy; f.z = fz;
+        b3Body_ApplyForceToCenter(s_mTorso, f, true);
+    }
+
+    // Arms: haul each wrist toward the hand. Applied at the wrist, not the
+    // centre of mass, so it swings the forearm and torques back through the
+    // elbow and shoulder the way pulling a real arm does.
+    for (int i = 0; i < MECH_ARMS; i++)
+    {
+        if (!s_mHandActive[i]) continue;
+
+        b3Pos bp = b3Body_GetPosition(s_mFore[i]);
+        b3Quat bq = b3Body_GetRotation(s_mFore[i]);
+        b3Matrix3 m = b3MakeMatrixFromQuat(bq);
+
+        // Wrist in world space.
+        float wx = (float)bp.x + m.cz.x * s_mWrist[i].z;
+        float wy = (float)bp.y + m.cz.y * s_mWrist[i].z;
+        float wz = (float)bp.z + m.cz.z * s_mWrist[i].z;
+
+        b3Vec3 v = b3Body_GetLinearVelocity(s_mFore[i]);
+        float fx = (s_mHandTarget[i].x - wx) * s_mPullK - v.x * s_mPullC;
+        float fy = (s_mHandTarget[i].y - wy) * s_mPullK - v.y * s_mPullC;
+        float fz = (s_mHandTarget[i].z - wz) * s_mPullK - v.z * s_mPullC;
+        float sq = fx*fx + fy*fy + fz*fz;
+        if (sq > s_mPullMax * s_mPullMax)
+        {
+            float k = s_mPullMax / __builtin_sqrtf(sq);
+            fx *= k; fy *= k; fz *= k;
+        }
+
+        b3Vec3 f; f.x = fx; f.y = fy; f.z = fz;
+        b3Pos at; at.x = wx; at.y = wy; at.z = wz;
+        b3Body_ApplyForce(s_mFore[i], f, at, true);
+    }
+}
+
+// 7 floats each for: torso, upper L, fore L, upper R, fore R — 35 total.
+WASM_EXPORT("w_mech_state")
+float* w_mech_state(void)
+{
+    static float out[5 * 7];
+    if (!s_mExists) return out;
+    b3BodyId ids[5] = { s_mTorso, s_mUpper[0], s_mFore[0], s_mUpper[1], s_mFore[1] };
+    for (int i = 0; i < 5; i++)
+    {
+        float* o = &out[i * 7];
+        b3Pos p = b3Body_GetPosition(ids[i]);
+        b3Quat q = b3Body_GetRotation(ids[i]);
+        o[0] = (float)p.x; o[1] = (float)p.y; o[2] = (float)p.z;
+        o[3] = q.v.x; o[4] = q.v.y; o[5] = q.v.z; o[6] = q.s;
+    }
+    return out;
+}
+
+WASM_EXPORT("w_mech_lengths")
+float* w_mech_lengths(void)
+{
+    static float out[2];
+    out[0] = s_mUpperLen; out[1] = s_mForeLen;
     return out;
 }
 
