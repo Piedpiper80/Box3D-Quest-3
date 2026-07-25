@@ -51,7 +51,12 @@
 
 namespace {
 
-constexpr int kMaxRenderItems = 512;
+// Physics runs on a fixed step, decoupled from the display rate. 72 Hz matches
+// the Quest's default refresh; the solver's behaviour no longer depends on how
+// the frame loop happens to be performing.
+constexpr float kPhysicsDt        = 1.0f / 72.0f;
+constexpr int   kMaxStepsPerFrame = 3;
+constexpr float kMaxAccumulated   = 0.25f; // discard anything beyond a quarter second
 
 struct Swapchain
 {
@@ -91,10 +96,11 @@ struct App
     // GL
     GLuint   program   = 0;
     GLint    uViewProj = -1;
-    GLint    uModel    = -1;
-    GLint    uColor    = -1;
     GLuint   fbo       = 0;
     CubeMesh cube;
+
+    // Instances uploaded this frame, shared by both eyes.
+    int instanceCount = 0;
 
     // Input
     XrActionSet actionSet      = XR_NULL_HANDLE;
@@ -105,19 +111,26 @@ struct App
     bool        triggerWasPressed[2] = {false, false};
 
     // Timing
-    XrTime lastDisplayTime = 0;
+    XrTime lastDisplayTime    = 0;
+    float  physicsAccumulator = 0.0f;
 };
 
+// Model matrix and colour arrive per instance rather than as uniforms, so the
+// whole scene is one draw call. Only the view-projection stays a uniform — it is
+// the one thing that genuinely differs per eye.
 const char* kVertexShader = R"GLSL(#version 300 es
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
+layout(location = 2) in mat4 aModel;   // occupies locations 2,3,4,5
+layout(location = 6) in vec4 aColor;
 uniform mat4 uViewProj;
-uniform mat4 uModel;
 out vec3 vNormal;
+out vec3 vColor;
 void main()
 {
-    vec4 world = uModel * vec4(aPos, 1.0);
-    vNormal = mat3(uModel) * aNormal;
+    vec4 world = aModel * vec4(aPos, 1.0);
+    vNormal = mat3(aModel) * aNormal;
+    vColor = aColor.rgb;
     gl_Position = uViewProj * world;
 }
 )GLSL";
@@ -125,7 +138,7 @@ void main()
 const char* kFragmentShader = R"GLSL(#version 300 es
 precision mediump float;
 in vec3 vNormal;
-uniform vec3 uColor;
+in vec3 vColor;
 out vec4 fragColor;
 void main()
 {
@@ -133,7 +146,7 @@ void main()
     vec3 lightDir = normalize(vec3(0.4, 1.0, 0.3));
     float diff = max(dot(n, lightDir), 0.0);
     float ambient = 0.35;
-    vec3 c = uColor * (ambient + 0.75 * diff);
+    vec3 c = vColor * (ambient + 0.75 * diff);
     fragColor = vec4(c, 1.0);
 }
 )GLSL";
@@ -439,9 +452,7 @@ void initGL(App& a)
 {
     a.program   = glhCreateProgram(kVertexShader, kFragmentShader);
     a.uViewProj = glGetUniformLocation(a.program, "uViewProj");
-    a.uModel    = glGetUniformLocation(a.program, "uModel");
-    a.uColor    = glGetUniformLocation(a.program, "uColor");
-    a.cube      = glhCreateCube();
+    a.cube      = glhCreateCube(kMaxBodies);
     glGenFramebuffers(1, &a.fbo);
 }
 
@@ -586,7 +597,32 @@ void handleInput(App& a, XrTime predictedTime)
 // Rendering
 // ---------------------------------------------------------------------------
 
-void renderView(App& a, const Swapchain& sc, const XrView& view, const RenderItem* items, int count)
+// Push this frame's instance data to the GPU. Called once per frame, not once
+// per eye — the transforms are identical for both views, only the camera differs.
+void uploadInstances(App& a, const RenderItem* items, int count)
+{
+    if (count > a.cube.maxInstances)
+    {
+        count = a.cube.maxInstances;
+    }
+    a.instanceCount = count;
+    if (count <= 0)
+    {
+        return;
+    }
+
+    const GLsizeiptr bytes = (GLsizeiptr)count * kFloatsPerInstance * sizeof(float);
+    glBindBuffer(GL_ARRAY_BUFFER, a.cube.instanceVbo);
+    // Orphan the previous contents so the driver need not stall waiting for the
+    // last frame's draw to finish reading them.
+    glBufferData(GL_ARRAY_BUFFER,
+                 (GLsizeiptr)a.cube.maxInstances * kFloatsPerInstance * sizeof(float), nullptr,
+                 GL_DYNAMIC_DRAW);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, bytes, items);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+void renderView(App& a, const Swapchain& sc, const XrView& view)
 {
     uint32_t imageIndex = 0;
     XrSwapchainImageAcquireInfo acq{};
@@ -618,19 +654,23 @@ void renderView(App& a, const Swapchain& sc, const XrView& view, const RenderIte
     glViewport(0, 0, sc.width, sc.height);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
-    glDisable(GL_CULL_FACE); // keep all faces; winding is not relied upon
+    // Back faces are never visible on a closed box, so culling them is free fill
+    // rate. All six faces of the cube mesh in gl_helpers.h are wound *clockwise*
+    // when viewed from outside — verified per face against the outward normals,
+    // not assumed. Hence GL_CW; if the scene ever renders inside-out, this line
+    // is the first suspect.
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glFrontFace(GL_CW);
     glClearColor(0.05f, 0.06f, 0.09f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     glUseProgram(a.program);
     glUniformMatrix4fv(a.uViewProj, 1, GL_FALSE, viewProj);
     glBindVertexArray(a.cube.vao);
-    for (int i = 0; i < count; ++i)
-    {
-        glUniformMatrix4fv(a.uModel, 1, GL_FALSE, items[i].model);
-        glUniform3fv(a.uColor, 1, items[i].color);
-        glDrawElements(GL_TRIANGLES, a.cube.indexCount, GL_UNSIGNED_SHORT, nullptr);
-    }
+    // The entire scene, whatever its size, in one call.
+    glDrawElementsInstanced(GL_TRIANGLES, a.cube.indexCount, GL_UNSIGNED_SHORT, nullptr,
+                            a.instanceCount);
     glBindVertexArray(0);
 
     XrSwapchainImageReleaseInfo rel{};
@@ -650,16 +690,36 @@ void renderFrame(App& a)
     beginInfo.type = XR_TYPE_FRAME_BEGIN_INFO;
     XR_CHECK(xrBeginFrame(a.session, &beginInfo));
 
-    // Step physics using the time between predicted display times, clamped.
-    float dt = 1.0f / 72.0f;
+    // Fixed timestep with an accumulator.
+    //
+    // Stepping the solver with whatever dt the frame loop happens to produce
+    // makes it behave differently under load — which is exactly the condition
+    // being measured — and makes results irreproducible between runs. A fixed
+    // step keeps behaviour identical whether the frame rate is steady or not.
     if (a.lastDisplayTime != 0)
     {
-        dt = static_cast<float>(frameState.predictedDisplayTime - a.lastDisplayTime) * 1e-9f;
-        if (dt < 1.0f / 240.0f) dt = 1.0f / 240.0f;
-        if (dt > 1.0f / 30.0f) dt = 1.0f / 30.0f;
+        float elapsed = static_cast<float>(frameState.predictedDisplayTime - a.lastDisplayTime) * 1e-9f;
+        if (elapsed < 0.0f) elapsed = 0.0f;
+        // A long hitch (or a resumed session) must not be paid back all at once.
+        if (elapsed > kMaxAccumulated) elapsed = kMaxAccumulated;
+        a.physicsAccumulator += elapsed;
     }
     a.lastDisplayTime = frameState.predictedDisplayTime;
-    Physics_Step(dt);
+
+    // Capped so a slow frame cannot spiral: falling behind must never cause more
+    // physics work, which would make the next frame slower still.
+    int steps = 0;
+    while (a.physicsAccumulator >= kPhysicsDt && steps < kMaxStepsPerFrame)
+    {
+        Physics_Step(kPhysicsDt);
+        a.physicsAccumulator -= kPhysicsDt;
+        ++steps;
+    }
+    if (steps == kMaxStepsPerFrame)
+    {
+        // Drop the backlog rather than carry a debt that can never be repaid.
+        a.physicsAccumulator = 0.0f;
+    }
 
     if (a.sessionState == XR_SESSION_STATE_FOCUSED)
     {
@@ -689,13 +749,15 @@ void renderFrame(App& a)
                                 (viewState.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT);
         if (posesValid)
         {
-            static RenderItem items[kMaxRenderItems];
-            const int count = Physics_BuildRenderItems(items, kMaxRenderItems);
+            static RenderItem items[kMaxBodies];
+            const int count = Physics_BuildRenderItems(items, kMaxBodies);
+            // Uploaded once, drawn by both eyes.
+            uploadInstances(a, items, count);
 
             projViews.resize(viewCountOut);
             for (uint32_t i = 0; i < viewCountOut; ++i)
             {
-                renderView(a, a.swapchains[i], a.views[i], items, count);
+                renderView(a, a.swapchains[i], a.views[i]);
 
                 projViews[i] = {};
                 projViews[i].type                    = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;

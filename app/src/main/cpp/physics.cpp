@@ -31,8 +31,8 @@ struct BodyRec
 b3WorldId            g_world = b3_nullWorldId;
 std::vector<BodyRec> g_bodies;
 
-// Cap on total bodies so runaway trigger-spam can't exhaust memory.
-constexpr int kMaxBodies = 400;
+// kMaxBodies is declared in physics.h — it is shared with the renderer, which
+// sizes its instance buffer from the same constant.
 
 // Build a column-major GL model matrix for a body: rotation (from the body's
 // quaternion) scaled by its half extents, with the body position as translation.
@@ -183,6 +183,7 @@ int Physics_BuildRenderItems(RenderItem* items, int maxItems)
         items[count].color[0] = rec.color[0];
         items[count].color[1] = rec.color[1];
         items[count].color[2] = rec.color[2];
+        items[count].color[3] = 1.0f;
         ++count;
     }
     return count;
