@@ -180,11 +180,22 @@
   // spike is whether that difference is felt rather than read.
   var SHOULDER_Y = 1.35, FORWARD = -0.55, SPREAD = 0.30;
   var ARM_HALF = [0.28, 0.09, 0.09];
-  var LIGHT_DENSITY = 1.0, HEAVY_DENSITY = 8.0;
-  var BASE_TORQUE = 60;
-  // The upgrade curve: what a stronger actuator buys.
-  var FORCE_LEVELS = [250, 500, 1000, 2000, 4000];
-  var heavyLevel = 1;
+  // Real densities, kg/m3. The segment is 0.018 m3, so the light arm is ~49 kg
+  // of aluminium and the heavy one ~141 kg of steel. The first draft used
+  // densities of 1 and 8, which made the arms weigh 18 and 145 *grams* — both
+  // tracked the hand perfectly and the spike would have felt identical in each
+  // hand, which is the one outcome that would have made it worthless.
+  var LIGHT_DENSITY = 2700, HEAVY_DENSITY = 7800;
+  var LIGHT_FORCE = 2500;
+  var BASE_TORQUE = 400;
+
+  // The upgrade curve, measured rather than guessed. The heavy arm needs 1388 N
+  // just to hold itself against gravity, so the bottom of the range is an
+  // actuator that cannot quite lift its own limb, and the top nearly matches
+  // the light arm. Mean tracking lag at each level, driven by a 4 rad/s sweep:
+  //   1800 N -> 32 cm   2100 -> 15 cm   2500 -> 12 cm   3000 -> 10 cm   3600 -> 9 cm
+  var FORCE_LEVELS = [1800, 2100, 2500, 3000, 3600];
+  var heavyLevel = 0;
 
   var E = null;
 
@@ -194,8 +205,10 @@
     for (var i = 0; i < 10; i++) {
       E.w_spawn(0.0, 0.12 + i * 0.21, -1.5, 0, 0, 0, 0.10, i % 6);
     }
+    // The light arm's actuator stays fixed — it is the reference the heavy arm
+    // is judged against, so only one variable moves.
     E.w_arm_create(0, -SPREAD, SHOULDER_Y, FORWARD, ARM_HALF[0], ARM_HALF[1], ARM_HALF[2],
-                   LIGHT_DENSITY, FORCE_LEVELS[heavyLevel], BASE_TORQUE);
+                   LIGHT_DENSITY, LIGHT_FORCE, BASE_TORQUE);
     E.w_arm_create(1,  SPREAD, SHOULDER_Y, FORWARD, ARM_HALF[0], ARM_HALF[1], ARM_HALF[2],
                    HEAVY_DENSITY, FORCE_LEVELS[heavyLevel], BASE_TORQUE);
   }
