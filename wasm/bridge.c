@@ -9,6 +9,10 @@
 //   w_fill(n)                      drop n cubes into a pile (benchmark scenes)
 //   w_state()                      pointer to packed floats, 9 per cube:
 //                                  [x,y,z, qx,qy,qz,qw, halfExtent, colorIdx]
+//   w_arm_create(i,...)            piloting spike: one motor-driven arm segment
+//   w_arm_target(i,x,y,z)          point arm i at the hand
+//   w_arm_limits(i,force,torque)   retune arm i's actuator (the upgrade slider)
+//   w_arm_state()                  7 floats per arm: [x,y,z, qx,qy,qz,qw]
 //
 // Coordinates: right-handed, Y-up, meters — matches WebXR local-floor space.
 #include <box3d/box3d.h>
@@ -279,47 +283,55 @@ int w_capacity(void)
 // requested velocity, so the arm trails the hand and sags under gravity.
 // ---------------------------------------------------------------------------
 
-static b3JointId s_armJoint;
-static b3BodyId s_armBody;
-static b3BodyId s_armAnchor;
-static int s_armExists = 0;
+// Two arms, so the light and heavy cases can be felt in the same moment rather
+// than compared from memory. A/B in one hand each is a far sharper test than
+// cycling one arm through settings.
+#define ARM_COUNT 2
+static b3JointId s_armJoint[ARM_COUNT];
+static b3BodyId s_armBody[ARM_COUNT];
+static b3BodyId s_armAnchor[ARM_COUNT];
+static int s_armExists[ARM_COUNT] = {0, 0};
 
 // Create a single arm segment: a box on a motor joint, anchored to a static
 // body. `mass` scales the segment's density, `maxForce`/`maxTorque` are the
 // actuator limits the upgrade curve moves.
 WASM_EXPORT("w_arm_create")
-void w_arm_create(float x, float y, float z, float halfX, float halfY, float halfZ,
+void w_arm_create(int i, float x, float y, float z, float halfX, float halfY, float halfZ,
                   float density, float maxForce, float maxTorque)
 {
+    if (i < 0 || i >= ARM_COUNT)
+    {
+        return;
+    }
     b3BodyDef ad = b3DefaultBodyDef();
     ad.type = b3_staticBody;
     ad.position.x = x;
     ad.position.y = y;
     ad.position.z = z;
-    s_armAnchor = b3CreateBody(s_world, &ad);
+    s_armAnchor[i] = b3CreateBody(s_world, &ad);
 
     b3BodyDef bd = b3DefaultBodyDef();
     bd.type = b3_dynamicBody;
     bd.position.x = x;
     bd.position.y = y;
     bd.position.z = z;
-    s_armBody = b3CreateBody(s_world, &bd);
+    s_armBody[i] = b3CreateBody(s_world, &bd);
 
     b3ShapeDef sd = b3DefaultShapeDef();
     sd.density = density;
     sd.baseMaterial.friction = 0.6f;
     sd.baseMaterial.restitution = 0.05f;
     b3BoxHull hull = b3MakeBoxHull(halfX, halfY, halfZ);
-    b3CreateHullShape(s_armBody, &sd, &hull.base);
+    b3CreateHullShape(s_armBody[i], &sd, &hull.base);
 
     b3MotorJointDef jd = b3DefaultMotorJointDef();
-    jd.base.bodyIdA = s_armAnchor;
-    jd.base.bodyIdB = s_armBody;
+    jd.base.bodyIdA = s_armAnchor[i];
+    jd.base.bodyIdB = s_armBody[i];
     jd.maxVelocityForce = maxForce;
     jd.maxVelocityTorque = maxTorque;
-    s_armJoint = b3CreateMotorJoint(s_world, &jd);
+    s_armJoint[i] = b3CreateMotorJoint(s_world, &jd);
 
-    s_armExists = 1;
+    s_armExists[i] = 1;
 }
 
 // Gain on the position error, in units of 1/second: the velocity requested is
@@ -335,14 +347,14 @@ void w_arm_create(float x, float y, float z, float halfX, float halfY, float hal
 // Note this only ever *requests* — whether the arm gets there is decided by
 // maxVelocityForce against the segment's mass, which is the entire point.
 WASM_EXPORT("w_arm_target")
-void w_arm_target(float x, float y, float z)
+void w_arm_target(int i, float x, float y, float z)
 {
-    if (!s_armExists)
+    if (i < 0 || i >= ARM_COUNT || !s_armExists[i])
     {
         return;
     }
 
-    b3Pos p = b3Body_GetPosition(s_armBody);
+    b3Pos p = b3Body_GetPosition(s_armBody[i]);
     float dx = x - (float)p.x;
     float dy = y - (float)p.y;
     float dz = z - (float)p.z;
@@ -361,36 +373,41 @@ void w_arm_target(float x, float y, float z)
 
     b3Vec3 v;
     v.x = vx; v.y = vy; v.z = vz;
-    b3MotorJoint_SetLinearVelocity(s_armJoint, v);
+    b3MotorJoint_SetLinearVelocity(s_armJoint[i], v);
 }
 
 // Retune the actuator limits at runtime — this is the upgrade slider, and the
 // whole point of the spike is feeling the difference as it moves.
 WASM_EXPORT("w_arm_limits")
-void w_arm_limits(float maxForce, float maxTorque)
+void w_arm_limits(int i, float maxForce, float maxTorque)
 {
-    if (!s_armExists)
+    if (i < 0 || i >= ARM_COUNT || !s_armExists[i])
     {
         return;
     }
-    b3MotorJoint_SetMaxVelocityForce(s_armJoint, maxForce);
-    b3MotorJoint_SetMaxVelocityTorque(s_armJoint, maxTorque);
+    b3MotorJoint_SetMaxVelocityForce(s_armJoint[i], maxForce);
+    b3MotorJoint_SetMaxVelocityTorque(s_armJoint[i], maxTorque);
 }
 
-// Where the arm actually ended up, which under load is *not* where it was
-// asked to go. That lag is the sensation being tested.
+// Packed 7 floats per arm: position then rotation quaternion. Where the arm
+// actually ended up, which under load is *not* where it was asked to go — that
+// lag is the sensation being tested.
 WASM_EXPORT("w_arm_state")
 float* w_arm_state(void)
 {
-    static float out[7];
-    if (!s_armExists)
+    static float out[ARM_COUNT * 7];
+    for (int i = 0; i < ARM_COUNT; i++)
     {
-        return out;
+        float* o = &out[i * 7];
+        if (!s_armExists[i])
+        {
+            continue;
+        }
+        b3Pos p = b3Body_GetPosition(s_armBody[i]);
+        b3Quat q = b3Body_GetRotation(s_armBody[i]);
+        o[0] = (float)p.x; o[1] = (float)p.y; o[2] = (float)p.z;
+        o[3] = q.v.x; o[4] = q.v.y; o[5] = q.v.z; o[6] = q.s;
     }
-    b3Pos p = b3Body_GetPosition(s_armBody);
-    b3Quat q = b3Body_GetRotation(s_armBody);
-    out[0] = (float)p.x; out[1] = (float)p.y; out[2] = (float)p.z;
-    out[3] = q.v.x; out[4] = q.v.y; out[5] = q.v.z; out[6] = q.s;
     return out;
 }
 
