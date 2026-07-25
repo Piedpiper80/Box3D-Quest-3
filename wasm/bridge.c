@@ -350,15 +350,24 @@ void w_arm_create(int i, float sx, float sy, float sz, float length, float thick
     b3Vec3 scale = {1.0f, 1.0f, 1.0f}; // the hull is already the right size
     b3CreateTransformedHullShape(s_armBody[i], &sd, &hull.base, offset, scale);
 
-    // Pivot at the shoulder: the joint frame sits at the shoulder in world terms,
-    // which is the torso's local offset for A and the body origin for B.
+    // Pivot at the shoulder.
+    //
+    // localFrameA is expressed in the TORSO's local space, not world space, so
+    // it must be the shoulder *relative to the torso origin*. Passing the world
+    // position here adds the torso's height to the shoulder's and puts the joint
+    // roughly twice as high as intended — which is exactly what it did.
+    //
+    // localFrameB is in the arm's own space, and the arm body's origin is the
+    // shoulder by construction, so identity is correct there.
+    b3Pos torsoPos = b3Body_GetPosition(s_torso);
+
     b3SphericalJointDef jd = b3DefaultSphericalJointDef();
     jd.base.bodyIdA = s_torso;
     jd.base.bodyIdB = s_armBody[i];
     jd.base.localFrameA = b3Transform_identity;
-    jd.base.localFrameA.p.x = sx;
-    jd.base.localFrameA.p.y = sy;
-    jd.base.localFrameA.p.z = sz;
+    jd.base.localFrameA.p.x = sx - (float)torsoPos.x;
+    jd.base.localFrameA.p.y = sy - (float)torsoPos.y;
+    jd.base.localFrameA.p.z = sz - (float)torsoPos.z;
     jd.base.localFrameB = b3Transform_identity;
     jd.base.collideConnected = false;
     jd.enableMotor = true;
