@@ -216,11 +216,11 @@
       var m = E.w_hand_mass(i);
       E.w_hand_limits(i, STIFFNESS, 2 * ZETAS[zetaLevel] * Math.sqrt(STIFFNESS * m), 1e6);
     }
-    // Placed at 1.6 m — beyond a full swing, so a hard punch cannot reach a
-    // monitor, a wall or anything else in the room. The block still gets there
-    // because it overshoots; your fist does not.
+    // Right at arm's length, so a punch lands from where you are already
+    // standing. Anything further makes you step forward to reach it, and
+    // stepping forward is what puts a fist near the monitor.
     for (var b = 0; b < 6; b++) {
-      E.w_spawn(hx, floorY + 0.11 + b * 0.21, hz - 1.6, 0, 0, 0, 0.10, b % 6);
+      E.w_spawn(hx, floorY + 0.11 + b * 0.21, hz - 0.7, 0, 0, 0, 0.10, b % 6);
     }
     built = true;
   }
