@@ -613,8 +613,13 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
         wj.base.collideConnected = false;
         wj.enableConeLimit = true;
         wj.coneAngle = 1.1f;
-        wj.enableMotor = true;
-        wj.maxMotorTorque = elbowTorque * 0.5f;
+        // No motor here. A spherical motor with a zero target velocity is a
+        // brake: it was holding the mount still with several hundred newton
+        // metres and swamping the aim torque entirely, so the attachment sat at
+        // whatever angle the arm's geometry left it at no matter where the
+        // controller pointed. The aim torque now works against the cone limit
+        // alone, which is what should resist it.
+        wj.enableMotor = false;
         s_mWristJ[i] = b3CreateSphericalJoint(s_world, &wj);
         s_mToolAim[i] = b3Quat_identity;
 
@@ -754,7 +759,7 @@ void w_mech_apply(void)
             float ez = tgt.s*cz + tgt.v.x*cy - tgt.v.y*cx + tgt.v.z*cw;
 
             b3Vec3 w = b3Body_GetAngularVelocity(s_mTool[i]);
-            const float kAim = 26.0f, cAim = 3.0f;
+            const float kAim = 220.0f, cAim = 22.0f;
             b3Vec3 t;
             t.x = ex * kAim - w.x * cAim;
             t.y = ey * kAim - w.y * cAim;
