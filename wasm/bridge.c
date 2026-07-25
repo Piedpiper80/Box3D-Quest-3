@@ -258,6 +258,142 @@ int w_capacity(void)
     return MAX_CUBES;
 }
 
+// ---------------------------------------------------------------------------
+// Piloting spike — a force-limited arm chasing a target
+//
+// The core question of the whole design: does driving a heavy jointed arm with
+// your own hand *feel* like moving something massive? The mechanism is a motor
+// joint whose target follows the controller, with a hard cap on the force and
+// torque it may use. Under that cap the arm cannot keep up with a fast hand, so
+// mass is felt rather than displayed — and raising the cap is exactly what an
+// upgrade does.
+//
+// b3MotorJoint is the right primitive, but note how it actually works: it is
+// *velocity* driven, not target driven — there is no SetLinearOffset. Each frame
+// we compute the velocity that would close the gap to the hand and hand that to
+// the motor, which then honours it only up to maxVelocityForce.
+//
+// That is a better fit than a positional target would have been. The force cap
+// is literally the upgrade stat, and the lag is not simulated or tuned — it
+// falls straight out of F = ma. A weak actuator on a heavy arm cannot reach the
+// requested velocity, so the arm trails the hand and sags under gravity.
+// ---------------------------------------------------------------------------
+
+static b3JointId s_armJoint;
+static b3BodyId s_armBody;
+static b3BodyId s_armAnchor;
+static int s_armExists = 0;
+
+// Create a single arm segment: a box on a motor joint, anchored to a static
+// body. `mass` scales the segment's density, `maxForce`/`maxTorque` are the
+// actuator limits the upgrade curve moves.
+WASM_EXPORT("w_arm_create")
+void w_arm_create(float x, float y, float z, float halfX, float halfY, float halfZ,
+                  float density, float maxForce, float maxTorque)
+{
+    b3BodyDef ad = b3DefaultBodyDef();
+    ad.type = b3_staticBody;
+    ad.position.x = x;
+    ad.position.y = y;
+    ad.position.z = z;
+    s_armAnchor = b3CreateBody(s_world, &ad);
+
+    b3BodyDef bd = b3DefaultBodyDef();
+    bd.type = b3_dynamicBody;
+    bd.position.x = x;
+    bd.position.y = y;
+    bd.position.z = z;
+    s_armBody = b3CreateBody(s_world, &bd);
+
+    b3ShapeDef sd = b3DefaultShapeDef();
+    sd.density = density;
+    sd.baseMaterial.friction = 0.6f;
+    sd.baseMaterial.restitution = 0.05f;
+    b3BoxHull hull = b3MakeBoxHull(halfX, halfY, halfZ);
+    b3CreateHullShape(s_armBody, &sd, &hull.base);
+
+    b3MotorJointDef jd = b3DefaultMotorJointDef();
+    jd.base.bodyIdA = s_armAnchor;
+    jd.base.bodyIdB = s_armBody;
+    jd.maxVelocityForce = maxForce;
+    jd.maxVelocityTorque = maxTorque;
+    s_armJoint = b3CreateMotorJoint(s_world, &jd);
+
+    s_armExists = 1;
+}
+
+// Gain on the position error, in units of 1/second: the velocity requested is
+// this many times the remaining distance. High enough to feel immediate on a
+// light arm, low enough not to overshoot when the actuator is strong.
+#define ARM_GAIN 14.0f
+// Ceiling on requested speed, so a large snap of the hand cannot ask for an
+// absurd velocity that the solver then fights.
+#define ARM_MAX_SPEED 12.0f
+
+// Point the arm at the hand. Called every frame with the controller position.
+//
+// Note this only ever *requests* — whether the arm gets there is decided by
+// maxVelocityForce against the segment's mass, which is the entire point.
+WASM_EXPORT("w_arm_target")
+void w_arm_target(float x, float y, float z)
+{
+    if (!s_armExists)
+    {
+        return;
+    }
+
+    b3Pos p = b3Body_GetPosition(s_armBody);
+    float dx = x - (float)p.x;
+    float dy = y - (float)p.y;
+    float dz = z - (float)p.z;
+
+    float vx = dx * ARM_GAIN;
+    float vy = dy * ARM_GAIN;
+    float vz = dz * ARM_GAIN;
+
+    const float speedSq = vx * vx + vy * vy + vz * vz;
+    if (speedSq > ARM_MAX_SPEED * ARM_MAX_SPEED)
+    {
+        // Rough inverse square root is plenty here; this only clamps a request.
+        float inv = ARM_MAX_SPEED / __builtin_sqrtf(speedSq);
+        vx *= inv; vy *= inv; vz *= inv;
+    }
+
+    b3Vec3 v;
+    v.x = vx; v.y = vy; v.z = vz;
+    b3MotorJoint_SetLinearVelocity(s_armJoint, v);
+}
+
+// Retune the actuator limits at runtime — this is the upgrade slider, and the
+// whole point of the spike is feeling the difference as it moves.
+WASM_EXPORT("w_arm_limits")
+void w_arm_limits(float maxForce, float maxTorque)
+{
+    if (!s_armExists)
+    {
+        return;
+    }
+    b3MotorJoint_SetMaxVelocityForce(s_armJoint, maxForce);
+    b3MotorJoint_SetMaxVelocityTorque(s_armJoint, maxTorque);
+}
+
+// Where the arm actually ended up, which under load is *not* where it was
+// asked to go. That lag is the sensation being tested.
+WASM_EXPORT("w_arm_state")
+float* w_arm_state(void)
+{
+    static float out[7];
+    if (!s_armExists)
+    {
+        return out;
+    }
+    b3Pos p = b3Body_GetPosition(s_armBody);
+    b3Quat q = b3Body_GetRotation(s_armBody);
+    out[0] = (float)p.x; out[1] = (float)p.y; out[2] = (float)p.z;
+    out[3] = q.v.x; out[4] = q.v.y; out[5] = q.v.z; out[6] = q.s;
+    return out;
+}
+
 WASM_EXPORT("w_state")
 float* w_state(void)
 {

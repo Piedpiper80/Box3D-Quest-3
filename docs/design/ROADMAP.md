@@ -246,6 +246,13 @@ the load the game has to survive, and sizing the engine against a mid-weight
 means discovering the ceiling three phases too late.
 
 ### Phase 1 — Sandbox + spikes
+
+> **Built in the browser, not native.** There is no PC available to sideload an
+> APK, so anything that has to be *felt* is developed against the WebXR build,
+> which reaches the headset through a URL. WebXR on Quest 3 exposes controllers
+> and hand tracking, so every spike below can run there. The native app remains
+> the performance target — it is roughly 2.5× faster — but it is no longer where
+> the work happens.
 The test room, minimal: flat room, spawn menu, object inspector, perf HUD always
 visible. This is the development harness for everything that follows, so it comes
 early and grows continuously.
