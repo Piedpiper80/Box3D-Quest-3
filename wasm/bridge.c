@@ -747,6 +747,10 @@ static float s_mAimPeriod = 0.25f;    // seconds
 static float s_mAimZeta = 1.0f;
 static float s_mAimMax = 12.0f;       // N m per kg of attachment
 
+// How much of the arm's own weight the machine carries. 1 is all of it, which
+// is what a powered joint does; 0 is a dead limb hanging off a shoulder.
+static float s_mArmLift = 1.0f;
+
 // How the machine holds itself up, as a response rather than as raw gains.
 //
 // Written as gains scaled by mass this was unstable at every setting: angular
@@ -831,6 +835,12 @@ WASM_EXPORT("w_mech_aim")
 void w_mech_aim(float period, float zeta, float maxTorquePerKg)
 {
     s_mAimPeriod = period; s_mAimZeta = zeta; s_mAimMax = maxTorquePerKg;
+}
+
+WASM_EXPORT("w_mech_lift")
+void w_mech_lift(float fraction)
+{
+    s_mArmLift = fraction;
 }
 
 WASM_EXPORT("w_mech_pin")
@@ -937,6 +947,35 @@ void w_mech_apply(void)
     // elbow and shoulder the way pulling a real arm does.
     for (int i = 0; i < MECH_ARMS; i++)
     {
+        // The machine carries its own arm.
+        //
+        // This is the thing that was wrong. Without it the only force holding
+        // the arm up was the pull toward your hand, so the arm hung below that
+        // hand by however far it took to stretch the spring against its own
+        // weight — 13 cm of droop for the lightest arm and 38 cm for the
+        // heaviest, nearly all of it straight down. In the headset that reads
+        // exactly as what it is: the arm is not following your hand. Worse, at
+        // the heavy end the pull had nothing left over to fold the elbow with,
+        // so the limb locked out straight and stopped articulating at all.
+        //
+        // It was being defended as the weight signal, and it is not one. Your
+        // own arm does not sag when you hold it out; the muscles carry it, and
+        // what you feel as heavy is how hard it is to get moving and how hard
+        // to stop. Any powered joint does the same. So the weight is carried
+        // here, and mass shows up where it belongs — in the momentum, through
+        // the capped force below.
+        {
+            b3BodyId parts[3] = { s_mUpper[i], s_mFore[i], s_mTool[i] };
+            for (int k = 0; k < 3; k++)
+            {
+                b3Vec3 lift;
+                lift.x = 0.0f;
+                lift.y = b3Body_GetMass(parts[k]) * 9.81f * s_mArmLift;
+                lift.z = 0.0f;
+                b3Body_ApplyForceToCenter(parts[k], lift, true);
+            }
+        }
+
         if (!s_mHandActive[i]) continue;
 
         b3Pos bp = b3Body_GetPosition(s_mTool[i]);

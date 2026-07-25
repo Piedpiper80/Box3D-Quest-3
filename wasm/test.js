@@ -120,12 +120,26 @@ const wasi = new WASI({ version: "preview1" });
   const HEAD = 1.62, CHEST = HEAD - 0.40;
   const mech = () => { const p = E.w_mech_state() >>> 2; return mem().slice(p, p + 49); };
   const joints = () => { const p = E.w_mech_joints() >>> 2; return mem().slice(p, p + 6); };
-  const tipL = (f) => [f[21], f[22], f[23]];
+  // The end of the left arm — the far face of the attachment, which is the
+  // point the engine hauls toward your hand. Body 3's origin is its wrist end,
+  // one attachment-length short of that, so comparing that against the hand
+  // would report a permanent 18 cm error that is not real.
+  const tipL = (f) => {
+    const o = 21, x = f[o+3], y = f[o+4], z = f[o+5], w = f[o+6];
+    const d = -2 * 0.091;                       // thickness 0.07 * 1.3, doubled
+    // rotate (0, 0, d) by the attachment's quaternion
+    const tx = 2 * (y * d), ty = 2 * (-x * d);
+    return [f[o] + w*tx + y*0 - z*ty,
+            f[o+1] + w*ty + z*tx - x*0,
+            f[o+2] + d + (x*ty - y*tx)];
+  };
   const tiltOf = (f) => Math.acos(Math.max(-1, Math.min(1, 1 - 2 * (f[3]*f[3] + f[5]*f[5])))) * 180 / Math.PI;
 
   const build = (density, cone = 1.5707) => {
     E.w_reset(1, 0);
-    E.w_mech_create(0, CHEST, 0, 0.40, 0.46, 0.07, density, 60, 40, cone);
+    // Joint friction matched to docs/mech.html, or this measures a machine the
+    // headset never runs.
+    E.w_mech_create(0, CHEST, 0, 0.40, 0.46, 0.07, density, 25, 16, cone);
     E.w_mech_tune(2000, 1.0, 3000, 900);
   };
   const drive = (steps, target) => {
@@ -175,17 +189,67 @@ const wasi = new WASI({ version: "preview1" });
   const finite = [...f].every((v) => Number.isFinite(v));
   check("an over-wide cone is clamped, not passed through", finite, "NaN in the mech state");
 
-  // Heavier arms have to lag further behind the hand. This is the whole point
-  // of the weight classes, and a mass-normalised spring would flatten it.
-  const lagAt = (density) => {
+  // The arm has to sit where the hand is when the hand is still.
+  //
+  // This is the check that was missing, and it is the one that matters most.
+  // The arm used to hang 13 cm below the hand at the lightest weight and 38 cm
+  // at the heaviest, nearly all of it straight down, because nothing carried
+  // the arm's own weight. That was defended as the weight signal for a whole
+  // round of work. It is not one — it is the arm visibly failing to follow you,
+  // which is the single thing this spike has to get right.
+  const still = [-0.30, 1.15, -0.35];
+  const restErrAt = (density) => {
     build(density);
-    const target = [-0.30, 1.15, -0.35];
-    const s = drive(400, target), tp = tipL(s);
-    return Math.hypot(tp[0]-target[0], tp[1]-target[1], tp[2]-target[2]);
+    const s = drive(400, still), tp = tipL(s);
+    return Math.hypot(tp[0]-still[0], tp[1]-still[1], tp[2]-still[2]);
   };
-  const light = lagAt(350), heavy = lagAt(2800);
-  check("heavier arms lag further behind the hand", heavy > light * 1.5,
-        `light ${light.toFixed(3)} m, heavy ${heavy.toFixed(3)} m`);
+  for (const d of [350, 800, 1600, 2800]) {
+    const e = restErrAt(d);
+    check(`held still, the arm reaches the hand (density ${d})`, e < 0.08,
+          `${(e*100).toFixed(1)} cm short`);
+  }
+
+  // And it has to keep articulating at every weight. The heaviest arm used to
+  // lock out dead straight — 1 to 6 degrees of elbow across a whole session —
+  // because the pull had nothing spare to fold it with once it was also
+  // holding the arm up.
+  const elbowRangeAt = (density) => {
+    build(density);
+    let lo = 999, hi = -999;
+    for (let s = 0; s <= 500; s++) {
+      const t = s / 72;
+      const h = [-0.30 + 0.18*Math.sin(t*1.6), 1.15 + 0.22*Math.sin(t*1.1), -0.35 - 0.22*Math.sin(t*2.1)];
+      E.w_mech_hand(0, ...h, 1, 0, 0, 0, 1);
+      E.w_mech_hand(1, -h[0], h[1], h[2], 1, 0, 0, 0, 1);
+      E.w_mech_stand(0, CHEST, 0); E.w_mech_apply(); E.w_step(1 / 72);
+      if (s > 150) { const a = joints()[1] * 180 / Math.PI; lo = Math.min(lo, a); hi = Math.max(hi, a); }
+    }
+    return hi - lo;
+  };
+  for (const d of [350, 2800]) {
+    const r = elbowRangeAt(d);
+    check(`the elbow keeps working at density ${d}`, r > 15, `only ${r.toFixed(0)} deg of travel`);
+  }
+
+  // Weight shows up as momentum: a heavier arm takes longer to get going and
+  // longer to stop, so it falls further behind a *moving* hand. Measured while
+  // moving, not while still — standing still it should track regardless.
+  const movingLagAt = (density) => {
+    build(density);
+    let lag = [];
+    for (let s = 0; s <= 500; s++) {
+      const t = s / 72;
+      const h = [-0.30 + 0.18*Math.sin(t*1.6), 1.15 + 0.22*Math.sin(t*1.1), -0.35 - 0.22*Math.sin(t*2.1)];
+      E.w_mech_hand(0, ...h, 1, 0, 0, 0, 1);
+      E.w_mech_hand(1, -h[0], h[1], h[2], 1, 0, 0, 0, 1);
+      E.w_mech_stand(0, CHEST, 0); E.w_mech_apply(); E.w_step(1 / 72);
+      if (s > 150) { const tp = tipL(mech()); lag.push(Math.hypot(tp[0]-h[0], tp[1]-h[1], tp[2]-h[2])); }
+    }
+    return lag.reduce((a, b) => a + b, 0) / lag.length;
+  };
+  const lightLag = movingLagAt(350), heavyLag = movingLagAt(2800);
+  check("heavier arms fall further behind a moving hand", heavyLag > lightLag * 1.4,
+        `light ${(lightLag*100).toFixed(1)} cm, heavy ${(heavyLag*100).toFixed(1)} cm`);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail === 0 ? 0 : 1);

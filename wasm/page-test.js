@@ -242,7 +242,9 @@ const HEAD_Y = 1.62;
 function pose(f) {
   // Kept small enough that each hand stays on its own side of the body, so a
   // limb drawn on the wrong side is unambiguous rather than just a wide reach.
-  const sway = Math.sin(f * 0.05) * 0.12;
+  // Held still for the last stretch, so the closing checks measure where the
+  // arm actually comes to rest rather than how far behind a moving hand it is.
+  const sway = Math.sin(Math.min(f, 110) * 0.05) * 0.12;
   return {
     head: vec(0, HEAD_Y, 0),
     controllers: [
@@ -309,9 +311,12 @@ function pose(f) {
     });
     check("both arms end in an attachment", tips.length === 2, `${tips.length} found`);
 
-    // The claim the whole spike rests on: a capped force drags the arm to where
-    // your hand is. It need not arrive — heavy arms are supposed to lag — but it
-    // has to be reaching for the right hand, on the right side.
+    // The claim the whole spike rests on, and the one the headset judged
+    // hardest: with your hand held still, the end of the arm is where your hand
+    // is. It used to hang 13 to 38 cm below it — mostly straight down — because
+    // nothing carried the arm's weight, and that reads in VR as the arm simply
+    // not following you. The drawn attachment is a half-length short of the
+    // point the engine hauls, so allow for that and little else.
     if (tips.length === 2) {
       const hands = pose(149).controllers.map((c) => c.pos);
       const near = [-1, 1].map((sign) => {
@@ -320,8 +325,12 @@ function pose(f) {
           Math.abs(b.pos[0] - hand.x) < Math.abs(a.pos[0] - hand.x) ? b : a);
         return Math.hypot(tip.pos[0] - hand.x, tip.pos[1] - hand.y, tip.pos[2] - hand.z);
       });
-      check("each attachment is reaching for a hand", near.every((d) => d < 0.45),
-            near.map((d) => d.toFixed(2) + " m").join(" / "));
+      check("the arm ends up where your hand is", near.every((d) => d < 0.16),
+            near.map((d) => (d * 100).toFixed(1) + " cm").join(" / "));
+      // Specifically not below it. Sag is the failure this spike kept shipping.
+      const drop = tips.map((t) => hands[0].y - t.pos[1]);
+      check("the arm does not hang below your hand", Math.max(...drop) < 0.12,
+            `${(Math.max(...drop) * 100).toFixed(1)} cm below`);
     }
 
     // The whole machine must sit in the space a person occupies. Arms flung to

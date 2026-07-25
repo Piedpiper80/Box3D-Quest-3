@@ -47,8 +47,10 @@
           told to match you — it gets dragged, and the joints work out the rest.</li>
       <li>Press <strong>A</strong> to change what the arms are made of:
           <strong>light → medium → heavy → very heavy</strong>. Amber markers on your right show which.</li>
-      <li>Heavier arms lag, overshoot, and <strong>drag the whole machine off its footing</strong> —
-          sideways, not downwards. The legs hold your height whatever the arms weigh.</li>
+      <li>Heavier arms take longer to get moving and longer to stop, and they
+          <strong>drag the whole machine off its footing</strong> — sideways, not downwards. Held still
+          the arm sits where your hand is whatever it weighs; the weight is in the momentum, not in
+          a sag.</li>
       <li>Punch the blocks. Watch the torso get pulled when you commit to a swing.</li>
       <li><strong>Setting the floor:</strong> the grid starts <strong>amber</strong> and follows your lower
           controller. Rest that controller on the actual ground and <strong>pull the trigger</strong>. The grid
@@ -195,7 +197,10 @@
   // driving the arm anywhere. At the 1400 and 900 N m they used to carry, the
   // arm was being hauled by the hand and braked by its own joints at the same
   // time, and it thrashed.
-  var SHOULDER_TORQUE = 60, ELBOW_TORQUE = 40;
+  // Measured: at 60/40 the joints had enough stiction to hold the arm 12 cm
+  // short of where the hand was, the same distance whatever the arm weighed —
+  // a deadband, not weight. At 25/16 that falls to 3 cm.
+  var SHOULDER_TORQUE = 25, ELBOW_TORQUE = 16;
   // A quarter turn is the widest cone Box3D accepts; it was being given 2.2 rad
   // and silently going degenerate, since the assert that would have caught it
   // is compiled out of a release build.
