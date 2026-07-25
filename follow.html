@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Controller tracking check</title>
+<title>Follow test</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -30,8 +30,8 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Controller tracking check</h1>
-  <p class="sub">No physics, no arms, nothing else. A cube sits exactly where each controller is.</p>
+  <h1>Follow test</h1>
+  <p class="sub">One physics object per hand, chasing your controller. No arm, no shoulder, no joints.</p>
 
   <div class="card">
     <button id="enter" disabled>Checking headset…</button>
@@ -41,16 +41,21 @@
 
   <div class="card">
     <ul>
-      <li>A <strong>blue</strong> cube should sit on your <strong>left</strong> controller and an
-          <strong>orange</strong> one on your <strong>right</strong>, moving exactly with them.</li>
+      <li>A small <strong>grey</strong> cube marks exactly where your controller is. A larger
+          <strong>coloured</strong> one is a real physics object trying to get there. The gap between them is
+          the lag — you can see it, not just feel it.</li>
+      <li>Your <strong>left</strong> hand always drives a light 3 kg block — that is the reference.
+          Your <strong>right</strong> drives whichever weight class you have selected.</li>
+      <li>Press <strong>A</strong> to change the right-hand weight: <strong>3, 10, 27, 68, 152 kg</strong>.
+          The markers to your right show which one. Heavier trails further, and at the top end it cannot
+          keep up with your reach at all — sweep your arm and watch it fall short.</li>
+      <li>Knock the blocks over with it.</li>
       <li><strong>Setting the floor:</strong> the grid starts <strong>amber</strong> and follows your lower
           controller. Rest that controller on the actual ground and <strong>pull the trigger</strong>. The grid
           turns grey and stays there. It is remembered, so you only do this once.</li>
       <li>To redo it, use the <strong>Reset floor</strong> button on this page before entering VR. It is
           deliberately not a controller gesture — anything you might press in a fight must never wipe your
           calibration.</li>
-      <li>Squeeze <strong>grip</strong> and the cube grows. Pull <strong>trigger</strong> and it turns white.
-          That confirms the buttons are being read.</li>
     </ul>
   </div>
 
@@ -147,6 +152,67 @@
 
   var refSpace = null, spaceKind = "?", floorReal = false, session = null;
   var lines = [];
+  var E = null;
+  var built = false;
+
+  // How hard the physics object may pull to reach your hand. Weak enough at the
+  // bottom to visibly trail, strong enough at the top to keep up.
+  // Weight classes, measured on the real engine. Same spring, different mass;
+  // damping scaled per mass to keep each controllable.
+  //   3kg -> 5.5cm lag, full reach     27kg -> 21cm lag, full reach
+  //  68kg -> 29.5cm lag, 27cm reach   152kg -> 28.6cm lag, 13.5cm reach
+  var STIFFNESS = 500, ZETA = 0.6;
+  var DENSITIES = [900, 3000, 8000, 20000, 45000];
+  var level = 1;
+  var prevA = false;
+  var HAND_HALF = 0.075;
+  var GRAV_ON = false;
+
+  var memRef = { mem: null };
+  var wasi = {
+    fd_write: function (fd, iovs, iovcnt, pnum) {
+      try {
+        var dv = new DataView(memRef.mem.buffer), w = 0;
+        for (var i = 0; i < iovcnt; i++) w += dv.getUint32(iovs + i*8 + 4, true);
+        dv.setUint32(pnum, w, true);
+      } catch (e) {}
+      return 0;
+    },
+    fd_close: function(){return 0;}, fd_fdstat_get: function(){return 0;}, fd_seek: function(){return 0;}
+  };
+
+  fetch("box3d.wasm")
+    .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.arrayBuffer(); })
+    .then(function (b) { return WebAssembly.instantiate(b, { wasi_snapshot_preview1: wasi }); })
+    .then(function (res) {
+      memRef.mem = res.instance.exports.memory;
+      res.instance.exports._initialize();
+      E = res.instance.exports;
+      if (typeof E.w_hand_create !== "function") {
+        setStatus("The engine file is out of date — it has no follow-test support yet.", true);
+        E = null;
+      }
+    })
+    .catch(function (e) { setStatus("Could not load the engine: " + e.message, true); });
+
+  // Built once the floor is known, so everything sits on it.
+  function buildWorld(hx, hz) {
+    E.w_reset(1, floorY);
+    for (var i = 0; i < 2; i++) {
+      // Left hand stays light as a reference; right hand carries the weight
+      // being tested, so the difference is felt in the same moment.
+      var dens = (i === 0) ? DENSITIES[0] : DENSITIES[level];
+      E.w_hand_create(i, hx + (i === 0 ? -0.25 : 0.25), floorY + 1.0, hz - 0.4,
+                      HAND_HALF, dens, STIFFNESS, 1, 1e6);
+      var m = E.w_hand_mass(i);
+      E.w_hand_limits(i, STIFFNESS, 2 * ZETA * Math.sqrt(STIFFNESS * m), 1e6);
+    }
+    // A few blocks to knock over, in reach.
+    for (var b = 0; b < 6; b++) {
+      E.w_spawn(hx, floorY + 0.11 + b * 0.21, hz - 0.85, 0, 0, 0, 0.10, b % 6);
+    }
+    built = true;
+  }
 
   // Floor height, set by the player rather than assumed.
   //
@@ -164,7 +230,7 @@
 
   var resetBtn = document.getElementById("resetFloor");
   if (resetBtn) resetBtn.addEventListener("click", function () {
-    floorY = null;
+    floorY = null; built = false;
     try { localStorage.removeItem("box3d.floorY"); } catch (e) {}
     setStatus("Floor cleared. Enter VR, rest a controller on the ground and pull the trigger.");
   });
@@ -255,12 +321,25 @@
         if (floorCandidate === null || pos.y < floorCandidate) floorCandidate = pos.y;
       }
 
-      // The cube sits exactly on the controller. Nothing between your hand and
-      // what you see — if this lags or drifts, the input path is at fault.
-      var size = grip ? 0.075 : 0.05;
-      var col = trig ? [0.95,0.95,0.95]
-                     : (src.handedness === "right" ? [0.95,0.55,0.25] : [0.35,0.65,0.95]);
-      items.push({ m: trs([pos.x, pos.y, pos.z], [q.x,q.y,q.z,q.w], size), c: col });
+      // Small grey marker exactly on the controller — the truth your hand knows.
+      items.push({ m: trs([pos.x, pos.y, pos.z], [q.x,q.y,q.z,q.w], 0.022), c: [0.62,0.66,0.74] });
+
+      // Drive the matching physics body toward it.
+      if (E && built) {
+        var handIdx = (src.handedness === "right") ? 1 : 0;
+        E.w_hand_target(handIdx, pos.x, pos.y, pos.z);
+      }
+
+      // A steps the follow strength.
+      if (gp && gp.buttons && gp.buttons.length > 4 && src.handedness === "right") {
+        var aDown = gp.buttons[4].pressed;
+        if (aDown && !prevA && E && built) {
+          // Mass is baked into the body, so changing weight class rebuilds.
+          level = (level + 1) % DENSITIES.length;
+          built = false;
+        }
+        prevA = aDown;
+      }
 
       lines.push("  " + label + ": x " + pos.x.toFixed(2) + " y " + pos.y.toFixed(2) +
                  " z " + pos.z.toFixed(2) + (gp ? ("  grip " + (grip?"YES":"no") +
@@ -277,6 +356,44 @@
       }
     }
     prevTrig = trigCount > 0;
+
+    // Step the world and draw the physics bodies plus everything they hit.
+    if (E && built) {
+      E.w_hand_apply();
+      E.w_step(1 / 72);
+
+      var hp2 = E.w_hand_state() >>> 2;
+      var fa = new Float32Array(E.memory.buffer);
+      for (var hI = 0; hI < 2; hI++) {
+        var o = hp2 + hI * 8;
+        items.push({
+          m: trs([fa[o], fa[o+1], fa[o+2]], [fa[o+3], fa[o+4], fa[o+5], fa[o+6]], fa[o+7] || HAND_HALF),
+          c: hI === 1 ? [0.95,0.55,0.25] : [0.35,0.65,0.95]
+        });
+      }
+
+      var n = E.w_count(), sp3 = E.w_state() >>> 2;
+      for (var ci = 0; ci < n; ci++) {
+        var co = sp3 + ci * 9, ch = fa[co+7];
+        items.push({
+          m: trs([fa[co], fa[co+1], fa[co+2]], [fa[co+3], fa[co+4], fa[co+5], fa[co+6]], ch),
+          c: [[.90,.30,.24],[.95,.61,.20],[.96,.85,.30],[.30,.69,.44],[.26,.52,.86],[.55,.36,.78]][(fa[co+8]|0)%6]
+        });
+      }
+
+      // Strength markers, off to the right at chest height.
+      for (var mI = 0; mI < DENSITIES.length; mI++) {
+        items.push({
+          m: trs([hp.x + 0.6, floorY + 1.1 + mI * 0.07, hp.z - 0.5], [0,0,0,1], 0.02),
+          c: mI <= level ? [0.98,0.72,0.25] : [0.20,0.23,0.30]
+        });
+      }
+      lines.push("right hand weight class " + (level + 1) + " of " + DENSITIES.length +
+                 "  (" + E.w_hand_mass(1).toFixed(1) + " kg vs left " +
+                 E.w_hand_mass(0).toFixed(1) + " kg)");
+    } else if (E && floorY !== null && !built) {
+      buildWorld(hp.x, hp.z);
+    }
 
     report(lines.join("\n"));
 
