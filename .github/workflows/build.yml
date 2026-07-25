@@ -1,25 +1,29 @@
 name: Build APK
 
-# Builds the native Quest app on every push and pull request, and uploads the
-# APK as a downloadable artifact.
+# Two jobs:
 #
-# Two jobs it does:
-#   1. Catches compile errors before anyone installs a headset build. The native
-#      side pulls Box3D via FetchContent and the OpenXR loader from Maven, so a
-#      pinned-revision bump can break the build in ways only a real compile finds.
-#   2. Produces an APK you can download and `adb install` without needing
-#      Android Studio locally.
+#   apk   — builds the native Quest app and uploads the APK as a downloadable
+#           artifact. Catches compile errors before anything reaches a headset,
+#           and means installing a build needs only adb, not Android Studio.
 #
-# The artifact lands under the run's "Artifacts" section on the Actions tab.
+#   bench — builds and runs the headless physics benchmark (see bench/bench.c)
+#           across SIMD and worker-count configurations. Gives relative physics
+#           scaling and regression detection without a device in the loop. It
+#           cannot give absolute Quest numbers — CI hardware is far faster than
+#           the XR2 Gen 2 and this measures no GPU cost at all.
+#
+# Artifacts land under the run's "Artifacts" section on the Actions tab.
 
 on:
+  # Branch pushes are covered by the pull_request trigger, so this only needs to
+  # catch main directly — otherwise every PR branch builds twice per push.
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
 jobs:
-  build:
+  apk:
     runs-on: ubuntu-latest
 
     steps:
@@ -66,4 +70,45 @@ jobs:
         with:
           name: box3d-quest-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  bench:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build benchmark (scalar)
+        run: |
+          cmake -S bench -B build/bench-scalar \
+            -DCMAKE_BUILD_TYPE=Release -DBOX3D_DISABLE_SIMD=ON
+          cmake --build build/bench-scalar --parallel
+
+      - name: Build benchmark (SIMD)
+        run: |
+          cmake -S bench -B build/bench-simd \
+            -DCMAKE_BUILD_TYPE=Release -DBOX3D_DISABLE_SIMD=OFF
+          cmake --build build/bench-simd --parallel
+
+      # Each configuration is a separate process so a crash in one doesn't hide
+      # the others. Worker sweep shows where threading stops paying.
+      - name: Run benchmark
+        run: |
+          echo "runner: $(nproc) cores"
+          {
+            echo "## config: scalar, 1 worker"
+            ./build/bench-scalar/bench 1 3200
+            echo "## config: simd, 1 worker"
+            ./build/bench-simd/bench 1 3200
+            echo "## config: simd, 2 workers"
+            ./build/bench-simd/bench 2 3200
+            echo "## config: simd, 4 workers"
+            ./build/bench-simd/bench 4 3200
+          } | tee bench-results.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: bench-results.txt
           if-no-files-found: error

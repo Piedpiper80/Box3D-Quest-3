@@ -23,9 +23,9 @@ more in it.
 
 | Constraint | Current | Location |
 |---|---|---|
-| Box3D revision | pinned to pre-release `c52908c9` | `app/src/main/cpp/CMakeLists.txt` |
+| Box3D revision | `c52908c9` — **16 commits ahead of v0.1.0** | `app/src/main/cpp/CMakeLists.txt` |
 | SIMD | disabled | `CMakeLists.txt` — `BOX3D_DISABLE_SIMD ON` |
-| Threading | none — single-threaded by design | `main.cpp` header comment |
+| Threading | none — `workerCount` left at default | `physics.cpp:114-118` |
 | Draw calls | **one per body per eye** | `main.cpp:628-633` |
 | Body cap | 400 | `physics.cpp:35` |
 | Render item cap | 512 | `main.cpp:54` |
@@ -39,25 +39,60 @@ wrong can be reverted without losing the others.
 
 ---
 
-## Step 1 — Bump Box3D to v0.1.0
+## Step 1 — Verify the pin (do not bump it)
 
-Box3D reached its official v0.1.0 release after the currently pinned commit was
-taken. The release is required, not optional: **joints** and **multiple shapes
-per body** are what Phases 3 and 4 are built from, and neither is usable at the
-current pin.
+**This step was originally written as "bump to v0.1.0". That was wrong**, and the
+correction matters enough to record rather than quietly delete.
 
-- Update `GIT_TAG` in `app/src/main/cpp/CMakeLists.txt` to the v0.1.0 release tag.
-- Expect API drift. `physics.cpp` currently calls `b3DefaultWorldDef`,
-  `b3CreateBody`, `b3MakeBoxHull`, `b3CreateHullShape`, `b3Body_GetPosition`,
-  `b3Body_GetRotation`, `b3MakeMatrixFromQuat`. Some of these may have been
-  renamed or restructured between a pre-release commit and the release.
-- **`wasm/bridge.c` uses the same API and must be bumped in lockstep**, or the
-  browser build silently diverges from the native one. Re-run the harness in
-  `wasm/test.js` afterwards.
-- Keep `BOX3D_DISABLE_SIMD ON` for this step. One variable at a time.
+The pinned revision `c52908c9` is **16 commits *ahead* of the v0.1.0 release**
+(`8441b4a`, 30 June), dated 2–22 July, and it includes fixes the release does
+not — among them a hull-builder face and edge leak. Bumping "to v0.1.0" would
+have moved the project *backwards* and reintroduced fixed bugs.
 
-**Done when:** the existing cube tower topples exactly as before, on both the
-headset and the web build.
+CI already confirms the app compiles and links against this revision, so there
+is no drift to repair and nothing to do here but record what the revision
+provides. Verified directly from the headers at `c52908c9`:
+
+**Joints** — `b3CreateRevoluteJoint`, `b3CreatePrismaticJoint`,
+`b3CreateSphericalJoint`, `b3CreateWeldJoint`, `b3CreateWheelJoint`,
+`b3CreateDistanceJoint`, `b3CreateMotorJoint`, `b3CreateParallelJoint`,
+`b3CreateFilterJoint`.
+
+> **Spherical joints exist.** Box3D's public README lists only revolute,
+> prismatic, distance, motor, weld and wheel, so the working assumption had been
+> that shoulders and hips would have to be hinges and every mech would move
+> stiffly. The headers say otherwise: `b3CreateSphericalJoint` is there, with
+> `b3SphericalJoint_EnableMotor`, `b3SphericalJoint_SetMotorVelocity` and
+> `b3SphericalJoint_SetMaxMotorTorque`. Shoulders and hips can be proper
+> ball-and-socket with driven motors, which is a materially better mech.
+
+**Joint strength and breaking are buildable as designed** — motors carry
+explicit limits (`b3RevoluteJoint_SetMaxMotorTorque`,
+`b3PrismaticJoint_SetMaxMotorForce`, `b3SphericalJoint_SetMaxMotorTorque`) and
+the load is readable back (`b3RevoluteJoint_GetMotorTorque`,
+`b3PrismaticJoint_GetMotorForce`, `b3DistanceJoint_GetMotorForce`). That is
+exactly the mechanism Phase 3 and the piloting design assume.
+
+**Shapes** — `b3CreateSphereShape`, `b3CreateCapsuleShape`, `b3CreateHullShape`,
+`b3CreateTransformedHullShape`, `b3CreateMeshShape`,
+`b3CreateHeightFieldShape`, `b3CreateBakedCompoundShape`.
+
+> `b3CreateTransformedHullShape` is the multi-shape-per-body primitive a compound
+> voxel assembly needs — a hull at an offset from the body origin. And
+> `b3CreateBakedCompoundShape` looks like a direct fit for Phase 2's merged
+> static chunks. Worth investigating properly when Phase 2 starts; it may do the
+> expensive part of that phase for us.
+
+**Threading** — `b3WorldDef` carries `uint32_t workerCount` (clamped to
+`[1, B3_MAX_WORKERS]`), `b3EnqueueTaskCallback* enqueueTask`,
+`b3FinishTaskCallback* finishTask` and `void* userTaskContext`. Critically: **if
+the task callbacks are left null and `workerCount > 1`, the engine creates its
+own internal threads.** See Step 6 — this may be a one-line change.
+
+**Sleep** — `bool enableSleep`, which is what makes settled voxel debris cheap.
+
+**Done when:** nothing changes. The pin stays where it is. Revisit only when
+there's a specific reason, and re-test deliberately when you do.
 
 ## Step 2 — Perf HUD
 
@@ -185,17 +220,23 @@ simulation behaviour.
 
 ## Step 6 — Multithreading
 
-Box3D ships a task-callback interface in its world definition (worker count plus
-enqueue/finish callbacks), mirroring Box2D v3's design — **verify the exact names
-against the v0.1.0 headers** rather than assuming them.
+The API is confirmed (see Step 1): `b3WorldDef.workerCount`, plus optional
+`enqueueTask` / `finishTask` / `userTaskContext` callbacks.
 
-- Wire a small fixed-size thread pool to those callbacks.
+**Try the one-line version first.** With the callbacks left null and
+`workerCount > 1`, Box3D spawns its own internal threads. That may be the whole
+step. Only build a thread pool and wire the callbacks if you need to share
+workers with other subsystems or control thread priority and affinity — which on
+Quest is a real possibility eventually, but not a Phase 0 problem.
+
 - Quest 3's XR2 Gen 2 has 8 cores but the app doesn't get all of them. Start at
   3–4 workers, leaving headroom for the render thread and the OpenXR runtime,
-  then tune against the HUD. More workers is not automatically faster.
+  then tune. More workers is not automatically faster.
 - Watch for the wrong result: if step time doesn't improve, the scene may be too
   small for threading to pay for its synchronisation. Re-test at high body counts
   before concluding anything.
+- The Step 2c benchmark sweeps worker counts directly, so the shape of this
+  curve can be known before it ever reaches the device.
 
 The web build stays single-threaded and scalar. That divergence is expected and
 worth stating in `wasm/build.md` so the two builds' body budgets aren't confused
