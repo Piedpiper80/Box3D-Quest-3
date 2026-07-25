@@ -41,7 +41,8 @@
 
   <div class="card">
     <ul>
-      <li>A capped force <strong>hauls each wrist</strong> toward your hand. The arm is not told to match
+      <li>A capped force <strong>hauls each hand</strong> toward your controller — the fist is on the end of a
+          wrist joint, so it is the fist that lands. The arm is not told to match
           you — it gets dragged, and the joints work out the rest.</li>
       <li>Press <strong>A</strong> to change what the arms are made of:
           <strong>light → medium → heavy → very heavy</strong>. Amber markers on your right show which.</li>
@@ -196,7 +197,7 @@
   var DENSITIES = [350, 800, 1600, 2800];
   var level = 1;
   var prevA = false;
-  var segLen = [UPPER_LEN, FORE_LEN];
+  var segLen = [UPPER_LEN, FORE_LEN, 0.09];
 
   var memRef = { mem: null };
   var wasi = {
@@ -230,7 +231,7 @@
     E.w_mech_create(hx, floorY + 1.05, hz, UPPER_LEN, FORE_LEN, THICK,
                     DENSITIES[level], SHOULDER_TORQUE, ELBOW_TORQUE, CONE);
     var L = E.w_mech_lengths() >>> 2, lf = new Float32Array(E.memory.buffer);
-    segLen = [lf[L], lf[L + 1]];
+    segLen = [lf[L], lf[L + 1], lf[L + 2]];
     // Blocks at arm's length so a punch lands without stepping forward.
     for (var b = 0; b < 6; b++) {
       E.w_spawn(hx, floorY + 0.11 + b * 0.21, hz - 0.7, 0, 0, 0, 0.10, b % 6);
@@ -373,9 +374,13 @@
                    c: [0.32, 0.36, 0.44] });
       var armCol = [[0.35,0.65,0.95],[0.95,0.55,0.25]];
       for (var aI = 0; aI < 2; aI++) {
-        items.push(limbItem(fa, ms + (1 + aI*2)*7, segLen[0], THICK, armCol[aI]));
-        items.push(limbItem(fa, ms + (2 + aI*2)*7, segLen[1], THICK*0.9,
+        var base = ms + (1 + aI*3) * 7;   // upper, fore, hand
+        items.push(limbItem(fa, base, segLen[0], THICK, armCol[aI]));
+        items.push(limbItem(fa, base + 7, segLen[1], THICK*0.9,
                             [armCol[aI][0]*0.75, armCol[aI][1]*0.75, armCol[aI][2]*0.75]));
+        // The hand — a fist, and the thing that actually lands a punch.
+        items.push(limbItem(fa, base + 14, segLen[2]*2, THICK*1.25,
+                            [armCol[aI][0]*1.05, armCol[aI][1]*1.05, armCol[aI][2]*1.05]));
       }
 
       var n = E.w_count(), sp3 = E.w_state() >>> 2;
