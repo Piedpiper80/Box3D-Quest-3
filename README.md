@@ -28,6 +28,11 @@ the headset and runs entirely on-device — no PC, no cable, no browser — but
 > **Status: foundation / vertical slice.** Real Box3D physics rendered in
 > stereo VR, plus controller interaction. Built to grow into a full game.
 
+Where that full game is going — a voxel mech fighter you pilot with your own
+arms — is laid out in [`docs/design/ROADMAP.md`](docs/design/ROADMAP.md), with
+the current milestone detailed in
+[`docs/design/phase-0-foundations.md`](docs/design/phase-0-foundations.md).
+
 ## What you'll see
 
 - A floor (aligned to your real floor via the VR guardian/stage) and a **tower
