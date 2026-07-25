@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Follow test</title>
+<title>The mech</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -30,8 +30,8 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Follow test</h1>
-  <p class="sub">One physics object per hand, chasing your controller. No arm, no shoulder, no joints.</p>
+  <h1>The mech</h1>
+  <p class="sub">A real jointed machine. Torso, shoulders, elbows. Nothing about the feel is tuned — it is whatever the machine does.</p>
 
   <div class="card">
     <button id="enter" disabled>Checking headset…</button>
@@ -41,23 +41,14 @@
 
   <div class="card">
     <ul>
-      <li>A small <strong>grey</strong> cube marks exactly where your controller is. A larger
-          <strong>coloured</strong> one is a real physics object trying to get there. The gap between them is
-          the lag — you can see it, not just feel it.</li>
-      <li>Your <strong>left</strong> hand always drives a light 3 kg block — that is the reference.
-          Your <strong>right</strong> drives whichever weight class you have selected.</li>
-      <li>Press <strong>A</strong> to change the right-hand weight: <strong>3, 10, 27, 68, 152 kg</strong>.
-          The markers to your right show which one. Heavier trails further, and at the top end it cannot
-          keep up with your reach at all — sweep your arm and watch it fall short.</li>
-      <li>Press <strong>B</strong> to change damping — the blue markers on your left. Lower damping
-          overshoots and carries momentum through a hit; higher is precise but arrives with no punch.</li>
-      <li>Knock the blocks over with it. Swing fully and see which damping hits hardest.</li>
-      <li><strong>Setting the floor:</strong> the grid starts <strong>amber</strong> and follows your lower
-          controller. Rest that controller on the actual ground and <strong>pull the trigger</strong>. The grid
-          turns grey and stays there. It is remembered, so you only do this once.</li>
-      <li>To redo it, use the <strong>Reset floor</strong> button on this page before entering VR. It is
-          deliberately not a controller gesture — anything you might press in a fight must never wipe your
-          calibration.</li>
+      <li>Grab the air and move — a capped force <strong>hauls each wrist</strong> toward your hand. The arm is
+          not told to match you; it gets dragged, and the joints sort out the rest.</li>
+      <li>Press <strong>A</strong> to change what the arms are made of:
+          <strong>light alloy, alloy, dense alloy, steel</strong>. Heavier arms lag, overshoot, and
+          <strong>drag the whole machine off its footing</strong>.</li>
+      <li>Steel is deliberately too heavy for these joints — the arms barely move. That is an under-built
+          machine, not a bug.</li>
+      <li>Punch the blocks. Watch the torso get pulled when you commit to a swing.</li>
     </ul>
   </div>
 
@@ -163,15 +154,12 @@
   // damping scaled per mass to keep each controllable.
   //   3kg -> 5.5cm lag, full reach     27kg -> 21cm lag, full reach
   //  68kg -> 29.5cm lag, 27cm reach   152kg -> 28.6cm lag, 13.5cm reach
+  var UPPER_LEN = 0.34, FORE_LEN = 0.32, THICK = 0.075;
+  var SHOULDER_TORQUE = 900, ELBOW_TORQUE = 600, CONE = 1.3;
+  // Measured: 400 tracks closely, 3000 overshoots and drags the torso, 7800
+  // cannot be swung at all by these joints.
+  var DENSITIES = [400, 1200, 3000, 7800];
   var STIFFNESS = 500;
-  // Damping is the control-versus-punch dial. High damping settles onto your
-  // hand, which is precise but arrives with no momentum — the block is
-  // decelerating at the moment of impact, which is why a full swing lacked
-  // punch. Low damping overshoots and carries through the hit.
-  var ZETAS = [0.15, 0.3, 0.6, 0.9];
-  var zetaLevel = 2;
-  var ZETA = ZETAS[zetaLevel];
-  var DENSITIES = [900, 3000, 8000, 20000, 45000];
   var level = 1;
   var prevA = false, prevB = false;
   var HAND_HALF = 0.075;
@@ -197,172 +185,60 @@
       memRef.mem = res.instance.exports.memory;
       res.instance.exports._initialize();
       E = res.instance.exports;
-      if (typeof E.w_hand_create !== "function") {
-        setStatus("The engine file is out of date — it has no follow-test support yet.", true);
+      if (typeof E.w_mech_create !== "function") {
+        setStatus("The engine file is out of date — it has no mech support yet.", true);
         E = null;
       }
     })
     .catch(function (e) { setStatus("Could not load the engine: " + e.message, true); });
 
   // Built once the floor is known, so everything sits on it.
+  var segLen = [UPPER_LEN, FORE_LEN];
+
   function buildWorld(hx, hz) {
     E.w_reset(1, floorY);
-    for (var i = 0; i < 2; i++) {
-      // Left hand stays light as a reference; right hand carries the weight
-      // being tested, so the difference is felt in the same moment.
-      var dens = (i === 0) ? DENSITIES[0] : DENSITIES[level];
-      E.w_hand_create(i, hx + (i === 0 ? -0.25 : 0.25), floorY + 1.0, hz - 0.4,
-                      HAND_HALF, dens, STIFFNESS, 1, 1e6);
-      var m = E.w_hand_mass(i);
-      E.w_hand_limits(i, STIFFNESS, 2 * ZETAS[zetaLevel] * Math.sqrt(STIFFNESS * m), 1e6);
-    }
-    // Right at arm's length, so a punch lands from where you are already
-    // standing. Anything further makes you step forward to reach it, and
-    // stepping forward is what puts a fist near the monitor.
+    // Stand the machine where the player is, chest height below the head.
+    E.w_mech_create(hx, floorY + 1.05, hz, UPPER_LEN, FORE_LEN, THICK,
+                    DENSITIES[level], SHOULDER_TORQUE, ELBOW_TORQUE, CONE);
+    var L = E.w_mech_lengths() >>> 2;
+    var lf = new Float32Array(E.memory.buffer);
+    segLen = [lf[L], lf[L + 1]];
     for (var b = 0; b < 6; b++) {
       E.w_spawn(hx, floorY + 0.11 + b * 0.21, hz - 0.7, 0, 0, 0, 0.10, b % 6);
     }
     built = true;
   }
 
-  // Floor height, set by the player rather than assumed.
-  //
-  // Every VR game does this, and for good reason: the runtime's idea of the
-  // floor is often absent or wrong, and guessing at it has been the single
-  // biggest source of things ending up at the wrong height here. Put a
-  // controller on the ground, pull the trigger, done — and it is remembered, so
-  // it is asked once and not every session.
-  var floorY = null;
-  try {
-    var saved = localStorage.getItem("box3d.floorY");
-    if (saved !== null) floorY = parseFloat(saved);
-  } catch (e) {}
-  var prevTrig = false;
-
-  var resetBtn = document.getElementById("resetFloor");
-  if (resetBtn) resetBtn.addEventListener("click", function () {
-    floorY = null; built = false;
-    try { localStorage.removeItem("box3d.floorY"); } catch (e) {}
-    setStatus("Floor cleared. Enter VR, rest a controller on the ground and pull the trigger.");
-  });
-
-  function setFloor(y) {
-    floorY = y;
-    try { localStorage.setItem("box3d.floorY", String(y)); } catch (e) {}
+  // A limb hangs along its own -Z from its origin, so the drawn box sits half a
+  // length down that axis.
+  function limbItem(a, o, len, thick, col) {
+    var q = [a[o+3], a[o+4], a[o+5], a[o+6]];
+    var h = len * 0.5, vz = -h;
+    var tx = 2*(q[1]*vz), ty = 2*(-q[0]*vz), tz = 0;
+    var cx = q[3]*tx + (q[1]*tz - q[2]*ty);
+    var cy = q[3]*ty + (q[2]*tx - q[0]*tz);
+    var cz = vz + q[3]*tz + (q[0]*ty - q[1]*tx);
+    return { m: trs([a[o]+cx, a[o+1]+cy, a[o+2]+cz], q, [thick, thick, h]), c: col };
   }
 
-  function report(txt) { reportEl.textContent = txt; }
-
-  function onFrame(t, frame) {
-    session.requestAnimationFrame(onFrame);
-    var layer = session.renderState.baseLayer;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
-    gl.clearColor(0.03, 0.04, 0.08, 1);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-    var pose = frame.getViewerPose(refSpace);
-    if (!pose) return;
-    var hp = pose.transform.position;
-
-    var items = [];
-
-    // Before the floor is set, the grid tracks the lower controller so you can
-    // see it following your hand — then the trigger pins it. Afterwards it sits
-    // at the height you set.
-    var calibrating = (floorY === null);
-    var gridY = floorY;
-    if (calibrating) {
-      gridY = hp.y - 1.2; // a placeholder until a controller is seen
-      var lowest = null;
-      var ss = session.inputSources;
-      for (var k = 0; k < ss.length; k++) {
-        var sp2 = ss[k].gripSpace || ss[k].targetRaySpace;
-        if (!sp2) continue;
-        var pp = frame.getPose(sp2, refSpace);
-        if (!pp) continue;
-        if (lowest === null || pp.transform.position.y < lowest) lowest = pp.transform.position.y;
-      }
-      if (lowest !== null) gridY = lowest;
-    }
-
-    for (var gx = -3; gx <= 3; gx++) {
-      for (var gz = -3; gz <= 3; gz++) {
-        items.push({
-          m: trs([gx * 0.4, gridY, gz * 0.4], [0,0,0,1], calibrating ? 0.035 : 0.028),
-          // Amber while it is following your hand, grey once it is set.
-          c: calibrating ? [0.98,0.72,0.25] : [0.35,0.38,0.45]
-        });
-      }
-    }
-    items.push({ m: trs([hp.x, gridY, hp.z], [0,0,0,1], 0.06), c: [0.30,0.85,0.45] });
-
-    lines = [];
-    lines.push("space: " + spaceKind + (floorReal ? "" : "  (runtime gave no floor)"));
-    lines.push("floor: " + (floorY === null ? "NOT SET — put a controller on the ground and pull the trigger"
-                                            : floorY.toFixed(3) + "  (you set this)"));
-    lines.push("head:  x " + hp.x.toFixed(2) + "  y " + hp.y.toFixed(2) + "  z " + hp.z.toFixed(2));
-
-    var srcs = session.inputSources;
-    lines.push("controllers seen: " + srcs.length);
-
-    // Counted across all controllers this frame, then acted on once after the
-    // loop. Deciding inside the loop meant each controller overwrote the last.
-    var trigCount = 0;
-    var floorCandidate = null;
-
-    for (var i = 0; i < srcs.length; i++) {
-      var src = srcs[i];
-      var space = src.gripSpace || src.targetRaySpace;
-      var label = (src.handedness || "?") + " (" + (src.gripSpace ? "grip" : "ray") + ")";
-      if (!space) { lines.push("  " + label + ": no pose space"); continue; }
-      var p = frame.getPose(space, refSpace);
-      if (!p) { lines.push("  " + label + ": NOT TRACKED"); continue; }
-
-      var pos = p.transform.position, q = p.transform.orientation;
-      var gp = src.gamepad;
-      var grip = false, trig = false;
-      if (gp && gp.buttons) {
-        if (gp.buttons.length > 1) grip = gp.buttons[1].pressed || gp.buttons[1].value > 0.5;
-        if (gp.buttons.length > 0) trig = gp.buttons[0].pressed || gp.buttons[0].value > 0.5;
-      }
-
-      if (trig) {
-        trigCount++;
-        // The lower controller is the one on the ground.
-        if (floorCandidate === null || pos.y < floorCandidate) floorCandidate = pos.y;
-      }
-
-      // Small grey marker exactly on the controller — the truth your hand knows.
+  // Small grey marker exactly on the controller — the truth your hand knows.
       items.push({ m: trs([pos.x, pos.y, pos.z], [q.x,q.y,q.z,q.w], 0.022), c: [0.62,0.66,0.74] });
 
-      // Drive the matching physics body toward it.
+      // Haul the matching wrist toward the controller.
       if (E && built) {
         var handIdx = (src.handedness === "right") ? 1 : 0;
-        E.w_hand_target(handIdx, pos.x, pos.y, pos.z);
+        E.w_mech_hand(handIdx, pos.x, pos.y, pos.z, 1);
       }
 
-      // A steps the follow strength.
+      // A cycles the material the arms are made of.
       if (gp && gp.buttons && gp.buttons.length > 4 && src.handedness === "right") {
         var aDown = gp.buttons[4].pressed;
         if (aDown && !prevA && E && built) {
-          // Mass is baked into the body, so changing weight class rebuilds.
+          // Material is baked into the bodies, so changing it rebuilds.
           level = (level + 1) % DENSITIES.length;
           built = false;
         }
         prevA = aDown;
-
-        // B changes damping live — no rebuild needed.
-        if (gp.buttons.length > 5) {
-          var bDown = gp.buttons[5].pressed;
-          if (bDown && !prevB && E && built) {
-            zetaLevel = (zetaLevel + 1) % ZETAS.length;
-            for (var Z = 0; Z < 2; Z++) {
-              var mz = E.w_hand_mass(Z);
-              E.w_hand_limits(Z, STIFFNESS, 2 * ZETAS[zetaLevel] * Math.sqrt(STIFFNESS * mz), 1e6);
-            }
-          }
-          prevB = bDown;
-        }
       }
 
       lines.push("  " + label + ": x " + pos.x.toFixed(2) + " y " + pos.y.toFixed(2) +
@@ -383,17 +259,23 @@
 
     // Step the world and draw the physics bodies plus everything they hit.
     if (E && built) {
-      E.w_hand_apply();
+      E.w_mech_stand(hp.x, floorY + 1.05, hp.z);
+      E.w_mech_apply();
       E.w_step(1 / 72);
 
-      var hp2 = E.w_hand_state() >>> 2;
+      var ms = E.w_mech_state() >>> 2;
       var fa = new Float32Array(E.memory.buffer);
-      for (var hI = 0; hI < 2; hI++) {
-        var o = hp2 + hI * 8;
-        items.push({
-          m: trs([fa[o], fa[o+1], fa[o+2]], [fa[o+3], fa[o+4], fa[o+5], fa[o+6]], fa[o+7] || HAND_HALF),
-          c: hI === 1 ? [0.95,0.55,0.25] : [0.35,0.65,0.95]
-        });
+      // torso, then upper/fore for each arm
+      items.push({
+        m: trs([fa[ms], fa[ms+1], fa[ms+2]], [fa[ms+3], fa[ms+4], fa[ms+5], fa[ms+6]],
+               [0.26, 0.30, 0.16]),
+        c: [0.32, 0.36, 0.44]
+      });
+      var armCol = [[0.35,0.65,0.95],[0.95,0.55,0.25]];
+      for (var aI = 0; aI < 2; aI++) {
+        items.push(limbItem(fa, ms + (1 + aI*2) * 7, segLen[0], THICK, armCol[aI]));
+        items.push(limbItem(fa, ms + (2 + aI*2) * 7, segLen[1], THICK*0.9,
+                            [armCol[aI][0]*0.8, armCol[aI][1]*0.8, armCol[aI][2]*0.8]));
       }
 
       var n = E.w_count(), sp3 = E.w_state() >>> 2;
@@ -405,23 +287,15 @@
         });
       }
 
-      // Strength markers, off to the right at chest height.
+      // Material markers, off to the right at chest height.
       for (var mI = 0; mI < DENSITIES.length; mI++) {
         items.push({
           m: trs([hp.x + 0.6, floorY + 1.1 + mI * 0.07, hp.z - 0.5], [0,0,0,1], 0.02),
           c: mI <= level ? [0.98,0.72,0.25] : [0.20,0.23,0.30]
         });
       }
-      for (var zI = 0; zI < ZETAS.length; zI++) {
-        items.push({
-          m: trs([hp.x - 0.6, floorY + 1.1 + zI * 0.07, hp.z - 0.5], [0,0,0,1], 0.02),
-          c: zI <= zetaLevel ? [0.45,0.80,0.95] : [0.20,0.23,0.30]
-        });
-      }
-      lines.push("damping " + ZETAS[zetaLevel] + "  (B changes it; lower = more overshoot and punch)");
-      lines.push("right hand weight class " + (level + 1) + " of " + DENSITIES.length +
-                 "  (" + E.w_hand_mass(1).toFixed(1) + " kg vs left " +
-                 E.w_hand_mass(0).toFixed(1) + " kg)");
+      lines.push("arm material " + (level + 1) + " of " + DENSITIES.length +
+                 "  (density " + DENSITIES[level] + ")");
     } else if (E && floorY !== null && !built) {
       buildWorld(hp.x, hp.z);
     }
