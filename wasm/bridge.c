@@ -5,7 +5,7 @@
 //   w_step(dt)                     advance the simulation (4 sub-steps)
 //   w_spawn(px,py,pz,vx,vy,vz,h,c) throw a new cube; recycles oldest when full
 //   w_count()                      number of dynamic cubes
-//   w_reset(sleep)                 empty world + ground; sleep selects the regime
+//   w_reset(sleep, groundY)        empty world + ground at groundY (default 0)
 //   w_fill(n)                      drop n cubes into a pile (benchmark scenes)
 //   w_state()                      pointer to packed floats, 9 per cube:
 //                                  [x,y,z, qx,qy,qz,qw, halfExtent, colorIdx]
@@ -167,8 +167,15 @@ void w_step(float dt)
 // solver and cost almost nothing — the flattering number. With it off, every
 // body is solved every step whether or not it has come to rest, which is what a
 // fight looks like and the number that matters.
+// `groundY` is the top surface of the floor slab. Defaults to 0 when omitted
+// (JS passes 0 for missing numeric args), which is the old behaviour.
+//
+// It is a parameter because the page cannot assume Y=0 is the floor: if the
+// runtime declines a local-floor reference space and falls back to local, the
+// origin sits at the viewer instead, and a floor built at 0 ends up at head
+// height with the whole scene stacked above it.
 WASM_EXPORT("w_reset")
-void w_reset(int enableSleep)
+void w_reset(int enableSleep, float groundY)
 {
     // Tracked with an explicit flag rather than by inspecting the id: the id is
     // zero-initialised at load, and a zeroed id is not guaranteed to compare
@@ -193,7 +200,7 @@ void w_reset(int enableSleep)
     b3BodyDef bd = b3DefaultBodyDef();
     bd.type = b3_staticBody;
     bd.position.x = 0.0f;
-    bd.position.y = -0.1f;
+    bd.position.y = groundY - 0.1f;
     bd.position.z = 0.0f;
     b3BodyId ground = b3CreateBody(s_world, &bd);
 
