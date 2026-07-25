@@ -31,7 +31,7 @@
 <body>
 <div class="wrap">
   <h1>The mech</h1>
-  <p class="sub">A real jointed machine. Torso, shoulders, elbows. Nothing about the feel is tuned — it is whatever the machine does.</p>
+  <p class="sub">A real jointed machine — torso, shoulders, elbows. Nothing about the feel is tuned; it is whatever the machine does.</p>
 
   <div class="card">
     <button id="enter" disabled>Checking headset…</button>
@@ -41,14 +41,20 @@
 
   <div class="card">
     <ul>
-      <li>Grab the air and move — a capped force <strong>hauls each wrist</strong> toward your hand. The arm is
-          not told to match you; it gets dragged, and the joints sort out the rest.</li>
+      <li>A capped force <strong>hauls each wrist</strong> toward your hand. The arm is not told to match
+          you — it gets dragged, and the joints work out the rest.</li>
       <li>Press <strong>A</strong> to change what the arms are made of:
-          <strong>light alloy, alloy, dense alloy, steel</strong>. Heavier arms lag, overshoot, and
-          <strong>drag the whole machine off its footing</strong>.</li>
-      <li>Steel is deliberately too heavy for these joints — the arms barely move. That is an under-built
+          <strong>light alloy → alloy → dense alloy → steel</strong>. Amber markers on your right show which.</li>
+      <li>Heavier arms lag, overshoot, and <strong>drag the whole machine off its footing</strong>.
+          Steel is deliberately too heavy for these joints, so the arms barely move — that is an under-built
           machine, not a bug.</li>
       <li>Punch the blocks. Watch the torso get pulled when you commit to a swing.</li>
+      <li><strong>Setting the floor:</strong> the grid starts <strong>amber</strong> and follows your lower
+          controller. Rest that controller on the actual ground and <strong>pull the trigger</strong>. The grid
+          turns grey and stays there. It is remembered, so you only do this once.</li>
+      <li>To redo it, use the <strong>Reset floor</strong> button on this page before entering VR. It is
+          deliberately not a controller gesture — anything you might press in a fight must never wipe your
+          calibration.</li>
     </ul>
   </div>
 
@@ -78,13 +84,17 @@
     return o;
   }
   function trs(p, q, s) {
+    // s may be a number (uniform) or [x,y,z].
+    var sx = (typeof s === "number") ? s : s[0];
+    var sy = (typeof s === "number") ? s : s[1];
+    var sz = (typeof s === "number") ? s : s[2];
     var x=q[0],y=q[1],z=q[2],w=q[3];
     var x2=x+x,y2=y+y,z2=z+z;
     var xx=x*x2,xy=x*y2,xz=x*z2,yy=y*y2,yz=y*z2,zz=z*z2,wx=w*x2,wy=w*y2,wz=w*z2;
     return new Float32Array([
-      (1-(yy+zz))*s, (xy+wz)*s, (xz-wy)*s, 0,
-      (xy-wz)*s, (1-(xx+zz))*s, (yz+wx)*s, 0,
-      (xz+wy)*s, (yz-wx)*s, (1-(xx+yy))*s, 0,
+      (1-(yy+zz))*sx, (xy+wz)*sx, (xz-wy)*sx, 0,
+      (xy-wz)*sy, (1-(xx+zz))*sy, (yz+wx)*sy, 0,
+      (xz+wy)*sz, (yz-wx)*sz, (1-(xx+yy))*sz, 0,
       p[0], p[1], p[2], 1
     ]);
   }
@@ -145,25 +155,45 @@
 
   var refSpace = null, spaceKind = "?", floorReal = false, session = null;
   var lines = [];
-  var E = null;
-  var built = false;
 
-  // How hard the physics object may pull to reach your hand. Weak enough at the
-  // bottom to visibly trail, strong enough at the top to keep up.
-  // Weight classes, measured on the real engine. Same spring, different mass;
-  // damping scaled per mass to keep each controllable.
-  //   3kg -> 5.5cm lag, full reach     27kg -> 21cm lag, full reach
-  //  68kg -> 29.5cm lag, 27cm reach   152kg -> 28.6cm lag, 13.5cm reach
+  // Floor height, set by the player rather than assumed.
+  //
+  // Every VR game does this, and for good reason: the runtime's idea of the
+  // floor is often absent or wrong, and guessing at it has been the single
+  // biggest source of things ending up at the wrong height here. Put a
+  // controller on the ground, pull the trigger, done — and it is remembered, so
+  // it is asked once and not every session.
+  var floorY = null;
+  try {
+    var saved = localStorage.getItem("box3d.floorY");
+    if (saved !== null) floorY = parseFloat(saved);
+  } catch (e) {}
+  var prevTrig = false;
+
+  var resetBtn = document.getElementById("resetFloor");
+  if (resetBtn) resetBtn.addEventListener("click", function () {
+    floorY = null;
+    try { localStorage.removeItem("box3d.floorY"); } catch (e) {}
+    setStatus("Floor cleared. Enter VR, rest a controller on the ground and pull the trigger.");
+  });
+
+  function setFloor(y) {
+    floorY = y;
+    try { localStorage.setItem("box3d.floorY", String(y)); } catch (e) {}
+  }
+
+  function report(txt) { reportEl.textContent = txt; }
+
+  // --- the machine ---------------------------------------------------------
+  var E = null, built = false;
   var UPPER_LEN = 0.34, FORE_LEN = 0.32, THICK = 0.075;
   var SHOULDER_TORQUE = 900, ELBOW_TORQUE = 600, CONE = 1.3;
-  // Measured: 400 tracks closely, 3000 overshoots and drags the torso, 7800
-  // cannot be swung at all by these joints.
+  // Measured on the real build: 400 tracks closely, 3000 overshoots and drags
+  // the torso, 7800 cannot be swung at all by these joints.
   var DENSITIES = [400, 1200, 3000, 7800];
-  var STIFFNESS = 500;
   var level = 1;
-  var prevA = false, prevB = false;
-  var HAND_HALF = 0.075;
-  var GRAV_ON = false;
+  var prevA = false;
+  var segLen = [UPPER_LEN, FORE_LEN];
 
   var memRef = { mem: null };
   var wasi = {
@@ -186,23 +216,19 @@
       res.instance.exports._initialize();
       E = res.instance.exports;
       if (typeof E.w_mech_create !== "function") {
-        setStatus("The engine file is out of date — it has no mech support yet.", true);
+        setStatus("The engine file is out of date — no mech support yet.", true);
         E = null;
       }
     })
     .catch(function (e) { setStatus("Could not load the engine: " + e.message, true); });
 
-  // Built once the floor is known, so everything sits on it.
-  var segLen = [UPPER_LEN, FORE_LEN];
-
   function buildWorld(hx, hz) {
     E.w_reset(1, floorY);
-    // Stand the machine where the player is, chest height below the head.
     E.w_mech_create(hx, floorY + 1.05, hz, UPPER_LEN, FORE_LEN, THICK,
                     DENSITIES[level], SHOULDER_TORQUE, ELBOW_TORQUE, CONE);
-    var L = E.w_mech_lengths() >>> 2;
-    var lf = new Float32Array(E.memory.buffer);
+    var L = E.w_mech_lengths() >>> 2, lf = new Float32Array(E.memory.buffer);
     segLen = [lf[L], lf[L + 1]];
+    // Blocks at arm's length so a punch lands without stepping forward.
     for (var b = 0; b < 6; b++) {
       E.w_spawn(hx, floorY + 0.11 + b * 0.21, hz - 0.7, 0, 0, 0, 0.10, b % 6);
     }
@@ -221,25 +247,101 @@
     return { m: trs([a[o]+cx, a[o+1]+cy, a[o+2]+cz], q, [thick, thick, h]), c: col };
   }
 
-  // Small grey marker exactly on the controller — the truth your hand knows.
-      items.push({ m: trs([pos.x, pos.y, pos.z], [q.x,q.y,q.z,q.w], 0.022), c: [0.62,0.66,0.74] });
+  function onFrame(t, frame) {
+    session.requestAnimationFrame(onFrame);
+    var layer = session.renderState.baseLayer;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+    gl.clearColor(0.03, 0.04, 0.08, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-      // Haul the matching wrist toward the controller.
-      if (E && built) {
-        var handIdx = (src.handedness === "right") ? 1 : 0;
-        E.w_mech_hand(handIdx, pos.x, pos.y, pos.z, 1);
+    var pose = frame.getViewerPose(refSpace);
+    if (!pose) return;
+    var hp = pose.transform.position;
+
+    var items = [];
+
+    // Before the floor is set, the grid tracks the lower controller so you can
+    // see it following your hand — then the trigger pins it. Afterwards it sits
+    // at the height you set.
+    var calibrating = (floorY === null);
+    var gridY = floorY;
+    if (calibrating) {
+      gridY = hp.y - 1.2; // a placeholder until a controller is seen
+      var lowest = null;
+      var ss = session.inputSources;
+      for (var k = 0; k < ss.length; k++) {
+        var sp2 = ss[k].gripSpace || ss[k].targetRaySpace;
+        if (!sp2) continue;
+        var pp = frame.getPose(sp2, refSpace);
+        if (!pp) continue;
+        if (lowest === null || pp.transform.position.y < lowest) lowest = pp.transform.position.y;
+      }
+      if (lowest !== null) gridY = lowest;
+    }
+
+    for (var gx = -3; gx <= 3; gx++) {
+      for (var gz = -3; gz <= 3; gz++) {
+        items.push({
+          m: trs([gx * 0.4, gridY, gz * 0.4], [0,0,0,1], calibrating ? 0.035 : 0.028),
+          // Amber while it is following your hand, grey once it is set.
+          c: calibrating ? [0.98,0.72,0.25] : [0.35,0.38,0.45]
+        });
+      }
+    }
+    items.push({ m: trs([hp.x, gridY, hp.z], [0,0,0,1], 0.06), c: [0.30,0.85,0.45] });
+
+    lines = [];
+    lines.push("space: " + spaceKind + (floorReal ? "" : "  (runtime gave no floor)"));
+    lines.push("floor: " + (floorY === null ? "NOT SET — put a controller on the ground and pull the trigger"
+                                            : floorY.toFixed(3) + "  (you set this)"));
+    lines.push("head:  x " + hp.x.toFixed(2) + "  y " + hp.y.toFixed(2) + "  z " + hp.z.toFixed(2));
+
+    var srcs = session.inputSources;
+    lines.push("controllers seen: " + srcs.length);
+
+    // Counted across all controllers this frame, then acted on once after the
+    // loop. Deciding inside the loop meant each controller overwrote the last.
+    var trigCount = 0;
+    var floorCandidate = null;
+
+    for (var i = 0; i < srcs.length; i++) {
+      var src = srcs[i];
+      var space = src.gripSpace || src.targetRaySpace;
+      var label = (src.handedness || "?") + " (" + (src.gripSpace ? "grip" : "ray") + ")";
+      if (!space) { lines.push("  " + label + ": no pose space"); continue; }
+      var p = frame.getPose(space, refSpace);
+      if (!p) { lines.push("  " + label + ": NOT TRACKED"); continue; }
+
+      var pos = p.transform.position, q = p.transform.orientation;
+      var gp = src.gamepad;
+      var grip = false, trig = false;
+      if (gp && gp.buttons) {
+        if (gp.buttons.length > 1) grip = gp.buttons[1].pressed || gp.buttons[1].value > 0.5;
+        if (gp.buttons.length > 0) trig = gp.buttons[0].pressed || gp.buttons[0].value > 0.5;
       }
 
-      // A cycles the material the arms are made of.
+      if (trig) {
+        trigCount++;
+        // The lower controller is the one on the ground.
+        if (floorCandidate === null || pos.y < floorCandidate) floorCandidate = pos.y;
+      }
+
+      // Haul the matching wrist toward this controller.
+      if (E && built) {
+        E.w_mech_hand(src.handedness === "right" ? 1 : 0, pos.x, pos.y, pos.z, 1);
+      }
+      // A cycles the arm material.
       if (gp && gp.buttons && gp.buttons.length > 4 && src.handedness === "right") {
         var aDown = gp.buttons[4].pressed;
         if (aDown && !prevA && E && built) {
-          // Material is baked into the bodies, so changing it rebuilds.
           level = (level + 1) % DENSITIES.length;
-          built = false;
+          built = false;   // material is baked into the bodies, so rebuild
         }
         prevA = aDown;
       }
+
+      // Small marker exactly on the controller — the truth your hand knows.
+      items.push({ m: trs([pos.x, pos.y, pos.z], [q.x,q.y,q.z,q.w], 0.022), c: [0.62,0.66,0.74] });
 
       lines.push("  " + label + ": x " + pos.x.toFixed(2) + " y " + pos.y.toFixed(2) +
                  " z " + pos.z.toFixed(2) + (gp ? ("  grip " + (grip?"YES":"no") +
@@ -257,44 +359,35 @@
     }
     prevTrig = trigCount > 0;
 
-    // Step the world and draw the physics bodies plus everything they hit.
     if (E && built) {
       E.w_mech_stand(hp.x, floorY + 1.05, hp.z);
       E.w_mech_apply();
       E.w_step(1 / 72);
 
-      var ms = E.w_mech_state() >>> 2;
-      var fa = new Float32Array(E.memory.buffer);
-      // torso, then upper/fore for each arm
-      items.push({
-        m: trs([fa[ms], fa[ms+1], fa[ms+2]], [fa[ms+3], fa[ms+4], fa[ms+5], fa[ms+6]],
-               [0.26, 0.30, 0.16]),
-        c: [0.32, 0.36, 0.44]
-      });
+      var ms = E.w_mech_state() >>> 2, fa = new Float32Array(E.memory.buffer);
+      items.push({ m: trs([fa[ms], fa[ms+1], fa[ms+2]],
+                          [fa[ms+3], fa[ms+4], fa[ms+5], fa[ms+6]], [0.26, 0.30, 0.16]),
+                   c: [0.32, 0.36, 0.44] });
       var armCol = [[0.35,0.65,0.95],[0.95,0.55,0.25]];
       for (var aI = 0; aI < 2; aI++) {
-        items.push(limbItem(fa, ms + (1 + aI*2) * 7, segLen[0], THICK, armCol[aI]));
-        items.push(limbItem(fa, ms + (2 + aI*2) * 7, segLen[1], THICK*0.9,
-                            [armCol[aI][0]*0.8, armCol[aI][1]*0.8, armCol[aI][2]*0.8]));
+        items.push(limbItem(fa, ms + (1 + aI*2)*7, segLen[0], THICK, armCol[aI]));
+        items.push(limbItem(fa, ms + (2 + aI*2)*7, segLen[1], THICK*0.9,
+                            [armCol[aI][0]*0.75, armCol[aI][1]*0.75, armCol[aI][2]*0.75]));
       }
 
       var n = E.w_count(), sp3 = E.w_state() >>> 2;
       for (var ci = 0; ci < n; ci++) {
-        var co = sp3 + ci * 9, ch = fa[co+7];
-        items.push({
-          m: trs([fa[co], fa[co+1], fa[co+2]], [fa[co+3], fa[co+4], fa[co+5], fa[co+6]], ch),
-          c: [[.90,.30,.24],[.95,.61,.20],[.96,.85,.30],[.30,.69,.44],[.26,.52,.86],[.55,.36,.78]][(fa[co+8]|0)%6]
-        });
+        var co = sp3 + ci*9, ch = fa[co+7];
+        items.push({ m: trs([fa[co], fa[co+1], fa[co+2]],
+                            [fa[co+3], fa[co+4], fa[co+5], fa[co+6]], ch),
+                     c: [[.90,.30,.24],[.95,.61,.20],[.96,.85,.30],[.30,.69,.44],[.26,.52,.86],[.55,.36,.78]][(fa[co+8]|0)%6] });
       }
 
-      // Material markers, off to the right at chest height.
       for (var mI = 0; mI < DENSITIES.length; mI++) {
-        items.push({
-          m: trs([hp.x + 0.6, floorY + 1.1 + mI * 0.07, hp.z - 0.5], [0,0,0,1], 0.02),
-          c: mI <= level ? [0.98,0.72,0.25] : [0.20,0.23,0.30]
-        });
+        items.push({ m: trs([hp.x + 0.6, floorY + 1.1 + mI*0.07, hp.z - 0.5], [0,0,0,1], 0.02),
+                     c: mI <= level ? [0.98,0.72,0.25] : [0.20,0.23,0.30] });
       }
-      lines.push("arm material " + (level + 1) + " of " + DENSITIES.length +
+      lines.push("arm material " + (level+1) + " of " + DENSITIES.length +
                  "  (density " + DENSITIES[level] + ")");
     } else if (E && floorY !== null && !built) {
       buildWorld(hp.x, hp.z);
