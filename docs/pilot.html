@@ -243,7 +243,10 @@
                    ARM_LENGTH, ARM_THICK, HEAVY_DENSITY, TORQUE_LEVELS[heavyLevel], CONE);
 
     // Something to hit, stacked up from the floor wherever that turned out to be.
-    for (var i = 0; i < 10; i++) {
+    // Five high, not ten: ten 20 cm cubes is a two-metre tower, which for anyone
+    // seated looms overhead and is part of what "everything is above my head"
+    // was describing. Five tops out around chest height and is punchable.
+    for (var i = 0; i < 5; i++) {
       E.w_spawn(headX, groundY + 0.12 + i * 0.21, headZ - 1.15, 0, 0, 0, 0.10, i % 6);
     }
 
