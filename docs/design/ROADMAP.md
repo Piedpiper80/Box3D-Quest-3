@@ -354,12 +354,50 @@ Three rules came out of it, and they apply to every joint from here on:
    target is proof of a controller adding energy, and is the single most useful
    signal found here.
 
-Measured on the working build, medium arms: stands at 4° tilt and settles; the
-elbow folds to −122° for a hand at the chest; lag grows 0.157 m → 0.368 m as the
-arms go 7.4 kg → 59.3 kg, and the torso gets dragged 0.025 m → 0.225 m off its
-footing. Weight is carried by a **fixed spring constant** — the earlier finding
-that a mass-normalised spring cannot convey weight at all still holds, and the
-damping is derived separately so stability never costs the weight signal.
+#### Weight is momentum, not sag
+
+The round after the above shipped, the headset verdict was that the arm still
+did not follow the hand — it hung below it — and that the elbow stopped bending
+at the heavy settings. Both were the same mistake, and it is worth recording
+because it survived a full round of measurement while being defended as a
+feature.
+
+Nothing was carrying the arm's own weight. The only upward force was the pull
+toward the hand, so the arm settled wherever the spring stretched far enough to
+hold itself up: **13 cm below the hand at the lightest weight, 38 cm at the
+heaviest, nearly all of it straight down**. That was measured, written up as
+"the weight signal", and shipped. In VR it does not read as weight at all — it
+reads as the arm ignoring you. Worse, at the heavy end the pull was entirely
+spent holding the limb up, leaving nothing to fold the elbow, so the arm locked
+out straight with 1–6° of travel.
+
+**The rule this gives:** weight is *resistance to changing velocity*, never
+static droop. Your arm does not sag when you hold it out — the muscles carry it,
+and heavy is how hard it is to start moving and how hard to stop. Every powered
+joint works the same way. So the machine carries its own arm, and mass shows up
+through the **capped** pull force: heavier means slower to accelerate, slower to
+arrest, and a bigger kick back into the torso. That is also exactly the
+momentum-commitment the combat design is built on, so the two wants coincide.
+
+A second, quieter version of the same error: joint friction at 60/40 N·m held
+the arm ~12 cm short of the hand *by the same distance at every weight*. A
+constant offset regardless of mass is a deadband, not weight. 25/16 N·m brings
+it to 3 cm; stiffening the pull past 4000 N/m makes it worse, not better.
+
+Measured on the working build, hands held still and then moved:
+
+| arm | at rest | while moving | elbow travel | torso shove |
+| --- | --- | --- | --- | --- |
+| 7 kg | 4.0 cm | 7.0 cm | −138°..−101° | 6 cm |
+| 17 kg | 3.0 cm | 9.8 cm | −138°..−116° | 8 cm |
+| 34 kg | 4.1 cm | 12.4 cm | −138°..−116° | 9 cm |
+| 59 kg | 4.2 cm | 14.5 cm | −138°..−117° | 9 cm |
+
+Held still it reaches your hand whatever it weighs. Moving, heavier falls
+further behind. The elbow keeps working at every weight. The earlier finding —
+that a *mass-normalised* spring cannot convey weight, so the stiffness stays a
+fixed N/m — still holds; damping is derived separately so stability never costs
+the weight signal.
 
 ### Phase 2 — Voxel core
 The unified static/dynamic system. **The deformable skin idea and the
