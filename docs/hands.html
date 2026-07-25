@@ -42,8 +42,10 @@
     <ul>
       <li>A <strong>blue</strong> cube should sit on your <strong>left</strong> controller and an
           <strong>orange</strong> one on your <strong>right</strong>, moving exactly with them.</li>
-      <li>A green marker sits on the floor below you, and a grid of grey blocks marks the ground —
-          so you can tell whether the page knows where your floor is.</li>
+      <li><strong>Setting the floor:</strong> the grid starts <strong>amber</strong> and follows your lower
+          controller. Rest that controller on the actual ground and <strong>pull the trigger</strong>. The grid
+          turns grey and stays there. It is remembered, so you only do this once.</li>
+      <li>To redo it, hold <strong>both triggers</strong> for about two seconds.</li>
       <li>Squeeze <strong>grip</strong> and the cube grows. Pull <strong>trigger</strong> and it turns white.
           That confirms the buttons are being read.</li>
     </ul>
@@ -143,6 +145,25 @@
   var refSpace = null, spaceKind = "?", floorReal = false, session = null;
   var lines = [];
 
+  // Floor height, set by the player rather than assumed.
+  //
+  // Every VR game does this, and for good reason: the runtime's idea of the
+  // floor is often absent or wrong, and guessing at it has been the single
+  // biggest source of things ending up at the wrong height here. Put a
+  // controller on the ground, pull the trigger, done — and it is remembered, so
+  // it is asked once and not every session.
+  var floorY = null;
+  try {
+    var saved = localStorage.getItem("box3d.floorY");
+    if (saved !== null) floorY = parseFloat(saved);
+  } catch (e) {}
+  var prevTrig = false, redoFrames = 0;
+
+  function setFloor(y) {
+    floorY = y;
+    try { localStorage.setItem("box3d.floorY", String(y)); } catch (e) {}
+  }
+
   function report(txt) { reportEl.textContent = txt; }
 
   function onFrame(t, frame) {
@@ -158,23 +179,49 @@
 
     var items = [];
 
-    // Ground grid, so it is obvious whether the page knows where the floor is.
-    // Drawn at y = 0 in whatever space we were given — if that is not your
-    // floor, you will see it immediately.
-    for (var gx = -2; gx <= 2; gx++) {
-      for (var gz = -2; gz <= 2; gz++) {
-        items.push({ m: trs([gx * 0.5, 0, gz * 0.5], [0,0,0,1], 0.03), c: [0.35,0.38,0.45] });
+    // Before the floor is set, the grid tracks the lower controller so you can
+    // see it following your hand — then the trigger pins it. Afterwards it sits
+    // at the height you set.
+    var calibrating = (floorY === null);
+    var gridY = floorY;
+    if (calibrating) {
+      gridY = hp.y - 1.2; // a placeholder until a controller is seen
+      var lowest = null;
+      var ss = session.inputSources;
+      for (var k = 0; k < ss.length; k++) {
+        var sp2 = ss[k].gripSpace || ss[k].targetRaySpace;
+        if (!sp2) continue;
+        var pp = frame.getPose(sp2, refSpace);
+        if (!pp) continue;
+        if (lowest === null || pp.transform.position.y < lowest) lowest = pp.transform.position.y;
+      }
+      if (lowest !== null) gridY = lowest;
+    }
+
+    for (var gx = -3; gx <= 3; gx++) {
+      for (var gz = -3; gz <= 3; gz++) {
+        items.push({
+          m: trs([gx * 0.4, gridY, gz * 0.4], [0,0,0,1], calibrating ? 0.035 : 0.028),
+          // Amber while it is following your hand, grey once it is set.
+          c: calibrating ? [0.98,0.72,0.25] : [0.35,0.38,0.45]
+        });
       }
     }
-    // Marker directly below the head, on that same ground plane.
-    items.push({ m: trs([hp.x, 0, hp.z], [0,0,0,1], 0.06), c: [0.30,0.85,0.45] });
+    items.push({ m: trs([hp.x, gridY, hp.z], [0,0,0,1], 0.06), c: [0.30,0.85,0.45] });
 
     lines = [];
-    lines.push("space: " + spaceKind + (floorReal ? "" : "  <-- NO REAL FLOOR"));
+    lines.push("space: " + spaceKind + (floorReal ? "" : "  (runtime gave no floor)"));
+    lines.push("floor: " + (floorY === null ? "NOT SET — put a controller on the ground and pull the trigger"
+                                            : floorY.toFixed(3) + "  (you set this)"));
     lines.push("head:  x " + hp.x.toFixed(2) + "  y " + hp.y.toFixed(2) + "  z " + hp.z.toFixed(2));
 
     var srcs = session.inputSources;
     lines.push("controllers seen: " + srcs.length);
+
+    // Counted across all controllers this frame, then acted on once after the
+    // loop. Deciding inside the loop meant each controller overwrote the last.
+    var trigCount = 0;
+    var floorCandidate = null;
 
     for (var i = 0; i < srcs.length; i++) {
       var src = srcs[i];
@@ -192,6 +239,12 @@
         if (gp.buttons.length > 0) trig = gp.buttons[0].pressed || gp.buttons[0].value > 0.5;
       }
 
+      if (trig) {
+        trigCount++;
+        // The lower controller is the one on the ground.
+        if (floorCandidate === null || pos.y < floorCandidate) floorCandidate = pos.y;
+      }
+
       // The cube sits exactly on the controller. Nothing between your hand and
       // what you see — if this lags or drifts, the input path is at fault.
       var size = grip ? 0.075 : 0.05;
@@ -203,6 +256,28 @@
                  " z " + pos.z.toFixed(2) + (gp ? ("  grip " + (grip?"YES":"no") +
                  "  trigger " + (trig?"YES":"no")) : "  (no gamepad)"));
     }
+    // One decision per frame, after every controller has been read.
+    if (calibrating) {
+      // Rising edge, so a held trigger sets the floor once rather than every
+      // frame it stays down.
+      if (trigCount > 0 && !prevTrig && floorCandidate !== null) {
+        setFloor(floorCandidate);
+        setStatus("Floor set at " + floorCandidate.toFixed(2) +
+                  " m. Hold both triggers for two seconds to redo it.");
+      }
+    } else if (trigCount >= 2) {
+      // Both triggers held clears it, so redoing needs no menu.
+      redoFrames++;
+      if (redoFrames > 90) {
+        floorY = null; redoFrames = 0;
+        try { localStorage.removeItem("box3d.floorY"); } catch (e) {}
+        setStatus("Floor cleared. Rest a controller on the ground and pull the trigger.");
+      }
+    } else {
+      redoFrames = 0;
+    }
+    prevTrig = trigCount > 0;
+
     report(lines.join("\n"));
 
     for (var v = 0; v < pose.views.length; v++) {
