@@ -347,7 +347,8 @@ void w_arm_create(int i, float sx, float sy, float sz, float length, float thick
     b3BoxHull hull = b3MakeBoxHull(thickness, thickness, half);
     b3Transform offset = b3Transform_identity;
     offset.p.z = -half;
-    b3CreateTransformedHullShape(s_armBody[i], &sd, &hull.base, offset);
+    b3Vec3 scale = {1.0f, 1.0f, 1.0f}; // the hull is already the right size
+    b3CreateTransformedHullShape(s_armBody[i], &sd, &hull.base, offset, scale);
 
     // Pivot at the shoulder: the joint frame sits at the shoulder in world terms,
     // which is the torso's local offset for A and the body origin for B.
