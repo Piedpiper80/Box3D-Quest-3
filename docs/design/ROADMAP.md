@@ -416,6 +416,37 @@ That is the shape of every fight to come: armour first, then the machine
 inside. Next: the mech itself instanced (two machines in one world) and
 wearing these plates — which is Phase 4's front door.
 
+#### The first fight is playable (`arena.html`) — the vertical slice
+
+Phase 5's spine, in first playable form. One page, one complete loop:
+
+**Calibrate → raise both fists → fight → win or lose → fists up to rematch.**
+
+The enemy is built from what already existed — the same gravity-compensated
+legs, the same inertia-derived uprighting, the same voxel armour riding its
+hull — plus a small will: approach to fighting range, square up, telegraph
+(club drawn high), swing through the player's chest. Its stone plate strips
+under punches; the bared core takes momentum until the drives cut and the
+machine drops, bursting what is left of its plate. The player wears steel,
+loses it the same way, and has a hull damage limit — so the fight can be lost.
+
+Presentation shipped with it, per the top-tier tracks: **all audio is
+synthesised from the physics** (impact thuds and armour clangs scaled by
+momentum, slab-tear booms, servo hum following arm speed, win/lose stings —
+no recordings), **haptics** pulse on hits taken, a **1 cm / 160 ms view
+shake** reads impacts without comfort risk, and the arena ring turns
+green/red with the verdict.
+
+Measured, headless: enemy closes from 3 m and strips the player's plate; ten
+committed heavy punches kill it through its plate; death drops the machine to
+the floor. The whole loop runs in the page harness: gesture start, damage on
+both sides, verdict.
+
+Known gaps for the next pass: the enemy has one attack and no footwork
+variety; win/lose is signalled by colour and sound rather than text; one
+arena, no props; no rounds/score. These are content and polish on a working
+spine — exactly where the roadmap wants the project to sit.
+
 #### Phase 1 status: all three spikes built, awaiting headset verdicts
 
 | Spike | Page | Machine-verified | Needs from the headset |

@@ -436,16 +436,37 @@ function posePunch(f) {
   };
 }
 
+// The arena session: calibrate, raise both fists to start, guard while the
+// enemy closes and swings, then punch back at its chest.
+function poseArena(f) {
+  if (f < TPOSE_UNTIL) return pose(f);
+  const mk = (l, r) => ({
+    head: vec(0, HEAD_Y, 0),
+    controllers: [
+      { pos: l, q: quat(0, 0, 0, 1) },
+      { pos: r, q: quat(0, 0, 0, 1) },
+    ],
+    trigger: false,
+  });
+  if (f < 40) return mk(vec(-0.24, 1.15, -0.30), vec(0.24, 1.15, -0.30));
+  if (f < 120) return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));  // fists up
+  if (f < 200) return mk(vec(-0.24, 1.15, -0.25), vec(0.24, 1.15, -0.25));  // guard
+  const c = (f - 200) % 36, out = c < 18 ? c / 18 : (36 - c) / 18;
+  return mk(vec(-0.26, 1.12, -0.25), vec(0.06, 1.12, -0.22 - 0.48 * out));
+}
+
 (async () => {
   const page = process.argv[2] || "mech.html";
   console.log(`--- ${page} ---`);
 
   const script = page === "drag.html" ? poseDrag
                : page === "handtrack.html" ? poseHands
-               : page === "vox.html" || page === "dummy.html" ? posePunch : pose;
+               : page === "vox.html" || page === "dummy.html" ? posePunch
+               : page === "arena.html" ? poseArena : pose;
   const frames = page === "drag.html" ? 420
                : page === "handtrack.html" ? 320
-               : page === "vox.html" || page === "dummy.html" ? 360 : 190;
+               : page === "vox.html" || page === "dummy.html" ? 360
+               : page === "arena.html" ? 700 : 190;
   const r = await runPage(page, frames, script);
 
   check("no exception escaped the frame loop", r.errors.length === 0,
@@ -466,6 +487,20 @@ function posePunch(f) {
           trav ? trav[1] + " m" : "no travelled line in the report");
     const planted = /PLANTED/.test(r.report) || (trav && parseFloat(trav[1]) > 0.35);
     check("the fists actually planted", planted, "no fist ever anchored");
+  }
+
+  if (page === "arena.html") {
+    check("the fists-up gesture started the fight",
+          /match: (FIGHT|WON|LOST)/.test(r.report), (r.report.match(/match: \w+/) || ["no match line"])[0]);
+    const eplate = r.report.match(/its plate (\d+)\/(\d+)/);
+    const you = r.report.match(/you: plate (\d+)\/(\d+)/);
+    const damage = (eplate && parseInt(eplate[1], 10) < parseInt(eplate[2], 10)) ||
+                   (you && parseInt(you[1], 10) < parseInt(you[2], 10));
+    check("the fight drew blood on at least one side", !!damage,
+          `enemy ${eplate ? eplate[1] + "/" + eplate[2] : "?"}, you ${you ? you[1] + "/" + you[2] : "?"}`);
+    check("the enemy machine is drawn and acting",
+          /enemy: (APPROACH|WINDUP|SWING|RECOVER|DEAD)/.test(r.report),
+          (r.report.match(/enemy: \w+/) || ["no enemy line"])[0]);
   }
 
   if (page === "dummy.html") {

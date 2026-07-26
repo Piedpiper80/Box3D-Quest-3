@@ -542,6 +542,49 @@ const wasi = new WASI({ version: "preview1" });
   check("a slab can tear off the moving body", chunksNow >= 1 || vst()[0] < 20,
         `chunks ${chunksNow}, cells left ${vst()[0]}`);
 
+  // --- the first fight (arena) ---
+  //
+  // Enemy machine: same legs, same uprighting, same voxel armour, plus a
+  // small will — approach, telegraph, swing. Its core dies to punches once
+  // the plate is off; the player's hull is scored the same way.
+  E.w_reset(1, 0);
+  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 1600, 4, 3, 1.5707, SHOULDER_HALF);
+  const pPlate = E.w_player_plate(2);
+  const ePlate = E.w_enemy_create(0, -3.0, 1);
+  const est = () => { const p = E.w_enemy_state() >>> 2; return mem().slice(p, p + 26); };
+  const grid = (g) => { const p = E.w_vox_grid_stats(g) >>> 2; return mem().slice(p, p + 3); };
+  const fstep = (hx, hz) => {
+    E.w_mech_hand(0, -0.22, 1.15, -0.25, 1, 0, 0, 0, 1);
+    E.w_mech_hand(1, hx, 1.15, hz, 1, 0, 0, 0, 1);
+    E.w_mech_stand(0, CHEST, 0);
+    E.w_enemy_update(0, CHEST, 0, 1 / 72);
+    E.w_mech_apply(); E.w_step(1 / 72); E.w_vox_post(); E.w_enemy_post();
+  };
+
+  for (let s = 0; s < 900; s++) fstep(0.22, -0.25);
+  let ev2 = est();
+  check("the enemy closes to fighting range", Math.abs(ev2[2] + 0.72) < 0.25,
+        `at z ${ev2[2].toFixed(2)}`);
+  check("its swings strip the player's plate", grid(pPlate)[0] < 34,
+        `${grid(pPlate)[0]} of 36 left`);
+
+  let dead = false, punches = 0;
+  for (let p = 0; p < 40 && !dead; p++) {
+    for (let s = 0; s < 40; s++) {
+      const t = s / 40, out = t < 0.4 ? t / 0.4 : Math.max(0, 1 - (t - 0.4) / 0.5);
+      ev2 = est();
+      fstep(ev2[0] * out * 0.9, -0.25 + (ev2[2] + 0.25) * out * 0.95);
+    }
+    punches++;
+    dead = est()[7] === 5;
+  }
+  check("punching back kills it", dead, `still alive after ${punches} punches`);
+  check("its death bursts the plate off", grid(ePlate)[0] === 0,
+        `${grid(ePlate)[0]} cells still on`);
+  for (let s = 0; s < 120; s++) fstep(0.22, -0.25);
+  check("the dead machine ends up on the ground", est()[1] < 0.60,
+        `resting at y ${est()[1].toFixed(2)} (stood at 1.15)`);
+
   console.log(`\n${pass} passed, ${fail} failed, ${gaps} known gaps`);
   process.exit(fail === 0 ? 0 : 1);
 })().catch((e) => { console.error("HARNESS ERROR:", e); process.exit(2); });

@@ -59,6 +59,7 @@ static int s_mExists = 0;
 // The world is being torn down; forget every voxel grid that lived in it.
 static void vxWorldReset(void);
 static int s_dummyExists = 0;
+static int s_eExists = 0;
 static Cube s_cubes[MAX_CUBES];
 static int s_count = 0;
 static int s_ambient = 0;      // initial cubes are never recycled
@@ -241,6 +242,7 @@ void w_reset(int enableSleep, float groundY)
     s_groundY = groundY;
     s_mExists = 0;
     s_dummyExists = 0;
+    s_eExists = 0;
     vxWorldReset();
 }
 
@@ -2384,6 +2386,376 @@ float* w_dummy_state(void)
     out[0] = (float)p.x; out[1] = (float)p.y; out[2] = (float)p.z;
     out[3] = q.v.x; out[4] = q.v.y; out[5] = q.v.z; out[6] = q.s;
     out[7] = 0.28f; out[8] = 0.42f; out[9] = 0.12f;
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// The enemy — the other machine in the arena
+//
+// Everything it is made of already exists: a torso held up by the same
+// gravity-compensated legs and inertia-derived uprighting the player's
+// machine uses, voxel armour riding its body through the grid system, and
+// punches that are momentum like every other impact in the world.
+//
+// What is new is only the will: a small state machine that walks it toward
+// the player, squares it up, telegraphs, and swings a club arm through the
+// player's torso. Strip its plate and the core underneath takes the hits;
+// enough of them and the drives cut out — the machine drops, and what is
+// left of its armour bursts off.
+// ---------------------------------------------------------------------------
+
+typedef enum { E_IDLE = 0, E_APPROACH, E_WINDUP, E_SWING, E_RECOVER, E_DEAD } EnemyState;
+
+static b3BodyId s_eTorso;
+static b3BodyId s_eArm[2];
+static b3JointId s_eShoulder[2];
+static EnemyState s_eState = E_IDLE;
+static float s_eTimer = 0.0f;
+static int s_eSwingArm = 0;
+static float s_eCoreHp = 0.0f;
+static float s_eCoreHpMax = 260.0f;
+static int s_eGrid = -1;                  // its armour plate
+static b3Vec3 s_ePlayerPos;               // told by the page each frame
+static int s_ePlayerPlateGrid = -1;
+static float s_eHitPlayerCore = 0.0f;     // momentum landed on the bare player torso
+static float s_eLastCoreHit = 0.0f;       // for the page's sound hooks
+static float s_eLastPlayerHit = 0.0f;
+
+// Height the enemy stands at, and how far away it wants to fight from.
+#define ENEMY_STAND_Y 1.15f
+// Close enough that both machines' arms genuinely reach each other: the
+// player's fist reaches 0.68 m and the enemy's club 0.60, so at 0.72 m
+// centre-to-centre the fight actually connects both ways. The first probe had
+// this at 1.05 and every player punch whiffed short.
+#define ENEMY_RANGE 0.72f
+
+WASM_EXPORT("w_enemy_create")
+int w_enemy_create(float x, float z, int material)
+{
+    b3BodyDef td = b3DefaultBodyDef();
+    td.type = b3_dynamicBody;
+    td.position.x = x; td.position.y = ENEMY_STAND_Y; td.position.z = z;
+    td.angularDamping = 4.0f;
+    td.linearDamping = 0.8f;
+    s_eTorso = b3CreateBody(s_world, &td);
+
+    b3ShapeDef tsd = b3DefaultShapeDef();
+    tsd.density = 700.0f;
+    tsd.baseMaterial.friction = 0.5f;
+    tsd.enableHitEvents = true;           // core hits are how it dies
+    b3BoxHull thull = b3MakeBoxHull(0.24f, 0.34f, 0.14f);
+    b3CreateHullShape(s_eTorso, &tsd, &thull.base);
+
+    // Club arms: single rigid limbs on spherical joints with spring drives.
+    // Not the player's two-bone rig — an opponent reads through its swings,
+    // not its elbows, and clubs keep the whole machine cheap.
+    for (int i = 0; i < 2; i++)
+    {
+        const float side = i == 0 ? -1.0f : 1.0f;
+        b3BodyDef ad = b3DefaultBodyDef();
+        ad.type = b3_dynamicBody;
+        ad.position.x = x + side * 0.32f;
+        ad.position.y = ENEMY_STAND_Y + 0.10f;
+        ad.position.z = z;
+        ad.angularDamping = 1.0f;
+        s_eArm[i] = b3CreateBody(s_world, &ad);
+
+        b3ShapeDef asd = b3DefaultShapeDef();
+        asd.density = 1100.0f;
+        asd.baseMaterial.friction = 0.5f;
+        asd.enableHitEvents = true;
+        b3BoxHull ahull = b3MakeBoxHull(0.07f, 0.07f, 0.30f);
+        b3Transform aoff = b3Transform_identity;
+        aoff.p.z = -0.30f;                // hangs forward from the shoulder
+        b3Vec3 one = { 1.0f, 1.0f, 1.0f };
+        b3CreateTransformedHullShape(s_eArm[i], &asd, &ahull.base, aoff, one);
+
+        b3SphericalJointDef sj = b3DefaultSphericalJointDef();
+        sj.base.bodyIdA = s_eTorso;
+        sj.base.bodyIdB = s_eArm[i];
+        sj.base.localFrameA = b3Transform_identity;
+        sj.base.localFrameA.p.x = side * 0.32f;
+        sj.base.localFrameA.p.y = 0.10f;
+        sj.base.localFrameB = b3Transform_identity;
+        sj.base.collideConnected = false;
+        sj.enableConeLimit = true;
+        sj.coneAngle = 1.5f;
+        sj.enableSpring = true;
+        sj.hertz = 3.0f;
+        sj.dampingRatio = 0.8f;
+        s_eShoulder[i] = b3CreateSphericalJoint(s_world, &sj);
+    }
+
+    // Its armour: a plate over the chest, facing the player side (+z).
+    b3Vec3 local = { -0.245f, -0.245f, 0.14f };
+    s_eGrid = vxBuild(s_eTorso, local, 7, 7, 1, 0.07f, material, 2);
+
+    s_eCoreHp = s_eCoreHpMax;
+    s_eState = E_APPROACH;
+    s_eTimer = 0.0f;
+    s_eSwingArm = 0;
+    s_eHitPlayerCore = 0.0f;
+    s_eExists = 1;
+    return s_eGrid;
+}
+
+// The player's machine wears a plate too, once there is someone to hit back.
+WASM_EXPORT("w_player_plate")
+int w_player_plate(int material)
+{
+    if (!s_mExists) return -1;
+    // The player's machine faces -z (the arms hang that way), so its chest —
+    // and its plate — face the enemy at -z. The first cut bolted it on the
+    // player's back.
+    b3Vec3 local = { -0.21f, -0.21f, -0.17f };
+    s_ePlayerPlateGrid = vxBuild(s_mTorso, local, 6, 6, 1, 0.07f, material, 2);
+    return s_ePlayerPlateGrid;
+}
+
+// Aim a shoulder spring so the club points from the shoulder toward a world
+// target — the swing is the spring chasing a target driven through the player.
+static void eAimArm(int i, b3Vec3 worldTarget, float hertz)
+{
+    b3WorldTransform tt = b3Body_GetTransform(s_eTorso);
+    const float side = i == 0 ? -1.0f : 1.0f;
+    b3Vec3 shoulderLocal = { side * 0.32f, 0.10f, 0.0f };
+    b3Vec3 sw = b3RotateVector(tt.q, shoulderLocal);
+    sw.x += (float)tt.p.x; sw.y += (float)tt.p.y; sw.z += (float)tt.p.z;
+
+    b3Vec3 d = { worldTarget.x - sw.x, worldTarget.y - sw.y, worldTarget.z - sw.z };
+    const float len = __builtin_sqrtf(d.x*d.x + d.y*d.y + d.z*d.z);
+    if (len < 1e-4f) return;
+    d.x /= len; d.y /= len; d.z /= len;
+
+    // World orientation whose -Z points along d (the club hangs along -Z).
+    V3 from = { sw.x, sw.y, sw.z };
+    V3 tip = { sw.x + d.x, sw.y + d.y, sw.z + d.z };
+    V3 hingeGuess = { 1.0f, 0.0f, 0.0f };
+    b3Quat qWorld = boneQuat(from, tip, hingeGuess);
+
+    // Spring target is frame B relative to frame A (torso frame, identity).
+    b3Quat rel = b3NormalizeQuat(b3MulQuat(b3Conjugate(tt.q), qWorld));
+    b3SphericalJoint_SetTargetRotation(s_eShoulder[i], rel);
+    b3SphericalJoint_SetSpringHertz(s_eShoulder[i], hertz);
+}
+
+// Once per frame, before w_step. dt at 72 Hz.
+WASM_EXPORT("w_enemy_update")
+void w_enemy_update(float px, float py, float pz, float dt)
+{
+    if (!s_eExists) return;
+    s_ePlayerPos.x = px; s_ePlayerPos.y = py; s_ePlayerPos.z = pz;
+    if (s_eState == E_DEAD) return;
+
+    b3Pos tp = b3Body_GetPosition(s_eTorso);
+    b3Vec3 tv = b3Body_GetLinearVelocity(s_eTorso);
+    const float mass = b3Body_GetMass(s_eTorso);
+
+    // Legs: hold height, close to fighting range, stop there.
+    {
+        b3Vec3 toP = { px - (float)tp.x, 0.0f, pz - (float)tp.z };
+        const float dist = __builtin_sqrtf(toP.x*toP.x + toP.z*toP.z);
+        float gx = (float)tp.x, gz = (float)tp.z;
+        if (dist > ENEMY_RANGE)
+        {
+            const float step = dist - ENEMY_RANGE;
+            gx += toP.x / dist * step;
+            gz += toP.z / dist * step;
+        }
+        float fy = mass * 9.81f + (ENEMY_STAND_Y - (float)tp.y) * 5200.0f - tv.y * 900.0f;
+        float fx = (gx - (float)tp.x) * 1400.0f - tv.x * 620.0f;
+        float fz = (gz - (float)tp.z) * 1400.0f - tv.z * 620.0f;
+        const float cap = 2600.0f;
+        const float hsq = fx*fx + fz*fz;
+        if (hsq > cap * cap) { const float k = cap / __builtin_sqrtf(hsq); fx *= k; fz *= k; }
+        b3Vec3 f = { fx, fy, fz };
+        b3Body_ApplyForceToCenter(s_eTorso, f, true);
+    }
+
+    // Stay upright, and turn to face the player (so the armour faces the fight).
+    {
+        b3Quat q = b3Body_GetRotation(s_eTorso);
+        b3Matrix3 m = b3MakeMatrixFromQuat(q);
+        b3Matrix3 Ib = b3Body_GetLocalRotationalInertia(s_eTorso);
+        const float I = (Ib.cx.x + Ib.cy.y + Ib.cz.z) / 3.0f;
+        const float w0 = 6.2831853f / 0.6f;
+        const float k = I * w0 * w0, c = 2.0f * I * w0;
+        b3Vec3 w = b3Body_GetAngularVelocity(s_eTorso);
+
+        // Pitch/roll: local up toward world up.
+        float tx = -m.cy.z * k - w.x * c;
+        float tz = m.cy.x * k - w.z * c;
+
+        // Yaw: local +z toward the player bearing.
+        b3Vec3 toP = { px - (float)tp.x, 0.0f, pz - (float)tp.z };
+        const float dl = __builtin_sqrtf(toP.x*toP.x + toP.z*toP.z);
+        float ty = -w.y * c;
+        if (dl > 0.05f)
+        {
+            const float bearing = __builtin_atan2f(toP.x / dl, toP.z / dl);
+            const float facing = __builtin_atan2f(m.cz.x, m.cz.z);
+            float err = bearing - facing;
+            while (err > 3.14159265f) err -= 6.2831853f;
+            while (err < -3.14159265f) err += 6.2831853f;
+            ty += err * k * 0.6f;
+        }
+        const float cap = 60.0f * mass;
+        const float tsq = tx*tx + ty*ty + tz*tz;
+        if (tsq > cap * cap) { const float s = cap / __builtin_sqrtf(tsq); tx *= s; ty *= s; tz *= s; }
+        b3Vec3 t = { tx, ty, tz };
+        b3Body_ApplyTorque(s_eTorso, t, true);
+    }
+
+    // The will.
+    s_eTimer += dt;
+    b3Vec3 guard = { px, py + 0.15f, pz };
+    switch (s_eState)
+    {
+        case E_APPROACH:
+        {
+            // Clubs held up in guard, tips toward the player.
+            eAimArm(0, guard, 2.5f);
+            eAimArm(1, guard, 2.5f);
+            b3Vec3 toP = { px - (float)tp.x, 0.0f, pz - (float)tp.z };
+            if (toP.x*toP.x + toP.z*toP.z < (ENEMY_RANGE + 0.15f) * (ENEMY_RANGE + 0.15f)
+                && s_eTimer > 0.8f)
+            {
+                s_eState = E_WINDUP; s_eTimer = 0.0f;
+                s_eSwingArm = 1 - s_eSwingArm;
+            }
+            break;
+        }
+        case E_WINDUP:
+        {
+            // The telegraph: the striking club draws up and back.
+            b3Vec3 up = { (float)tp.x, (float)tp.y + 0.95f, (float)tp.z };
+            eAimArm(s_eSwingArm, up, 4.5f);
+            eAimArm(1 - s_eSwingArm, guard, 2.5f);
+            if (s_eTimer > 0.45f) { s_eState = E_SWING; s_eTimer = 0.0f; }
+            break;
+        }
+        case E_SWING:
+        {
+            // Drive the club through the player's chest, hard.
+            b3Vec3 through = { px, py - 0.05f, pz };
+            eAimArm(s_eSwingArm, through, 9.0f);
+            if (s_eTimer > 0.30f) { s_eState = E_RECOVER; s_eTimer = 0.0f; }
+            break;
+        }
+        case E_RECOVER:
+        {
+            eAimArm(0, guard, 2.0f);
+            eAimArm(1, guard, 2.0f);
+            if (s_eTimer > 0.55f) { s_eState = E_APPROACH; s_eTimer = 0.4f; }
+            break;
+        }
+        default: break;
+    }
+}
+
+// After w_step: read the step's impacts for the two cores.
+WASM_EXPORT("w_enemy_post")
+void w_enemy_post(void)
+{
+    if (!s_eExists) return;
+    s_eLastCoreHit = 0.0f;
+    s_eLastPlayerHit = 0.0f;
+    if (s_eState == E_DEAD) return;
+
+    b3ContactEvents ev = b3World_GetContactEvents(s_world);
+    for (int i = 0; i < ev.hitCount; i++)
+    {
+        const b3ContactHitEvent* h = &ev.hitEvents[i];
+        b3BodyId a = b3Shape_GetBody(h->shapeIdA);
+        b3BodyId b = b3Shape_GetBody(h->shapeIdB);
+
+        // Player fist into the enemy's bare core.
+        const int aCore = B3_ID_EQUALS(a, s_eTorso), bCore = B3_ID_EQUALS(b, s_eTorso);
+        if ((aCore || bCore) && s_mExists)
+        {
+            b3BodyId other = aCore ? b : a;
+            for (int arm = 0; arm < MECH_ARMS; arm++)
+            {
+                if (B3_ID_EQUALS(other, s_mTool[arm]) || B3_ID_EQUALS(other, s_mFore[arm]))
+                {
+                    const float armMass = b3Body_GetMass(s_mUpper[arm])
+                        + b3Body_GetMass(s_mFore[arm]) + b3Body_GetMass(s_mTool[arm]);
+                    const float hit = h->approachSpeed * armMass;
+                    s_eCoreHp -= hit;
+                    if (hit > s_eLastCoreHit) s_eLastCoreHit = hit;
+                }
+            }
+        }
+
+        // Enemy club into the player's bare torso.
+        if (s_mExists)
+        {
+            const int aP = B3_ID_EQUALS(a, s_mTorso), bP = B3_ID_EQUALS(b, s_mTorso);
+            if (aP || bP)
+            {
+                b3BodyId other = aP ? b : a;
+                for (int arm = 0; arm < 2; arm++)
+                {
+                    if (B3_ID_EQUALS(other, s_eArm[arm]))
+                    {
+                        const float hit = h->approachSpeed * b3Body_GetMass(s_eArm[arm]);
+                        s_eHitPlayerCore += hit;
+                        if (hit > s_eLastPlayerHit) s_eLastPlayerHit = hit;
+                    }
+                }
+            }
+        }
+    }
+
+    if (s_eCoreHp <= 0.0f)
+    {
+        // The drives cut out. The machine drops, and what is left of its
+        // plate bursts off it.
+        s_eState = E_DEAD;
+        // Drives off: the arms go limp and the legs stop holding, so the
+        // machine drops where it stands.
+        for (int a = 0; a < 2; a++) b3SphericalJoint_SetSpringHertz(s_eShoulder[a], 0.0f);
+        if (s_eGrid >= 0 && s_vxG[s_eGrid].used)
+        {
+            VoxGrid* g = &s_vxG[s_eGrid];
+            const b3Transform t = vxPose(g);
+            for (int z = 0; z < g->n[2]; z++)
+            for (int y = 0; y < g->n[1]; y++)
+            for (int x = 0; x < g->n[0]; x++)
+            {
+                if (!vxAliveAt(g, x, y, z)) continue;
+                const b3Vec3 wc = b3TransformPoint(t, vxCellLocal(g, x, y, z));
+                vxDamageAt(g, wc.x, wc.y, wc.z, 10000.0f);
+            }
+            vxRemesh(g);
+        }
+    }
+}
+
+// [x,y,z,qx,qy,qz,qw, state, coreFrac, armL(7), armR(7), lastCoreHit,
+//  lastPlayerHit, playerCoreDamage] — everything the page draws and sounds.
+WASM_EXPORT("w_enemy_state")
+float* w_enemy_state(void)
+{
+    static float out[26];
+    if (!s_eExists) return out;
+    b3Pos p = b3Body_GetPosition(s_eTorso);
+    b3Quat q = b3Body_GetRotation(s_eTorso);
+    out[0] = (float)p.x; out[1] = (float)p.y; out[2] = (float)p.z;
+    out[3] = q.v.x; out[4] = q.v.y; out[5] = q.v.z; out[6] = q.s;
+    out[7] = (float)s_eState;
+    out[8] = s_eCoreHp > 0.0f ? s_eCoreHp / s_eCoreHpMax : 0.0f;
+    for (int i = 0; i < 2; i++)
+    {
+        b3Pos ap = b3Body_GetPosition(s_eArm[i]);
+        b3Quat aq = b3Body_GetRotation(s_eArm[i]);
+        float* o = &out[9 + i * 7];
+        o[0] = (float)ap.x; o[1] = (float)ap.y; o[2] = (float)ap.z;
+        o[3] = aq.v.x; o[4] = aq.v.y; o[5] = aq.v.z; o[6] = aq.s;
+    }
+    out[23] = s_eLastCoreHit;
+    out[24] = s_eLastPlayerHit;
+    out[25] = s_eHitPlayerCore;
     return out;
 }
 
