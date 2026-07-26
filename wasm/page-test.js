@@ -114,9 +114,14 @@ function makeSession(gl, poses) {
     requestReferenceSpace: (kind) =>
       kind === "local-floor" ? Promise.resolve({ kind }) : Promise.reject(new Error("no")),
     end() {},
+    _clock: 0,
     _pump(frame) {
+      // The harness pumps frames far faster than real time passes, which
+      // starves any page that meters its physics with an accumulator. Frames
+      // are stamped with a synthetic 72 Hz clock instead of the wall clock.
       const due = rafs.splice(0, rafs.length);
-      for (const cb of due) cb(performance.now(), frame);
+      session._clock += 1000 / 72;
+      for (const cb of due) cb(session._clock, frame);
       return due.length;
     },
   };

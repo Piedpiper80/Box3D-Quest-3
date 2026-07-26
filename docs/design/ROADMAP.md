@@ -35,6 +35,15 @@ never changes is an ordering nobody is using.
    three times in a row that rendered nothing at all and there was no way to
    know. What still needs a person in a headset is how it *feels*, and that is
    the only thing that does.
+3. **Look at it.** Nobody building this had ever rendered an image of it until
+   a playtest said it looked rudimentary — geometry and physics were verified
+   headlessly while the *look* shipped sight unseen, and an armour plate sat
+   across the player's face for a full release because no one could see it.
+   `arena.html?flat=1` runs the whole game without a headset on an ordinary
+   canvas — same engine, same shaders, scripted pilot — and the screenshot
+   loop (`scratchpad/shot.js`, Chromium) is part of every visual change:
+   render it, look at it, then ship it. The flat page also means the designer
+   can review style from a phone.
 3. **Measure before you design.** The perf HUD (Phase 0) exists so that every
    later decision is made against real numbers instead of intuition. Quest 3 is
    a fixed budget; the numbers decide the design, not the other way round.
@@ -415,6 +424,33 @@ and the bare core shows.
 That is the shape of every fight to come: armour first, then the machine
 inside. Next: the mech itself instanced (two machines in one world) and
 wearing these plates — which is Phase 4's front door.
+
+#### First playtest verdicts, and what they changed
+
+The playtest said: can't see past my own chest, feels janky, no textures. All
+three were real, and each exposed a class of defect:
+
+- **The chest chassis** was the player's own armour plate drawn in their face —
+  and worse, their own fists physically collided with it (the plate carried
+  the default collision category). Machines now have team categories — own
+  fists pass through own armour, everyone else's connect — and worn plates are
+  simulated but hidden, reported as an instrument instead. Found in the same
+  sweep: the enemy's swings had **never once landed** (its club hung along the
+  wrong axis, so its cone limit pinned it sideways — 56 m/s of chatter and
+  every swing half a metre short), and the damage the playtest saw was the
+  player's fists grinding their own plate. The club is flipped, swings drive
+  through the chest, and the fight is real both ways now.
+- **The jank** was the pages stepping physics once per display frame: a 90 Hz
+  headset ran the world 25% fast and every dropped frame stuttered it. The
+  arena meters the world with a fixed-timestep accumulator now — 72 steps a
+  second whatever the display does.
+- **No textures** became a procedural material system in the shader — wood
+  grain, stone mottle, brushed steel, floor grid, emissive — plus two-light
+  wrap lighting, specular, rim, and distance fog. No image assets anywhere.
+  The arena got its dressing the same day: destructible stone pillars (voxel
+  grids like everything else), ring glow posts, a fogged skyline, and an
+  enemy visor that burns brighter as it winds up — character and telegraph in
+  one emissive slit.
 
 #### The first fight is playable (`arena.html`) — the vertical slice
 

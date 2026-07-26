@@ -549,7 +549,7 @@ const wasi = new WASI({ version: "preview1" });
   // the plate is off; the player's hull is scored the same way.
   E.w_reset(1, 0);
   E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 1600, 4, 3, 1.5707, SHOULDER_HALF);
-  const pPlate = E.w_player_plate(2);
+  const pPlate = E.w_player_plate(1);   // stone, matched with the enemy
   const ePlate = E.w_enemy_create(0, -3.0, 1);
   const est = () => { const p = E.w_enemy_state() >>> 2; return mem().slice(p, p + 26); };
   const grid = (g) => { const p = E.w_vox_grid_stats(g) >>> 2; return mem().slice(p, p + 3); };
@@ -561,11 +561,19 @@ const wasi = new WASI({ version: "preview1" });
     E.w_mech_apply(); E.w_step(1 / 72); E.w_vox_post(); E.w_enemy_post();
   };
 
-  for (let s = 0; s < 900; s++) fstep(0.22, -0.25);
+  // Hands held wide and low — the strip measurement must not be muddied by
+  // the guard intercepting swings or the player's own fists.
+  for (let s = 0; s < 900; s++) {
+    E.w_mech_hand(0, -0.55, 0.85, -0.05, 1, 0, 0, 0, 1);
+    E.w_mech_hand(1, 0.55, 0.85, -0.05, 1, 0, 0, 0, 1);
+    E.w_mech_stand(0, CHEST, 0);
+    E.w_enemy_update(0, CHEST, 0, 1 / 72);
+    E.w_mech_apply(); E.w_step(1 / 72); E.w_vox_post(); E.w_enemy_post();
+  }
   let ev2 = est();
   check("the enemy closes to fighting range", Math.abs(ev2[2] + 0.72) < 0.25,
         `at z ${ev2[2].toFixed(2)}`);
-  check("its swings strip the player's plate", grid(pPlate)[0] < 34,
+  check("its swings strip the player's plate", grid(pPlate)[0] < 32,
         `${grid(pPlate)[0]} of 36 left`);
 
   let dead = false, punches = 0;

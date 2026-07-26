@@ -508,6 +508,7 @@ static float s_mShoulderHalf = 0.20f;   // set from the player's measured span
 // except its own category, so the arms still hit blocks, the ground and another
 // mech — they just cannot jam against their own torso.
 #define MECH_CATEGORY 0x2ull
+#define ENEMY_CATEGORY 0x4ull
 #define MECH_FILTER ((b3Filter){ .categoryBits = MECH_CATEGORY, \
                                  .maskBits = ~MECH_CATEGORY, \
                                  .groupIndex = 0 })
@@ -1674,7 +1675,7 @@ float* w_mech_lengths(void)
 // plate — no per-object tuning, just the table.
 // ---------------------------------------------------------------------------
 
-#define VOX_GRIDS 4
+#define VOX_GRIDS 8
 #define VOX_MAX 4096
 #define VOX_ROWS_MAX 512
 #define VOX_RUNS_PER_ROW 16
@@ -1704,6 +1705,7 @@ typedef struct
     float size;
     int material;
     int anchorAxis;                // cells at coord 0 on this axis are the foundation
+    unsigned long long category;   // team bits; 0 means plain scenery
     b3Vec3 local;                  // grid min corner, in the body's local space
     float hp[VOX_MAX];             // <= 0 means gone
     b3BodyId body;
@@ -1712,6 +1714,7 @@ typedef struct
     unsigned char rowDirty[VOX_ROWS_MAX];
     int alive;
     int killed;
+    int hidden;                    // simulated but not handed to the renderer
 } VoxGrid;
 static VoxGrid s_vxG[VOX_GRIDS];
 static int s_vxLastHits = 0;
@@ -1821,6 +1824,14 @@ static void vxMeshRow(VoxGrid* g, int y, int z)
     b3ShapeDef sd = b3DefaultShapeDef();
     sd.baseMaterial.friction = 0.7f;
     sd.enableHitEvents = true;
+    if (g->category)
+    {
+        // Armour belongs to a team: its own machine's fists and clubs pass
+        // through it, everyone else's connect. Without this the player's own
+        // punches battered their own chest plate on the way to the enemy.
+        sd.filter.categoryBits = g->category;
+        sd.filter.maskBits = ~g->category;
+    }
 
     int x = 0;
     while (x < g->n[0])
@@ -1851,7 +1862,8 @@ static void vxMeshRow(VoxGrid* g, int y, int z)
 // Shared construction: fill the cells and mesh them onto whatever body the
 // grid rides. Returns the handle, or -1 if there is no room.
 static int vxBuild(b3BodyId body, b3Vec3 local, int nx, int ny, int nz,
-                   float size, int material, int anchorAxis)
+                   float size, int material, int anchorAxis,
+                   unsigned long long category)
 {
     if (nx * ny * nz > VOX_MAX) return -1;
     if (ny * nz > VOX_ROWS_MAX) return -1;
@@ -1867,6 +1879,8 @@ static int vxBuild(b3BodyId body, b3Vec3 local, int nx, int ny, int nz,
     g->size = size;
     g->material = material;
     g->anchorAxis = anchorAxis;
+    g->category = category;
+    g->hidden = 0;
     g->local = local;
     g->body = body;
     g->alive = nx * ny * nz;
@@ -1897,7 +1911,7 @@ int w_vox_create(float cx, float baseY, float cz, int nx, int ny, int nz,
     bd.position.z = cz - 0.5f * nz * size;
     b3BodyId body = b3CreateBody(s_world, &bd);
     b3Vec3 zero = { 0.0f, 0.0f, 0.0f };
-    return vxBuild(body, zero, nx, ny, nz, size, material, 1);
+    return vxBuild(body, zero, nx, ny, nz, size, material, 1, 0);
 }
 
 // Spend impact damage killing cells outward from the hit cell. The point
@@ -2208,7 +2222,7 @@ static void vxFillRuns(void)
     for (int gi = 0; gi < VOX_GRIDS; gi++)
     {
         const VoxGrid* g = &s_vxG[gi];
-        if (!g->used) continue;
+        if (!g->used || g->hidden) continue;
         const b3Transform t = vxPose(g);
         const float half = 0.5f * g->size;
         const float maxHp = VOX_MATS[g->material].hp;
@@ -2307,6 +2321,17 @@ float* w_vox_stats(void)
 }
 
 // Per-grid: [alive, killed, total] — the page reports each wall separately.
+// The player's own plate is worn a hand-span from their eyes: real and
+// damageable, but drawn in their face it is a wall across the bottom of the
+// view. Hidden grids keep simulating and taking hits; they just stay out of
+// the draw list, and the page shows their state as an instrument instead.
+WASM_EXPORT("w_vox_hide")
+void w_vox_hide(int grid, int hide)
+{
+    if (grid < 0 || grid >= VOX_GRIDS) return;
+    s_vxG[grid].hidden = hide ? 1 : 0;
+}
+
 WASM_EXPORT("w_vox_grid_stats")
 float* w_vox_grid_stats(int grid)
 {
@@ -2371,7 +2396,7 @@ void w_dummy_create(float x, float z, int material)
     // the layer against the core is the foundation, so cells that lose their
     // connection to the body fall off it, wherever it is swinging.
     b3Vec3 local = { -0.28f, -0.28f, 0.12f };
-    vxBuild(s_dummyCore, local, 8, 8, 1, 0.07f, material, 2);
+    vxBuild(s_dummyCore, local, 8, 8, 1, 0.07f, material, 2, 0);
     s_dummyExists = 1;
 }
 
@@ -2443,6 +2468,8 @@ int w_enemy_create(float x, float z, int material)
     tsd.density = 700.0f;
     tsd.baseMaterial.friction = 0.5f;
     tsd.enableHitEvents = true;           // core hits are how it dies
+    tsd.filter.categoryBits = ENEMY_CATEGORY;
+    tsd.filter.maskBits = ~ENEMY_CATEGORY;
     b3BoxHull thull = b3MakeBoxHull(0.24f, 0.34f, 0.14f);
     b3CreateHullShape(s_eTorso, &tsd, &thull.base);
 
@@ -2464,9 +2491,18 @@ int w_enemy_create(float x, float z, int material)
         asd.density = 1100.0f;
         asd.baseMaterial.friction = 0.5f;
         asd.enableHitEvents = true;
+        asd.filter.categoryBits = ENEMY_CATEGORY;
+        asd.filter.maskBits = ~ENEMY_CATEGORY;
         b3BoxHull ahull = b3MakeBoxHull(0.07f, 0.07f, 0.30f);
         b3Transform aoff = b3Transform_identity;
-        aoff.p.z = -0.30f;                // hangs forward from the shoulder
+        // The club extends along its body's +z. The cone limit constrains the
+        // club's +z to stay near the torso's +z (the facing direction), so the
+        // shape must extend along +z or the limit and the shape fight: hung
+        // along -z, pointing the club at the player put its +z at 180 degrees
+        // from the cone axis — maximally outside — and the spring spent every
+        // frame pinned sideways against the limit. That was the 56 m/s of
+        // chatter and every swing whiffing half a metre short.
+        aoff.p.z = 0.30f;
         b3Vec3 one = { 1.0f, 1.0f, 1.0f };
         b3CreateTransformedHullShape(s_eArm[i], &asd, &ahull.base, aoff, one);
 
@@ -2488,7 +2524,7 @@ int w_enemy_create(float x, float z, int material)
 
     // Its armour: a plate over the chest, facing the player side (+z).
     b3Vec3 local = { -0.245f, -0.245f, 0.14f };
-    s_eGrid = vxBuild(s_eTorso, local, 7, 7, 1, 0.07f, material, 2);
+    s_eGrid = vxBuild(s_eTorso, local, 7, 7, 1, 0.07f, material, 2, ENEMY_CATEGORY);
 
     s_eCoreHp = s_eCoreHpMax;
     s_eState = E_APPROACH;
@@ -2508,7 +2544,7 @@ int w_player_plate(int material)
     // and its plate — face the enemy at -z. The first cut bolted it on the
     // player's back.
     b3Vec3 local = { -0.21f, -0.21f, -0.17f };
-    s_ePlayerPlateGrid = vxBuild(s_mTorso, local, 6, 6, 1, 0.07f, material, 2);
+    s_ePlayerPlateGrid = vxBuild(s_mTorso, local, 6, 6, 1, 0.07f, material, 2, MECH_CATEGORY);
     return s_ePlayerPlateGrid;
 }
 
@@ -2527,11 +2563,13 @@ static void eAimArm(int i, b3Vec3 worldTarget, float hertz)
     if (len < 1e-4f) return;
     d.x /= len; d.y /= len; d.z /= len;
 
-    // World orientation whose -Z points along d (the club hangs along -Z).
+    // World orientation whose +Z points along d — the club extends along +z,
+    // matching the cone. boneQuat points -Z at its tip argument, so hand it
+    // the point BEHIND the shoulder.
     V3 from = { sw.x, sw.y, sw.z };
-    V3 tip = { sw.x + d.x, sw.y + d.y, sw.z + d.z };
+    V3 back = { sw.x - d.x, sw.y - d.y, sw.z - d.z };
     V3 hingeGuess = { 1.0f, 0.0f, 0.0f };
-    b3Quat qWorld = boneQuat(from, tip, hingeGuess);
+    b3Quat qWorld = boneQuat(from, back, hingeGuess);
 
     // Spring target is frame B relative to frame A (torso frame, identity).
     b3Quat rel = b3NormalizeQuat(b3MulQuat(b3Conjugate(tt.q), qWorld));
@@ -2607,18 +2645,26 @@ void w_enemy_update(float px, float py, float pz, float dt)
     }
 
     // The will.
+    //
+    // Every target the clubs are given sits comfortably INSIDE the shoulder
+    // cone. The first cut pointed the windup straight up — exactly on the cone
+    // edge — and the spring chattered against the limit at 55 m/s of tip speed
+    // while the swing never got within half a metre of the player. Measured,
+    // not guessed: the probe tracked the tip.
     s_eTimer += dt;
-    b3Vec3 guard = { px, py + 0.15f, pz };
+    b3Vec3 toP = { px - (float)tp.x, py - (float)tp.y, pz - (float)tp.z };
+    const float pl = __builtin_sqrtf(toP.x*toP.x + toP.y*toP.y + toP.z*toP.z);
+    b3Vec3 pHat = { 1.0f, 0.0f, 0.0f };
+    if (pl > 1e-3f) { pHat.x = toP.x / pl; pHat.y = toP.y / pl; pHat.z = toP.z / pl; }
+    b3Vec3 guard = { px, py + 0.10f, pz };
     switch (s_eState)
     {
         case E_APPROACH:
         {
-            // Clubs held up in guard, tips toward the player.
             eAimArm(0, guard, 2.5f);
             eAimArm(1, guard, 2.5f);
-            b3Vec3 toP = { px - (float)tp.x, 0.0f, pz - (float)tp.z };
-            if (toP.x*toP.x + toP.z*toP.z < (ENEMY_RANGE + 0.15f) * (ENEMY_RANGE + 0.15f)
-                && s_eTimer > 0.8f)
+            const float d2 = toP.x*toP.x + toP.z*toP.z;
+            if (d2 < (ENEMY_RANGE + 0.15f) * (ENEMY_RANGE + 0.15f) && s_eTimer > 0.8f)
             {
                 s_eState = E_WINDUP; s_eTimer = 0.0f;
                 s_eSwingArm = 1 - s_eSwingArm;
@@ -2627,19 +2673,26 @@ void w_enemy_update(float px, float py, float pz, float dt)
         }
         case E_WINDUP:
         {
-            // The telegraph: the striking club draws up and back.
-            b3Vec3 up = { (float)tp.x, (float)tp.y + 0.95f, (float)tp.z };
-            eAimArm(s_eSwingArm, up, 4.5f);
+            // The telegraph: drawn up and pulled back, ~55 degrees off the
+            // cone axis — clearly readable, comfortably inside the limit.
+            b3Vec3 up = { (float)tp.x - pHat.x * 0.35f,
+                          (float)tp.y + 0.80f,
+                          (float)tp.z - pHat.z * 0.35f };
+            eAimArm(s_eSwingArm, up, 5.0f);
             eAimArm(1 - s_eSwingArm, guard, 2.5f);
             if (s_eTimer > 0.45f) { s_eState = E_SWING; s_eTimer = 0.0f; }
             break;
         }
         case E_SWING:
         {
-            // Drive the club through the player's chest, hard.
-            b3Vec3 through = { px, py - 0.05f, pz };
-            eAimArm(s_eSwingArm, through, 9.0f);
-            if (s_eTimer > 0.30f) { s_eState = E_RECOVER; s_eTimer = 0.0f; }
+            // Driven THROUGH the chest, not at it: the target sits 0.35 m past
+            // the player, so the club's equilibrium is inside them and contact
+            // is guaranteed rather than grazed.
+            b3Vec3 through = { px + pHat.x * 0.45f,
+                               py - 0.05f,
+                               pz + pHat.z * 0.45f };
+            eAimArm(s_eSwingArm, through, 10.0f);
+            if (s_eTimer > 0.40f) { s_eState = E_RECOVER; s_eTimer = 0.0f; }
             break;
         }
         case E_RECOVER:
