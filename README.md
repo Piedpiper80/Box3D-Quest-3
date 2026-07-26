@@ -7,16 +7,35 @@ Catto, creator of Box2D). This repo is the complete home for the project: a
 
 ## ▶ Play it right now — headset only, nothing to install
 
-Open **<https://piedpiper80.github.io/Box3D-Quest-3/>** in the Meta Quest
-Browser and tap **Enter VR**. Boxes tumble and bounce around your room; pull
-either trigger to throw more.
+**The game is [CORE BREAKER](https://piedpiper80.github.io/Box3D-Quest-3/arena.html).**
+Open **<https://piedpiper80.github.io/Box3D-Quest-3/arena.html>** in the Meta
+Quest Browser and tap **Enter VR**. Your arms are the machine's arms. A
+four-chapter campaign: strip the other machine's armour, smash the core
+underneath, and take the road to the next fight — through heat that cooks
+your actuators, a collapse you can crawl back from, and an ending.
 
-That build is [`docs/index.html`](docs/index.html) + [`docs/box3d.wasm`](docs/box3d.wasm):
-the **real Box3D engine compiled to WebAssembly** (~360 KB, scalar,
-single-threaded) drives the scene, with an automatic stand-in fallback if the
-wasm can't load. The engine badge on the page shows which one is running.
-Published via GitHub Pages from the `gh-pages` branch; see [`wasm/`](wasm/)
-for the C bridge, build command, and simulation test harness.
+First time: set the floor (controller on the ground, pull the trigger), then
+your arm span (arms straight out, pull the trigger) — both remembered. Raise
+both fists above your head to start each fight.
+
+The spike pages that built it are live too:
+[`mech.html`](https://piedpiper80.github.io/Box3D-Quest-3/mech.html)
+(piloting feel),
+[`drag.html`](https://piedpiper80.github.io/Box3D-Quest-3/drag.html)
+(the knuckle-haul),
+[`handtrack.html`](https://piedpiper80.github.io/Box3D-Quest-3/handtrack.html)
+(bare hands),
+[`vox.html`](https://piedpiper80.github.io/Box3D-Quest-3/vox.html)
+(the destructible wall),
+[`dummy.html`](https://piedpiper80.github.io/Box3D-Quest-3/dummy.html)
+(armour on a moving target), and the original physics hello-world at
+[`index.html`](https://piedpiper80.github.io/Box3D-Quest-3/) (tumbling
+boxes).
+
+All of it is the **real Box3D engine compiled to WebAssembly** (~360 KB,
+scalar, single-threaded) — see [`wasm/`](wasm/) for the C bridge, build
+command, and the headless test harnesses that drive every page in CI.
+Published via GitHub Pages from the `gh-pages` branch.
 
 ## The native app (this repo's C/C++ source)
 
