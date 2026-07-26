@@ -354,6 +354,58 @@ Three rules came out of it, and they apply to every joint from here on:
    target is proof of a controller adding energy, and is the single most useful
    signal found here.
 
+#### The arm is solved, not dragged — and a machine must not fight itself
+
+Dragging the far end of a jointed chain with a force and letting the joints
+resolve the rest is not how VR arms are built, and several rounds went into
+proving it. Every VR body rig solves the arm analytically: shoulder-to-wrist
+fixes the elbow bend by the law of cosines, and the one remaining freedom —
+where the elbow sits on its circle — is **chosen**, not left to chance. That
+choice is what stops the elbow pointing at the ceiling.
+
+What is deliberately *not* copied from those rigs is how the answer is applied.
+They pose the skeleton directly, which would throw away the mass, the collisions
+and the momentum this game runs on. Here the IK result is a **target**, and the
+joints' own springs drive the real bodies to it. Box3D solves those implicitly,
+which also removes the stability ceiling every hand-rolled controller in this
+project has hit.
+
+**The bug that hid behind all of it: the machine was colliding with itself.**
+`collideConnected = false` only covers the two bodies of one joint, so the
+shoulder pair was excluded and nothing else was. A folded arm pressed its own
+forearm and mount into the torso, and a contact will hold a spring off its
+target indefinitely. It presented as a spring that would not reach its target:
+9° of error in one pose, 56° in another, worse the tighter the elbow folded, with
+no joint limit binding and no controller fighting. Ruling out limits, friction,
+the aim torque and the IK itself left only "something is physically in the way".
+
+The tell was pose-dependence. A controller that is mistuned is wrong everywhere;
+a controller that is right in one pose and hopeless in another is being
+obstructed. Reaching down and away it was accurate to **1°**; folded it was 56°
+out. Everything on the machine now shares a collision category that masks itself
+out — it still hits blocks, the ground and another mech, it just cannot jam
+against its own chest.
+
+Measured after, all four weight classes:
+
+| arm | held still | while moving | punch lag | overshoot | torso shove | elbow |
+| --- | --- | --- | --- | --- | --- | --- |
+| 3.2 kg | 0.6 cm | 1.6 cm | 7.9 cm | 1.8 cm | 1.3 cm | 0° |
+| 7.3 kg | 0.6 cm | 1.8 cm | 14.5 cm | 3.0 cm | 2.3 cm | 0° |
+| 14.6 kg | 0.5 cm | 2.0 cm | 22.6 cm | 3.3 cm | 3.0 cm | 0° |
+| 25.6 kg | 0.5 cm | 2.3 cm | 28.5 cm | 3.4 cm | 3.3 cm | 0° |
+
+Held still it is at your hand whatever it weighs. Punch and a heavy arm falls
+3.6× further behind, overshoots when you stop, and drags the machine off its
+footing. Mount jitter went from 5.0°/frame to 0.31. Weight lives entirely in the
+momentum, which is what the combat design wanted all along.
+
+Box3D's joint springs are mass-normalised, so a fixed hertz would make a 3 kg
+and a 26 kg arm punch identically. Each joint's spring rate is derived from its
+own inertia against a fixed actuator stiffness instead — `k = Iω²` solved for
+ω — so a heavier limb gets a lower natural frequency for free. That is what
+being heavy means.
+
 #### Weight is momentum, not sag
 
 The round after the above shipped, the headset verdict was that the arm still

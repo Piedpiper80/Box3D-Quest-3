@@ -488,12 +488,14 @@ static b3Vec3 s_mWrist[MECH_ARMS];      // wrist offset in forearm local space
 static float s_mWristCone = 1.35f;
 static float s_mShoulderHalf = 0.20f;   // set from the player's measured span
 
-// How hard and how fast the joints drive toward the pose IK asks for.
-// The torque ceiling is the actuator's strength: it is why a heavy arm is
-// slower than a light one at the same setting.
-static float s_mDrivePeriod = 0.18f;
-static float s_mDriveZeta = 1.0f;
-static float s_mDriveTorque = 25.0f;    // N m per kg of the bone being driven
+// Every part of the machine carries this. It accepts collisions from everything
+// except its own category, so the arms still hit blocks, the ground and another
+// mech — they just cannot jam against their own torso.
+#define MECH_CATEGORY 0x2ull
+#define MECH_FILTER ((b3Filter){ .categoryBits = MECH_CATEGORY, \
+                                 .maskBits = ~MECH_CATEGORY, \
+                                 .groupIndex = 0 })
+
 static float s_mJointHertz = 4.0f;
 
 // The actuator's stiffness, in newton metres per radian.
@@ -516,6 +518,8 @@ static float s_mJointDamping = 1.0f;
 static b3Vec3 s_mIKElbow[MECH_ARMS];
 static b3Vec3 s_mIKWrist[MECH_ARMS];
 static b3Quat s_mShoulderFrame[MECH_ARMS];
+static b3Quat s_mIKUpper[MECH_ARMS];
+static b3Quat s_mIKSpringTarget[MECH_ARMS];
 static b3Vec3 s_mHandTarget[MECH_ARMS];
 static int s_mHandActive[MECH_ARMS] = {0, 0};
 static int s_mExists = 0;
@@ -567,6 +571,17 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
     b3ShapeDef tsd = b3DefaultShapeDef();
     tsd.density = density * 1.5f;   // the body outweighs the arms
     tsd.baseMaterial.friction = 0.6f;
+    // The machine does not collide with itself.
+    //
+    // This is what was pulling the arm off the pose IK asked for, and it hid
+    // very well: with the torso pinned and the arm reaching down and away the
+    // shoulder hit its target to within one degree, while a folded arm was 36
+    // to 56 degrees out — worse the tighter it folded. No joint limit was
+    // binding and no controller was fighting; the forearm and the mount were
+    // simply pressing into the torso, and a contact can hold a spring off its
+    // target all day. Only the shoulder pair had collision disabled, because
+    // that is all collideConnected does.
+    tsd.filter = MECH_FILTER;
     // Deliberately small. An earlier version was 0.52 x 0.60 x 0.32 m centred at
     // a fixed height, which swallowed the player's head.
     // Torso spans the shoulders, so it widens with the player too.
@@ -589,6 +604,7 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
         b3ShapeDef usd = b3DefaultShapeDef();
         usd.density = density;
         usd.baseMaterial.friction = 0.6f;
+        usd.filter = MECH_FILTER;
         b3BoxHull uhull = b3MakeBoxHull(thickness, thickness, upperLen * 0.5f);
         b3Transform uoff = b3Transform_identity;
         uoff.p.z = -upperLen * 0.5f;      // hangs forward from the shoulder
@@ -648,6 +664,7 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
         b3ShapeDef fsd = b3DefaultShapeDef();
         fsd.density = density;
         fsd.baseMaterial.friction = 0.6f;
+        fsd.filter = MECH_FILTER;
         b3BoxHull fhull = b3MakeBoxHull(thickness * 0.9f, thickness * 0.9f, foreLen * 0.5f);
         b3Transform foff = b3Transform_identity;
         foff.p.z = -foreLen * 0.5f;
@@ -712,6 +729,7 @@ void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
         b3ShapeDef ksd = b3DefaultShapeDef();
         ksd.density = density;
         ksd.baseMaterial.friction = 0.8f;
+        ksd.filter = MECH_FILTER;
         // The mount is part of the arm's reach, so an oversized block here
         // lengthens the whole limb. At 1.3x thickness it added 18 cm to an arm
         // that was already twice as long as it should be.
@@ -816,20 +834,9 @@ static float s_mAimMax = 12.0f;       // N m per kg of attachment
 static float s_mArmLift = 1.0f;
 
 
-// Where the elbow sits, and how firmly it stays there.
-//
-// A ball shoulder with the arm pulled by its wrist is one degree of freedom
-// short of determined: for any hand position the elbow can sit anywhere on a
-// circle around the shoulder-to-wrist line, and nothing in the physics picks a
-// spot. Measured, it sat at 167 degrees — very nearly straight up, a chicken
-// wing — and wandered over 21 degrees while the hand moved. That is the "elbows
-// bend at weird angles at weird times".
-//
-// Real arms resolve this with muscle, not with the skeleton: your elbow stays
-// low because something holds it low. This is that something.
-static float s_mSwivelPeriod = 0.35f;
-static float s_mSwivelZeta = 1.0f;
-static float s_mSwivelMax = 40.0f;    // N m per kg of arm
+// Which way round the elbow sits is no longer a controller fighting the
+// physics — the IK solve picks it directly, straight down, and the joints are
+// driven to that.
 
 // How the machine holds itself up, as a response rather than as raw gains.
 //
@@ -924,17 +931,42 @@ void w_mech_joint_spring(float stiffness, float damping)
     if (s_mExists) tuneJointSprings();
 }
 
+// Target orientation for each upper arm, and the relative rotation actually
+// handed to the shoulder spring. Comparing these against what the body does
+// separates "the spring is not reaching its target" from "the target is wrong".
+// What the joints actually ended up with, read back from the engine rather
+// than from what was asked for.
+WASM_EXPORT("w_mech_spring_state")
+float* w_mech_spring_state(void)
+{
+    static float out[4];
+    if (!s_mExists) return out;
+    out[0] = b3SphericalJoint_GetSpringHertz(s_mShoulder[0]);
+    out[1] = b3SphericalJoint_GetSpringDampingRatio(s_mShoulder[0]);
+    out[2] = b3RevoluteJoint_GetSpringHertz(s_mElbow[0]);
+    out[3] = b3SphericalJoint_IsSpringEnabled(s_mShoulder[0]) ? 1.0f : 0.0f;
+    return out;
+}
+
+WASM_EXPORT("w_mech_ik_quat")
+float* w_mech_ik_quat(void)
+{
+    static float out[MECH_ARMS * 8];
+    for (int i = 0; i < MECH_ARMS; i++)
+    {
+        out[i*8+0] = s_mIKUpper[i].v.x; out[i*8+1] = s_mIKUpper[i].v.y;
+        out[i*8+2] = s_mIKUpper[i].v.z; out[i*8+3] = s_mIKUpper[i].s;
+        out[i*8+4] = s_mIKSpringTarget[i].v.x; out[i*8+5] = s_mIKSpringTarget[i].v.y;
+        out[i*8+6] = s_mIKSpringTarget[i].v.z; out[i*8+7] = s_mIKSpringTarget[i].s;
+    }
+    return out;
+}
+
 WASM_EXPORT("w_mech_shoulder_mul")
 void w_mech_shoulder_mul(float mul)
 {
     s_mShoulderStiffMul = mul;
     if (s_mExists) tuneJointSprings();
-}
-
-WASM_EXPORT("w_mech_drive")
-void w_mech_drive(float period, float zeta, float torquePerKg)
-{
-    s_mDrivePeriod = period; s_mDriveZeta = zeta; s_mDriveTorque = torquePerKg;
 }
 
 // Where IK wants the elbow and wrist, so a pose that is merely unreachable can
@@ -949,12 +981,6 @@ float* w_mech_ik_target(void)
         out[i*6+3] = s_mIKWrist[i].x; out[i*6+4] = s_mIKWrist[i].y; out[i*6+5] = s_mIKWrist[i].z;
     }
     return out;
-}
-
-WASM_EXPORT("w_mech_swivel")
-void w_mech_swivel(float period, float zeta, float maxTorquePerKg)
-{
-    s_mSwivelPeriod = period; s_mSwivelZeta = zeta; s_mSwivelMax = maxTorquePerKg;
 }
 
 WASM_EXPORT("w_mech_lift")
@@ -1079,54 +1105,6 @@ static b3Quat boneQuat(V3 from, V3 tip, V3 hinge)
     return b3NormalizeQuat(q);
 }
 
-// Drive a body toward a world orientation with a capped torque.
-//
-// Gains come from the body's own rotational inertia and are expressed as a
-// response period and a damping ratio, because every time this file has used
-// raw numbers instead it has been unstable. The cap is what the actuator can
-// deliver: it is why a heavy arm is slower than a light one at the same
-// setting, and it is the whole weight-class mechanic.
-static void driveTo(b3BodyId body, b3BodyId reaction, b3Quat want,
-                    float period, float zeta, float maxTorque)
-{
-    b3Quat cur = b3Body_GetRotation(body);
-    if (cur.v.x*want.v.x + cur.v.y*want.v.y + cur.v.z*want.v.z + cur.s*want.s < 0.0f)
-    {
-        want = b3NegateQuat(want);
-    }
-    // err = want * conj(cur); its vector part is the rotation to apply.
-    const b3Quat err = b3MulQuat(want, b3Conjugate(cur));
-
-    b3Matrix3 Ib = b3Body_GetLocalRotationalInertia(body);
-    float I = (Ib.cx.x + Ib.cy.y + Ib.cz.z) / 3.0f;
-    if (I < 1e-4f) I = 1e-4f;
-
-    const float w0 = 6.2831853f / period;
-    const float k = I * w0 * w0;
-    const float c = 2.0f * zeta * I * w0;
-
-    b3Vec3 wB = b3Body_GetAngularVelocity(body);
-    b3Vec3 wA = b3Body_GetAngularVelocity(reaction);
-
-    float tx = err.v.x * k - (wB.x - wA.x) * c;
-    float ty = err.v.y * k - (wB.y - wA.y) * c;
-    float tz = err.v.z * k - (wB.z - wA.z) * c;
-
-    const float sq = tx*tx + ty*ty + tz*tz;
-    if (sq > maxTorque * maxTorque)
-    {
-        const float s = maxTorque / __builtin_sqrtf(sq);
-        tx *= s; ty *= s; tz *= s;
-    }
-
-    b3Vec3 t; t.x = tx; t.y = ty; t.z = tz;
-    b3Body_ApplyTorque(body, t, true);
-    // Equal and opposite into whatever it is mounted on, so the machine gets
-    // shoved by its own arm instead of the torque appearing from nowhere.
-    t.x = -tx; t.y = -ty; t.z = -tz;
-    b3Body_ApplyTorque(reaction, t, true);
-}
-
 // Set each joint's spring rate from what it actually has to swing.
 static void tuneJointSprings(void)
 {
@@ -1232,6 +1210,7 @@ static void armIK(int i)
     s_mIKWrist[i].x = W.x; s_mIKWrist[i].y = W.y; s_mIKWrist[i].z = W.z;
 
     const b3Quat qUpper = boneQuat(S, E, hinge);
+    s_mIKUpper[i] = qUpper;
     const b3Quat qFore = boneQuat(E, W, hinge);
 
     // Hand the solution to the joints as spring targets.
@@ -1240,8 +1219,8 @@ static void armIK(int i)
     // A, where A carries the tilt built into the shoulder mount, so the target
     // has to be expressed in that frame rather than in world.
     const b3Quat qFrameA = b3MulQuat(tx.q, s_mShoulderFrame[i]);
-    b3SphericalJoint_SetTargetRotation(s_mShoulder[i],
-        b3NormalizeQuat(b3MulQuat(b3Conjugate(qFrameA), qUpper)));
+    s_mIKSpringTarget[i] = b3NormalizeQuat(b3MulQuat(b3Conjugate(qFrameA), qUpper));
+    b3SphericalJoint_SetTargetRotation(s_mShoulder[i], s_mIKSpringTarget[i]);
 
     // The elbow only has one angle to be told about, and the law of cosines
     // already gave it: straight is zero, folded is negative.

@@ -216,18 +216,13 @@ const wasi = new WASI({ version: "preview1" });
     return Math.hypot(tp[0]-still[0], tp[1]-still[1], tp[2]-still[2]);
   };
   //
-  // KNOWN GAP. With the arm now solved by IK and driven through the joints'
-  // own springs, this lands anywhere between 7 cm and 22 cm depending on where
-  // the hand is — good in some poses, poor in others. Ruled out so far: joint
-  // limits (none are binding, measured), joint friction, the mount's aim
-  // torque, and the IK solution itself, which is exact to the millimetre. What
-  // is left is the shoulder and elbow springs settling on a compromise between
-  // their two targets instead of both reaching theirs, since each one's
-  // reaction loads the other.
+  // This was 7-22 cm depending on the pose until the machine stopped colliding
+  // with itself. The folded arm was pressing its own forearm and mount into the
+  // torso, and a contact holds a spring off its target indefinitely.
   for (const d of [350, 800, 1600, 2800]) {
     const e = restErrAt(d);
-    gap(`held still, the arm reaches the hand (density ${d})`, e < 0.08,
-        `${(e*100).toFixed(1)} cm short`);
+    check(`held still, the arm reaches the hand (density ${d})`, e < 0.05,
+          `${(e*100).toFixed(1)} cm short`);
   }
 
   // And it has to keep articulating at every weight. The heaviest arm used to
@@ -275,13 +270,13 @@ const wasi = new WASI({ version: "preview1" });
     }
     return peak;
   };
-  // KNOWN GAP, and a consequence of the one above: the spread is real and in
-  // the right direction, but weaker than the force-driven arm managed, because
-  // Box3D's joint springs are mass-normalised. Deriving each joint's spring
-  // rate from its own inertia restores most of it, not all.
+  // Box3D's joint springs are mass-normalised, which on its own would make a
+  // 3 kg and a 26 kg arm punch identically. Each joint's spring rate is derived
+  // from its own inertia instead, so a fixed actuator stiffness gives a heavy
+  // limb a lower natural frequency — which is what being heavy means.
   const lightLag = punchLagAt(350), heavyLag = punchLagAt(2800);
-  gap("a heavy arm is harder to throw a punch with", heavyLag > lightLag * 1.8,
-      `light ${(lightLag*100).toFixed(1)} cm behind, heavy ${(heavyLag*100).toFixed(1)} cm`);
+  check("a heavy arm is harder to throw a punch with", heavyLag > lightLag * 1.8,
+        `light ${(lightLag*100).toFixed(1)} cm behind, heavy ${(heavyLag*100).toFixed(1)} cm`);
 
   // The elbow has to sit where an elbow sits.
   //
@@ -321,10 +316,27 @@ const wasi = new WASI({ version: "preview1" });
   const swAvg = swiv.reduce((a, b) => a + b, 0) / swiv.length;
   check("the elbow stays low rather than sticking up", swAvg < 75,
         `sitting ${swAvg.toFixed(0)} deg off straight-down`);
-  // KNOWN GAP. Averaged over a reach it sits at 2-3 degrees, which is right,
-  // but the spread across a full sweep is still wide.
-  gap("the elbow does not wander", Math.max(...swiv) - Math.min(...swiv) < 60,
-      `${(Math.max(...swiv) - Math.min(...swiv)).toFixed(0)} deg of drift`);
+
+  check("the elbow does not wander", Math.max(...swiv) - Math.min(...swiv) < 60,
+        `${(Math.max(...swiv) - Math.min(...swiv)).toFixed(0)} deg of drift`);
+
+  // The machine no longer collides with itself, which must not also mean it
+  // stopped colliding with everything else.
+  E.w_reset(1, 0);
+  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 1600, 4, 3, 1.5707, SHOULDER_HALF);
+  E.w_spawn(-0.28, 1.20, -0.62, 0, 0, 0, 0.10, 0);
+  const blockAt = () => { const p = E.w_state() >>> 2, m = mem(); return [m[p], m[p+1], m[p+2]]; };
+  const wasAt = blockAt();
+  for (let s = 0; s <= 300; s++) {
+    const t = s < 100 ? 0 : Math.min(1, (s - 100) / 11);
+    const h = [-0.28, 1.20, -0.24 + (-0.66 + 0.24) * t];
+    E.w_mech_hand(0, ...h, 1, 0, 0, 0, 1);
+    E.w_mech_hand(1, -h[0], h[1], h[2], 1, 0, 0, 0, 1);
+    E.w_mech_stand(0, CHEST, 0); E.w_mech_apply(); E.w_step(1 / 72);
+  }
+  const nowAt = blockAt();
+  const knocked = Math.hypot(nowAt[0]-wasAt[0], nowAt[1]-wasAt[1], nowAt[2]-wasAt[2]);
+  check("a punch still knocks a block flying", knocked > 0.3, `moved ${(knocked*100).toFixed(0)} cm`);
 
   console.log(`\n${pass} passed, ${fail} failed, ${gaps} known gaps`);
   process.exit(fail === 0 ? 0 : 1);
