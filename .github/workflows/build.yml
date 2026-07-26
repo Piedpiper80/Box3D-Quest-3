@@ -144,6 +144,7 @@ jobs:
         run: |
           node wasm/page-test.js mech.html
           node wasm/page-test.js drag.html
+          node wasm/page-test.js handtrack.html
 
   # Rebuilds docs/box3d.wasm from wasm/bridge.c and the pinned Box3D revision,
   # and commits it back. The browser build is the only way to measure Box3D on
@@ -216,6 +217,7 @@ jobs:
           # showing nothing is caught here rather than in a headset.
           node wasm/page-test.js mech.html
           node wasm/page-test.js drag.html
+          node wasm/page-test.js handtrack.html
 
       - name: Commit if changed
         if: steps.changed.outputs.needed == 'true'

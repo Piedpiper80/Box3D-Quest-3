@@ -85,15 +85,28 @@ const quat = (x, y, z, w) => ({ x, y, z, w });
 function makeSession(gl, poses) {
   const rafs = [];
   const listeners = {};
+  const JOINTS = ["wrist", "thumb-tip", "index-finger-tip", "middle-finger-tip",
+                  "ring-finger-tip", "pinky-finger-tip"];
+  const controllerSources = poses.controllers.map((c, i) => ({
+    handedness: i === 0 ? "left" : "right",
+    gripSpace: { which: i },
+    targetRaySpace: { which: i },
+    // Driven per frame from poseAt().trigger, so the harness can work
+    // through the calibration the same way a person does.
+    gamepad: { buttons: Array.from({ length: 6 }, () => ({ pressed: false, value: 0 })) },
+  }));
+  // Bare hands: no gamepad, a joint map instead — the same swap the Quest
+  // makes when the controllers are put down.
+  const handSources = poses.controllers.map((c, i) => ({
+    handedness: i === 0 ? "left" : "right",
+    gripSpace: { which: i },
+    targetRaySpace: { which: i },
+    hand: new Map(JOINTS.map((name) => [name, { which: i, name }])),
+  }));
   const session = {
-    inputSources: poses.controllers.map((c, i) => ({
-      handedness: i === 0 ? "left" : "right",
-      gripSpace: { which: i },
-      targetRaySpace: { which: i },
-      // Driven per frame from poseAt().trigger, so the harness can work
-      // through the calibration the same way a person does.
-      gamepad: { buttons: Array.from({ length: 6 }, () => ({ pressed: false, value: 0 })) },
-    })),
+    _controllerSources: controllerSources,
+    _handSources: handSources,
+    inputSources: controllerSources,
     renderState: { baseLayer: null },
     updateRenderState(s) { if (s && s.baseLayer) session.renderState.baseLayer = s.baseLayer; },
     requestAnimationFrame(cb) { rafs.push(cb); },
@@ -123,6 +136,13 @@ function makeFrame(session, poses) {
     getPose: (space) => {
       const c = poses.controllers[space.which];
       return c ? { transform: { position: c.pos, orientation: c.q } } : null;
+    },
+    getJointPose: (jointSpace, ref) => {
+      const c = poses.controllers[jointSpace.which];
+      if (!c || !c.joints) return null;
+      const j = c.joints[jointSpace.name];
+      if (!j) return null;
+      return { transform: { position: j, orientation: quat(0, 0, 0, 1) }, radius: 0.01 };
     },
   };
 }
@@ -215,8 +235,14 @@ async function runPage(file, frames, poseAt) {
   for (let f = 0; f < frames; f++) {
     const p = poseAt(f);
     poses.head = p.head;
-    poses.controllers.forEach((c, i) => { c.pos = p.controllers[i].pos; c.q = p.controllers[i].q; });
+    poses.controllers.forEach((c, i) => {
+      c.pos = p.controllers[i].pos;
+      c.q = p.controllers[i].q;
+      c.joints = p.controllers[i].joints || null;
+    });
+    session.inputSources = p.handsMode ? session._handSources : session._controllerSources;
     session.inputSources.forEach((src) => {
+      if (!src.gamepad) return;          // bare hands have no buttons
       src.gamepad.buttons[0].pressed = !!p.trigger;
       src.gamepad.buttons[0].value = p.trigger ? 1 : 0;
       src.gamepad.buttons[1].pressed = !!p.grip;
@@ -322,12 +348,81 @@ function poseDrag(f) {
   };
 }
 
+// The bare-hands session: calibrate with controllers, put them down, punch
+// fast with a scripted mid-punch tracking dropout, pinch once to cycle the
+// material, and finish with both fists clenched.
+function mkHand(wrist, open01, pinching) {
+  // Fingertips sit ahead of the wrist when open, curled close when clenched.
+  const r = 0.05 + 0.08 * open01;
+  const joints = {
+    "wrist": wrist,
+    "index-finger-tip": vec(wrist.x + 0.01, wrist.y + 0.02, wrist.z - r),
+    "middle-finger-tip": vec(wrist.x, wrist.y + 0.02, wrist.z - r - 0.01),
+    "ring-finger-tip": vec(wrist.x - 0.01, wrist.y + 0.02, wrist.z - r),
+    "pinky-finger-tip": vec(wrist.x - 0.02, wrist.y + 0.01, wrist.z - r + 0.01),
+  };
+  joints["thumb-tip"] = pinching
+    ? vec(joints["index-finger-tip"].x + 0.01, joints["index-finger-tip"].y, joints["index-finger-tip"].z)
+    : vec(wrist.x + 0.03, wrist.y, wrist.z - 0.04);
+  return joints;
+}
+
+function poseHands(f) {
+  if (f < TPOSE_UNTIL) return pose(f);
+  if (f < 40) {
+    return {
+      head: vec(0, HEAD_Y, 0),
+      controllers: [
+        { pos: vec(-0.24, 1.15, -0.30), q: quat(0, 0, 0, 1) },
+        { pos: vec(0.24, 1.15, -0.30), q: quat(0, 0, 0, 1) },
+      ],
+      trigger: false,
+    };
+  }
+  // Controllers down, hands up.
+  const g = f - 40;
+  const mk = (side, wrist, open01, pinching, dropped) => ({
+    pos: wrist, q: quat(0, 0, 0, 1),
+    joints: dropped ? null : mkHand(wrist, open01, pinching),
+  });
+  let L = { w: vec(-0.24, 1.15, -0.32), open: 1, pinch: false };
+  let R = { w: vec(0.24, 1.15, -0.32), open: 1, pinch: false };
+  let dropR = false;
+  if (g < 60) { /* hold still, tracking settles */ }
+  else if (g < 62) { L.pinch = true; L.open = 0.6; }        // cycle material once
+  else if (g < 80) { /* recover */ }
+  else if (g < 240) {
+    // Fast alternating punches, fists clenched on the way out. The right hand
+    // loses tracking for 10 frames in the middle of a fast stroke.
+    const c = (g - 80) % 40, out = c < 20 ? c / 20 : (40 - c) / 20;
+    const side = Math.floor((g - 80) / 40) % 2;
+    if (side === 0) { R.w = vec(0.24, 1.15, -0.32 - 0.55 * out); R.open = 0.1; }
+    else { L.w = vec(-0.24, 1.15, -0.32 - 0.55 * out); L.open = 0.1; }
+    // Tracking dies mid-stroke on the punching hand — the case that decides
+    // whether fights can run on bare hands.
+    dropR = side === 0 && c >= 8 && c < 18;
+  } else {
+    // Finish: both fists up, clenched, tracked — the last report shows FIST.
+    L = { w: vec(-0.24, 1.20, -0.35), open: 0, pinch: false };
+    R = { w: vec(0.24, 1.20, -0.35), open: 0, pinch: false };
+  }
+  return {
+    head: vec(0, HEAD_Y, 0),
+    handsMode: true,
+    controllers: [
+      mk(0, L.w, L.open, L.pinch, false),
+      mk(1, R.w, R.open, R.pinch, dropR),
+    ],
+    trigger: false,
+  };
+}
+
 (async () => {
   const page = process.argv[2] || "mech.html";
   console.log(`--- ${page} ---`);
 
-  const script = page === "drag.html" ? poseDrag : pose;
-  const frames = page === "drag.html" ? 420 : 190;
+  const script = page === "drag.html" ? poseDrag : page === "handtrack.html" ? poseHands : pose;
+  const frames = page === "drag.html" ? 420 : page === "handtrack.html" ? 320 : 190;
   const r = await runPage(page, frames, script);
 
   check("no exception escaped the frame loop", r.errors.length === 0,
@@ -348,6 +443,23 @@ function poseDrag(f) {
           trav ? trav[1] + " m" : "no travelled line in the report");
     const planted = /PLANTED/.test(r.report) || (trav && parseFloat(trav[1]) > 0.35);
     check("the fists actually planted", planted, "no fist ever anchored");
+  }
+
+  if (page === "handtrack.html") {
+    const trk = r.report.match(/hand tracking: (\d+) tracked frames/);
+    check("bare hands drove the page", trk && parseInt(trk[1], 10) > 150,
+          trk ? trk[1] + " frames" : "no tracked-frames line");
+    const dr = r.report.match(/dropouts L\/R: (\d+)\/(\d+)/);
+    check("the scripted dropout was counted", dr && parseInt(dr[2], 10) >= 1,
+          dr ? `L ${dr[1]} R ${dr[2]}` : "no dropout line");
+    const fast = r.report.match(/during fast motion: (\d+)\/(\d+)/);
+    check("it was blamed on fast motion", fast && parseInt(fast[2], 10) >= 1,
+          fast ? `L ${fast[1]} R ${fast[2]}` : "no fast-motion line");
+    check("a pinch cycled the material", /arm material 3 of 4/.test(r.report),
+          (r.report.match(/arm material \d of 4/) || ["no material line"])[0]);
+    check("a clenched fist reads as FIST", /FIST/.test(r.report), "no FIST in the last report");
+    const dots = last.filter((b) => b.scale[0] < 0.012 && b.color && b.color[1] > 0.7);
+    check("fingertip markers are drawn", dots.length >= 6, `${dots.length} dots`);
   }
 
   if (page === "mech.html") {

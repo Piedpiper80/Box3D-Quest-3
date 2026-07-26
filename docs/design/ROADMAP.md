@@ -354,6 +354,19 @@ Three rules came out of it, and they apply to every joint from here on:
    target is proof of a controller adding energy, and is the single most useful
    signal found here.
 
+#### Phase 1 status: all three spikes built, awaiting headset verdicts
+
+| Spike | Page | Machine-verified | Needs from the headset |
+| --- | --- | --- | --- |
+| Piloting feel | `mech.html` | IK arm reaches the hand to ±0.5 cm at every weight; elbows human; weight = momentum | Does it *feel* like driving something massive? |
+| Arm-drag locomotion | `drag.html` | Two-fist heave moves the machine; weight grades 2.81 m → 0.53 m; comfort design is hand-caused motion | Does hauling feel physical, and is it comfortable? |
+| Hand tracking | `handtrack.html` | Bare hands drive the same machine; pinch and fist gestures read; dropouts counted and blamed on fast motion | Punch fast: are the dropout numbers and the feel good enough to fight with, or are hands for the cockpit and sandbox? |
+
+The hand-tracking verdict decides the split the roadmap anticipated ("hands for
+cockpit, sandbox and on-foot; controllers for fights" is a legitimate outcome).
+The test room comes next either way; its spawn-menu interactions are shaped by
+which input wins, so it follows the verdicts rather than preceding them.
+
 #### Locomotion: the fallback is proven, and it belongs to the crippled machine
 
 The arm-drag spike is built and machine-verified (`docs/drag.html`). Three
