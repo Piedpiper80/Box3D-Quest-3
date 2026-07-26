@@ -46,8 +46,8 @@
           your arm span (arms straight out, pull trigger). Both are remembered.</li>
       <li><strong>Raise both fists above your head</strong> to start the fight — and to rematch.</li>
       <li>The enemy telegraphs: a club drawn up high is about to come down.
-          <strong>Its armour is stone; yours is steel.</strong> Punch its plate off, then hit the
-          dark core underneath. It is doing the same to you.</li>
+          You both wear stone plate — your edge is that you can dodge and it cannot. Punch its
+          plate off, then hit the dark core underneath. It is doing the same to you.</li>
       <li>Press <strong>A</strong> between fights to change your arm weight. Heavy arms hit far
           harder and lumber; light arms dance and sting.</li>
       <li>You'll hear the fight — every impact is sounded and felt (haptics) by how hard it landed.
@@ -106,16 +106,46 @@
   var prog = gl.createProgram();
   gl.attachShader(prog, sh(gl.VERTEX_SHADER,
     "#version 300 es\nlayout(location=0) in vec3 aPos;layout(location=1) in vec3 aNrm;" +
-    "uniform mat4 uVP;uniform mat4 uM;out vec3 vN;" +
-    "void main(){vN=mat3(uM)*aNrm;gl_Position=uVP*uM*vec4(aPos,1.0);}"));
+    "uniform mat4 uVP;uniform mat4 uM;out vec3 vN;out vec3 vW;" +
+    "void main(){vN=mat3(uM)*aNrm;vec4 w=uM*vec4(aPos,1.0);vW=w.xyz;gl_Position=uVP*w;}"));
   gl.attachShader(prog, sh(gl.FRAGMENT_SHADER,
-    "#version 300 es\nprecision mediump float;in vec3 vN;uniform vec3 uC;out vec4 o;" +
-    "void main(){vec3 n=normalize(vN);float d=max(dot(n,normalize(vec3(0.4,1.0,0.3))),0.0);" +
-    "o=vec4(uC*(0.4+0.7*d),1.0);}"));
+    "#version 300 es\nprecision mediump float;in vec3 vN;in vec3 vW;" +
+    "uniform vec3 uC;uniform float uMat;uniform vec3 uEye;out vec4 o;" +
+    // cheap value noise from a hash — every material's grain comes from this
+    "float h(vec3 p){return fract(sin(dot(p,vec3(127.1,311.7,74.7)))*43758.5453);}" +
+    "float vn(vec3 p){vec3 i=floor(p);vec3 f=fract(p);f=f*f*(3.0-2.0*f);" +
+    "float a=mix(h(i),h(i+vec3(1,0,0)),f.x);float b=mix(h(i+vec3(0,1,0)),h(i+vec3(1,1,0)),f.x);" +
+    "float c=mix(h(i+vec3(0,0,1)),h(i+vec3(1,0,1)),f.x);float d=mix(h(i+vec3(0,1,1)),h(i+vec3(1,1,1)),f.x);" +
+    "return mix(mix(a,b,f.y),mix(c,d,f.y),f.z);}" +
+    "void main(){" +
+    "vec3 n=normalize(vN);vec3 base=uC;float rough=0.75;float spec=0.15;" +
+    "int m=int(uMat+0.5);" +
+    "if(m==1){float ring=0.5+0.5*sin((vW.x*2.1+vW.y*0.4)*22.0+vn(vW*9.0)*3.0);" +
+    "  base*=0.82+0.20*ring;base*=0.9+0.2*vn(vW*33.0);rough=0.9;spec=0.05;}" +          // wood
+    "else if(m==2){base*=0.78+0.36*vn(vW*17.0);base*=0.92+0.12*vn(vW*61.0);rough=0.85;spec=0.08;}" + // stone
+    "else if(m==3){float brush=0.5+0.5*sin(vW.y*640.0+vn(vW*11.0)*5.0);" +
+    "  base*=0.94+0.045*brush;base*=0.92+0.10*vn(vW*29.0);spec=0.75;rough=0.30;}" +                                   // steel
+    "else if(m==4){vec2 g=abs(fract(vW.xz*1.0)-0.5);float line=smoothstep(0.485,0.5,max(g.x,g.y));" +
+    "  base*=0.85+0.30*vn(vW*5.0);base=mix(base,base*1.9,line*0.5);rough=0.9;spec=0.05;}" + // floor
+    "else if(m==5){o=vec4(uC,1.0);return;}" +                                            // emissive
+    "else{base*=0.90+0.16*vn(vW*23.0);spec=0.35;rough=0.5;}" +                           // hull
+    "vec3 L1=normalize(vec3(0.45,1.0,0.35));vec3 L2=normalize(vec3(-0.6,0.3,-0.5));" +
+    "float d1=max(dot(n,L1),0.0);float d2=max(dot(n,L2),0.0)*0.35;" +
+    "float wrap=0.5+0.5*dot(n,L1);" +
+    "vec3 V=normalize(uEye-vW);vec3 H=normalize(L1+V);" +
+    "float sp=pow(max(dot(n,H),0.0),mix(64.0,8.0,rough))*spec;" +
+    "float rim=pow(1.0-max(dot(n,V),0.0),3.0)*0.12;" +
+    "vec3 col=base*(0.30+0.55*d1+0.18*d2+0.12*wrap)+vec3(sp)+vec3(rim);" +
+    "float fog=clamp(length(uEye-vW)/26.0,0.0,1.0);fog*=fog;" +
+    "col=mix(col,vec3(0.055,0.075,0.11),fog);" +
+    "o=vec4(col,1.0);}"));
   gl.linkProgram(prog);
   var uVP = gl.getUniformLocation(prog, "uVP");
   var uM  = gl.getUniformLocation(prog, "uM");
   var uC  = gl.getUniformLocation(prog, "uC");
+  var uMat = gl.getUniformLocation(prog, "uMat");
+  var uEye = gl.getUniformLocation(prog, "uEye");
+  var eyePos = [0, 1.6, 0];
 
   var V = [
      1,-1,-1,1,0,0, 1,-1,1,1,0,0, 1,1,1,1,0,0, 1,1,-1,1,0,0,
@@ -138,15 +168,119 @@
 
   function draw(vp, items) {
     gl.useProgram(prog); gl.uniformMatrix4fv(uVP, false, vp); gl.bindVertexArray(vao);
+    gl.uniform3fv(uEye, eyePos);
     for (var i = 0; i < items.length; i++) {
       gl.uniformMatrix4fv(uM, false, items[i].m);
       gl.uniform3fv(uC, items[i].c);
+      gl.uniform1f(uMat, items[i].mat || 0);
       gl.drawElements(gl.TRIANGLES, I.length, gl.UNSIGNED_SHORT, 0);
     }
     gl.bindVertexArray(null);
   }
 
-  if (!navigator.xr) { setStatus("No WebXR. Open this in the Meta Quest Browser.", true); }
+  // --- flat preview -----------------------------------------------------------
+  // ?flat=1 runs the whole game without a headset: same engine, same shaders,
+  // same fight, drawn to an ordinary canvas from a fixed camera with a
+  // scripted pilot. It exists so the game's look can be SEEN — screenshotted,
+  // reviewed, improved — without putting a headset on. The playtest feedback
+  // that forced it: nobody building this had ever actually looked at it.
+  var FLAT = typeof location !== "undefined" && /[?&]flat=1/.test(location.search);
+  if (FLAT) {
+    canvas.width = 1280; canvas.height = 720;
+    canvas.style.cssText = "width:100%;max-width:960px;border-radius:12px;display:block;margin:0 0 16px";
+    if (document.querySelector) document.querySelector(".wrap").insertBefore(canvas, document.querySelector(".card"));
+    try {
+      localStorage.setItem("box3d.floorY", "0");
+      localStorage.setItem("box3d.armSpan", "1.75");
+    } catch (e) {}
+  }
+
+  function flatStart() {
+    floorY = 0; armSpan = 1.75; sizeArm();
+    var t0 = null, fakeT = 0;
+    var perspM = (function () {
+      var f = 1 / Math.tan(0.5 * 1.05), a = canvas.width / canvas.height;
+      var n = 0.05, fa2 = 40;
+      return new Float32Array([f/a,0,0,0, 0,f,0,0, 0,0,(fa2+n)/(n-fa2),-1, 0,0,2*fa2*n/(n-fa2),0]);
+    })();
+    function lookAt(e, c) {
+      var zx=e[0]-c[0], zy=e[1]-c[1], zz=e[2]-c[2];
+      var zl=Math.hypot(zx,zy,zz); zx/=zl; zy/=zl; zz/=zl;
+      var xx=zz*0-0*zy, xy=0*zx-1*zz, xz=1*zy-zx*0;   // up x z
+      xx=-zy*0+1*zz*0; // recompute properly below
+      xx = (1*zz - 0*zy); xy = (0*zx - 0*zz); xz = (0*zy - 1*zx);
+      // x = normalize(cross(up, z)), up=(0,1,0)
+      xx = zz; xy = 0; xz = -zx;
+      var xl=Math.hypot(xx,xy,xz)||1; xx/=xl; xy/=xl; xz/=xl;
+      var yx=zy*xz-zz*xy, yy=zz*xx-zx*xz, yz=zx*xy-zy*xx;
+      return new Float32Array([
+        xx,yx,zx,0, xy,yy,zy,0, xz,yz,zz,0,
+        -(xx*e[0]+xy*e[1]+xz*e[2]), -(yx*e[0]+yy*e[1]+yz*e[2]), -(zx*e[0]+zy*e[1]+zz*e[2]), 1]);
+    }
+    // Scripted pilot: fists up to start, guard, then steady punching.
+    function pilot(tS) {
+      var L = { x:-0.24, y:1.15, z:-0.30 }, R = { x:0.24, y:1.15, z:-0.30 };
+      if (tS > 1.0 && tS < 2.2) { L.y = R.y = 1.80; L.z = R.z = -0.10; }
+      else if (tS >= 3.0) {
+        var c = (tS - 3.0) % 0.9, out = c < 0.45 ? c/0.45 : (0.9-c)/0.45;
+        R = { x: 0.08, y: 1.10, z: -0.22 - 0.48*out };
+      }
+      return [L, R];
+    }
+    var fakeSpaces = [{ i: 0 }, { i: 1 }];
+    var fakeSources = fakeSpaces.map(function (sp2, i) {
+      return { handedness: i ? "right" : "left", gripSpace: sp2, targetRaySpace: sp2,
+               gamepad: { buttons: [ {pressed:false,value:0},{pressed:false,value:0},
+                                     {pressed:false,value:0},{pressed:false,value:0},
+                                     {pressed:false,value:0} ] } };
+    });
+    session = {
+      renderState: { baseLayer: { framebuffer: null,
+        getViewport: function () { return { x:0, y:0, width: canvas.width, height: canvas.height }; } } },
+      inputSources: fakeSources,
+      requestAnimationFrame: function (cb) { requestAnimationFrame(function (tt) { cb(tt, fakeFrame); }); },
+      addEventListener: function () {},
+    };
+    var hands = [{x:-0.24,y:1.15,z:-0.30},{x:0.24,y:1.15,z:-0.30}];
+    var fakeFrame = {
+      getViewerPose: function () {
+        var tS = fakeT;
+        // Camera: over the pilot's shoulder, looking at the fight.
+        var eye = [0.55, 1.75, 0.85], at = [0, 1.1, -1.0];
+        var vm2 = lookAt(eye, at);
+        eyePos = eye;
+        return { transform: { position: { x: 0, y: 1.62, z: 0 } },
+                 views: [{ projectionMatrix: perspM, transform: { inverse: { matrix: vm2 } } }] };
+      },
+      getPose: function (sp2) {
+        var h = hands[sp2.i];
+        return { transform: { position: { x: h.x, y: h.y, z: h.z },
+                              orientation: { x: 0, y: 0, z: 0, w: 1 } } };
+      },
+    };
+    refSpace = { kind: "flat" }; spaceKind = "flat"; floorReal = true;
+    var drive = function (tt, frame) {
+      fakeT = tt / 1000;                 // real seconds — frame rate free
+      var ph = pilot(fakeT);
+      hands[0] = ph[0]; hands[1] = ph[1];
+      onFrame(tt, fakeFrame);
+    };
+    session.requestAnimationFrame = function (cb) {
+      requestAnimationFrame(function (tt) { drive(tt, fakeFrame); });
+    };
+    setStatus("Flat preview running.");
+    drive(0, fakeFrame);
+  }
+
+  if (FLAT) {
+    enterBtn.disabled = false; enterBtn.textContent = "Preview running";
+    setStatus("Flat preview: same game, no headset.");
+    // wait for the wasm, then go
+    var flatWait = setInterval(function () {
+      if (E) { clearInterval(flatWait); flatStart(); }
+    }, 60);
+  }
+  else if (!navigator.xr) { setStatus("No WebXR. Open this in the Meta Quest Browser.", true); }
   else navigator.xr.isSessionSupported("immersive-vr").then(function (ok) {
     if (ok) { enterBtn.disabled = false; enterBtn.textContent = "Enter VR"; setStatus("Ready."); }
     else setStatus("WebXR present but no VR device.", true);
@@ -255,7 +389,7 @@
   // CALIBRATE is implicit (floor/span). READY waits for fists-up. FIGHT runs
   // the enemy. WON/LOST hold until fists-up rematches.
   var match = "READY";
-  var fistTimer = 0, endTimer = 0;
+  var fistTimer = 0, endTimer = 0, frameDt = 1 / 72;
   var playerCoreLimit = 130;         // momentum the bare hull can take
   var enemyGrid = -1, playerGrid = -1;
   var prevStats = null, prevChunks = 0, prevEnemy = null;
@@ -381,15 +515,18 @@
     var L = E.w_mech_lengths() >>> 2, lf = new Float32Array(E.memory.buffer);
     segLen = [lf[L], lf[L + 1], lf[L + 2]];
     // You wear steel; it wears stone. It starts across the arena.
-    playerGrid = E.w_player_plate(2);
+    playerGrid = E.w_player_plate(1);   // matched stone — your edge is skill
+    E.w_vox_hide(playerGrid, 1);        // simulated, damageable, NOT in your face
     enemyGrid = E.w_enemy_create(hx, hz - 3.2, 1);
+    // Four stone pillars: cover, scenery, and something to wreck when the
+    // fight drifts into them. Real voxel grids like everything else.
+    E.w_vox_create(hx - 2.1, floorY, hz - 2.1, 4, 16, 4, 0.10, 1);
+    E.w_vox_create(hx + 2.1, floorY, hz - 2.1, 4, 16, 4, 0.10, 1);
+    E.w_vox_create(hx - 2.1, floorY, hz + 1.4, 4, 16, 4, 0.10, 1);
+    E.w_vox_create(hx + 2.1, floorY, hz + 1.4, 4, 16, 4, 0.10, 1);
     match = "READY";
     prevStats = null; prevChunks = 0; prevEnemy = null;
     endTimer = 0;
-    // Blocks at arm's length so a punch lands without stepping forward.
-    for (var b = 0; b < 6; b++) {
-      E.w_spawn(hx, floorY + 0.11 + b * 0.21, hz - 0.7, 0, 0, 0, 0.10, b % 6);
-    }
     built = true;
   }
 
@@ -419,15 +556,29 @@
     setStatus("Broke in the frame loop: " + msg, true);
   }
 
+  // Fixed timestep with an accumulator. The old pages stepped the physics
+  // once per display frame, so a 90 or 120 Hz headset ran the world fast and
+  // every dropped frame stuttered it — that is the jank a playtest called
+  // out. Time now comes from the clock: however often the display refreshes,
+  // the world advances at exactly 72 steps a second, catching up by at most
+  // three steps after a hitch.
+  var lastT = 0, acc = 0;
+  var STEP = 1 / 72;
+
   function onFrame(t, frame) {
     session.requestAnimationFrame(onFrame);
     var layer = session.renderState.baseLayer;
     gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
-    gl.clearColor(0.03, 0.04, 0.08, 1);
+    gl.clearColor(0.045, 0.06, 0.095, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     var pose = frame.getViewerPose(refSpace);
     if (!pose) return;
+    eyePos = [pose.transform.position.x, pose.transform.position.y, pose.transform.position.z];
+    var dtMs = lastT ? Math.min(t - lastT, 100) : STEP * 1000;
+    lastT = t;
+    frameDt = dtMs / 1000;
+    acc = Math.min(acc + dtMs / 1000, STEP * 3);
 
     var items = [];
     try { simulate(frame, pose, items); }
@@ -590,27 +741,31 @@
     if (E && built) {
       headY = hp.y;
       E.w_mech_stand(hp.x, chestY(), hp.z);
-      if (match === "FIGHT") {
-        var msP = E.w_mech_state() >>> 2, fP0 = new Float32Array(E.memory.buffer);
-        E.w_enemy_update(fP0[msP], fP0[msP+1], fP0[msP+2], 1/72);
+      while (acc >= STEP) {
+        acc -= STEP;
+        if (match === "FIGHT") {
+          var msP = E.w_mech_state() >>> 2, fP0 = new Float32Array(E.memory.buffer);
+          E.w_enemy_update(fP0[msP], fP0[msP+1], fP0[msP+2], STEP);
+        }
+        E.w_mech_apply();
+        E.w_step(STEP);
+        E.w_vox_post();
+        E.w_enemy_post();
       }
-      E.w_mech_apply();
-      E.w_step(1 / 72);
-      E.w_vox_post();
-      E.w_enemy_post();
 
       // Seven bodies, seven floats each: torso, then upper / forearm /
       // attachment for the left arm, then the same three for the right.
       var ms = E.w_mech_state() >>> 2, fa = new Float32Array(E.memory.buffer);
 
-      // Drawn at the engine's own half-extents. It was being drawn bigger than
-      // the body it stands for, so the box you could see was not the box things
-      // collided with.
-      items.push({ m: trs([fa[ms], fa[ms+1], fa[ms+2]],
-                          [fa[ms+3], fa[ms+4], fa[ms+5], fa[ms+6]], TORSO_HALF),
-                   c: [0.32, 0.36, 0.44] });
+      // The pilot sits inside the machine, so the machine's own torso is not
+      // drawn — from the cockpit it was a wall across the bottom of the view,
+      // which a playtest called out immediately. Your arms are your body.
 
-      var armCol = [[0.35,0.65,0.95],[0.95,0.55,0.25]];
+      // Gunmetal, not toy colours — seen in the first screenshots the old
+      // blue and orange read as plastic. A thin tint difference survives on
+      // the joints so left and right still read apart.
+      var armCol = [[0.40,0.44,0.54],[0.46,0.44,0.50]];
+      var armMat = 3;
       for (var aI = 0; aI < 2; aI++) {
         var col = armCol[aI], dim = [col[0]*0.75, col[1]*0.75, col[2]*0.75];
         // Stride three, not two. Adding the attachment took the state from five
@@ -618,17 +773,21 @@
         // from the left attachment and the right upper arm — the wrong bodies
         // entirely, in the wrong places.
         var up = ms + (1 + aI*3)*7, fo = ms + (2 + aI*3)*7, to = ms + (3 + aI*3)*7;
-        items.push(limbItem(fa, up, segLen[0], THICK, col));
-        items.push(limbItem(fa, fo, segLen[1], THICK*0.9, dim));
+        var liU = limbItem(fa, up, segLen[0], THICK, col); liU.mat = armMat; items.push(liU);
+        var liF = limbItem(fa, fo, segLen[1], THICK*0.9, dim); liF.mat = armMat; items.push(liF);
         // The attachment. A blunt block for now; a sword or a gripper bolts on
         // in its place.
-        items.push(limbItem(fa, to, segLen[2] * 2, segLen[2], [0.86,0.88,0.92]));
+        var liT = limbItem(fa, to, segLen[2] * 2, segLen[2], [0.86,0.88,0.92]); liT.mat = 3; items.push(liT);
         // Dark blocks on the shoulder, elbow and wrist, so the joints are
         // things you can see rather than guess at from where two boxes meet.
         items.push({ m: trs([fa[up], fa[up+1], fa[up+2]], [0,0,0,1], THICK*1.15), c: [0.15,0.17,0.23] });
         items.push({ m: trs([fa[fo], fa[fo+1], fa[fo+2]], [0,0,0,1], THICK*1.05), c: [0.15,0.17,0.23] });
         items.push({ m: trs([fa[to], fa[to+1], fa[to+2]], [0,0,0,1], THICK*0.85), c: [0.15,0.17,0.23] });
       }
+
+      // ---- the arena floor: the world has a ground now ----
+      items.push({ m: trs([hpBase.x, floorY - 0.06, hpBase.z], [0,0,0,1], [7.5, 0.06, 7.5]),
+                   c: [0.16, 0.185, 0.235], mat: 4 });
 
       // ---- worn plates and anything torn off them ----
       var MATC = [[0.55,0.42,0.26], [0.56,0.57,0.62], [0.62,0.66,0.74]];
@@ -640,7 +799,8 @@
         items.push({ m: trs([fbA[roA], fbA[roA+1], fbA[roA+2]],
                             [fbA[roA+3], fbA[roA+4], fbA[roA+5], fbA[roA+6]],
                             [fbA[roA+7], fbA[roA+8], fbA[roA+9]]),
-                     c: fbA[roA+10] > 0.5 ? [0.80, 0.44, 0.24] : mcA });
+                     c: fbA[roA+10] > 0.5 ? [0.80, 0.44, 0.24] : mcA,
+                     mat: (fbA[roA+11] | 0) + 1 });
       }
       var cn2 = E.w_vox_chunk_box_count(), cp2 = E.w_vox_chunk_boxes() >>> 2;
       fbA = new Float32Array(E.memory.buffer);
@@ -650,7 +810,8 @@
         items.push({ m: trs([fbA[coA], fbA[coA+1], fbA[coA+2]],
                             [fbA[coA+3], fbA[coA+4], fbA[coA+5], fbA[coA+6]],
                             [fbA[coA+7], fbA[coA+8], fbA[coA+9]]),
-                     c: [ccA[0]*0.85, ccA[1]*0.85, ccA[2]*0.85] });
+                     c: [ccA[0]*0.85, ccA[1]*0.85, ccA[2]*0.85],
+                     mat: (fbA[coA+10] | 0) + 1 });
       }
 
       // ---- the enemy ----
@@ -666,9 +827,26 @@
       for (var ai2 = 0; ai2 < 2; ai2++) {
         var ao = ep + 9 + ai2*7;
         var warn = (eState === 2 || eState === 3);
-        items.push(limbItem(ef, ao, 0.60, 0.07,
-          warn ? [0.95, 0.35, 0.22] : [0.35, 0.33, 0.40]));
+        var li2 = limbItem(ef, ao, 0.60, 0.07,
+          warn ? [0.95, 0.35, 0.22] : [0.35, 0.33, 0.40]);
+        li2.mat = warn ? 5 : 0;
+        items.push(li2);
       }
+      // Its face: an emissive visor slit that is also a telegraph — it burns
+      // brighter in the instant before a swing — and dies with the machine.
+      (function () {
+        var q = [ef[ep+3], ef[ep+4], ef[ep+5], ef[ep+6]];
+        var vz = 0.15, vy = 0.20;
+        var tx3 = 2*(q[1]*vz), ty3 = 2*(-q[0]*vz);
+        var vx2 = ef[ep] + q[3]*tx3 + (q[1]*0 - q[2]*ty3);
+        var vy2 = ef[ep+1] + vy + q[3]*ty3 + (q[2]*tx3 - q[0]*0);
+        var vz2 = ef[ep+2] + vz + (q[0]*ty3 - q[1]*tx3);
+        var vc = eState === 5 ? [0.12,0.12,0.14]
+               : (eState === 2 || eState === 3) ? [1.0,0.42,0.18]
+               : [0.85,0.20,0.16];
+        items.push({ m: trs([vx2, vy2, vz2], q, [0.13, 0.025, 0.02]),
+                     c: vc, mat: eState === 5 ? 0 : 5 });
+      })();
 
       // ---- the wearable state, read as deltas for sound and haptics ----
       var vs0 = E.w_vox_stats() >>> 2, vf0 = new Float32Array(E.memory.buffer);
@@ -728,36 +906,47 @@
           match = "LOST"; endTimer = 0; sting(false);
         }
       } else if (match === "WON" || match === "LOST") {
-        endTimer += 1/72;
+        endTimer += frameDt;
         if (endTimer > 2.0) {
-          fistTimer = fistsUp ? fistTimer + 1/72 : 0;
+          fistTimer = fistsUp ? fistTimer + frameDt : 0;
           if (fistTimer > 0.9) { built = false; fistTimer = 0; }
         }
       }
 
       // ---- arena dressing ----
-      // platform ring: a rim of low blocks marking the fight circle
+      // glow posts marking the ring, and a far skyline swallowed by the fog
       for (var rI = 0; rI < 14; rI++) {
         var ang = rI / 14 * Math.PI * 2;
-        items.push({ m: trs([hpBase.x + Math.cos(ang) * 3.4, floorY + 0.05,
-                             hpBase.z + Math.sin(ang) * 3.4], [0,0,0,1], [0.10, 0.05, 0.10]),
-                     c: match === "WON" ? [0.25,0.75,0.40]
-                       : match === "LOST" ? [0.75,0.28,0.22] : [0.30,0.34,0.46] });
+        items.push({ m: trs([hpBase.x + Math.cos(ang) * 3.4, floorY + 0.22,
+                             hpBase.z + Math.sin(ang) * 3.4], [0,0,0,1], [0.035, 0.22, 0.035]),
+                     c: match === "WON" ? [0.25,0.85,0.42]
+                       : match === "LOST" ? [0.85,0.25,0.20] : [0.28,0.45,0.75], mat: 5 });
+      }
+      for (var kI = 0; kI < 9; kI++) {
+        var ka = kI / 9 * Math.PI * 2 + 0.35;
+        var kh = 1.6 + ((kI * 37) % 5) * 0.9;
+        items.push({ m: trs([hpBase.x + Math.cos(ka) * 14, floorY + kh,
+                             hpBase.z + Math.sin(ka) * 14], [0,0,0,1], [1.4, kh, 1.2]),
+                     c: [0.10, 0.12, 0.17], mat: 0 });
       }
       // verdict pillar
       if (match === "WON" || match === "LOST") {
         items.push({ m: trs([ef[ep], floorY + 1.5, ef[ep+2]], [0,0,0,1], [0.05, 1.5, 0.05]),
-                     c: match === "WON" ? [0.30,0.95,0.45] : [0.95,0.30,0.22] });
+                     c: match === "WON" ? [0.30,0.95,0.45] : [0.95,0.30,0.22], mat: 5 });
       }
-      // enemy status pips: its plate first, its core once bared
+      // enemy status pips: its plate first, its core once bared. The stats
+      // export reuses one static buffer, so the values are copied out before
+      // anyone calls it again — reading lazily showed the PLAYER's numbers on
+      // the enemy's line.
       var eg2 = E.w_vox_grid_stats(enemyGrid) >>> 2, egf = new Float32Array(E.memory.buffer);
-      var plateFrac = egf[eg2+2] > 0 ? egf[eg2] / egf[eg2+2] : 0;
+      var ePlateAlive = egf[eg2], ePlateTotal = egf[eg2+2];
+      var plateFrac = ePlateTotal > 0 ? ePlateAlive / ePlateTotal : 0;
       for (var pI = 0; pI < 8; pI++) {
         var lit = (plateFrac > 0.06) ? (pI / 8 < plateFrac) : (pI / 8 < coreFrac);
         items.push({ m: trs([ef[ep] - 0.28 + pI * 0.08, ef[ep+1] + 0.62, ef[ep+2]],
                             [0,0,0,1], 0.022),
                      c: lit ? ((plateFrac > 0.06) ? [0.55,0.58,0.66] : [0.92,0.35,0.25])
-                            : [0.16,0.17,0.20] });
+                            : [0.16,0.17,0.20], mat: 5 });
       }
 
       var n = E.w_count(), sp3 = E.w_state() >>> 2;
@@ -779,7 +968,7 @@
       lines.push("match: " + match + (match === "READY" ? "  — RAISE BOTH FISTS TO FIGHT" :
                  (match === "WON" || match === "LOST") ? "  — fists up to rematch" : ""));
       lines.push("enemy: " + NAMES[ef ? ef[ep+7] : 0] + "   its plate " +
-                 (typeof egf !== "undefined" ? egf[eg2] + "/" + egf[eg2+2] : "-") +
+                 ePlateAlive + "/" + ePlateTotal +
                  "   its core " + Math.round((ef ? ef[ep+8] : 1) * 100) + "%");
       lines.push("you: plate " + pf3[pg3] + "/" + pf3[pg3+2] + "   hull damage " +
                  Math.round(ef ? ef[ep+25] : 0) + " of " + playerCoreLimit);
