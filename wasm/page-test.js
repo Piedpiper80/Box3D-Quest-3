@@ -442,10 +442,10 @@ function posePunch(f) {
 
   const script = page === "drag.html" ? poseDrag
                : page === "handtrack.html" ? poseHands
-               : page === "vox.html" ? posePunch : pose;
+               : page === "vox.html" || page === "dummy.html" ? posePunch : pose;
   const frames = page === "drag.html" ? 420
                : page === "handtrack.html" ? 320
-               : page === "vox.html" ? 360 : 190;
+               : page === "vox.html" || page === "dummy.html" ? 360 : 190;
   const r = await runPage(page, frames, script);
 
   check("no exception escaped the frame loop", r.errors.length === 0,
@@ -466,6 +466,17 @@ function posePunch(f) {
           trav ? trav[1] + " m" : "no travelled line in the report");
     const planted = /PLANTED/.test(r.report) || (trav && parseFloat(trav[1]) > 0.35);
     check("the fists actually planted", planted, "no fist ever anchored");
+  }
+
+  if (page === "dummy.html") {
+    const plate = r.report.match(/plate: (\d+) of 64/);
+    check("the plate lost cells to the punches", plate && parseInt(plate[1], 10) < 60,
+          plate ? plate[1] + " left" : "no plate line in the report");
+    const deb = r.report.match(/debris: (\d+)/);
+    check("the shed cells are debris", deb && parseInt(deb[1], 10) >= 3,
+          deb ? deb[1] + " cubes" : "no debris line");
+    const core = last.filter((b) => b.color && b.color[0] < 0.3 && b.scale[1] > 0.3);
+    check("the bare core is drawn", core.length >= 1, `${core.length} found`);
   }
 
   if (page === "vox.html") {

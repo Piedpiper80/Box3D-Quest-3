@@ -506,6 +506,42 @@ const wasi = new WASI({ version: "preview1" });
   for (let i = 0; i < E.w_count(); i++) if (!Number.isFinite(vf[vp + i * 9])) vbad++;
   check("rubble has no NaNs", vbad === 0, `${vbad} bad`);
 
+  // --- armour on a moving body (the dummy) ---
+  //
+  // A grid riding a dynamic body: impacts map through the body's transform,
+  // debris and detached slabs leave with the body's pose and velocity. This
+  // is the tech a damageable mech is made of.
+  E.w_reset(1, 0);
+  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 1600, 4, 3, 1.5707, SHOULDER_HALF);
+  E.w_dummy_create(0, -0.55, 1);
+  check("the dummy wears a 64-cell plate", vst()[0] === 64, `${vst()[0]} cells`);
+
+  let maxSwing = 0;
+  for (let p = 0; p < 4; p++) {
+    for (let sst = 0; sst < 50; sst++) {
+      const t = sst / 50, out = t < 0.4 ? t / 0.4 : Math.max(0, 1 - (t - 0.4) / 0.5);
+      E.w_mech_hand(1, 0.05, 1.15, -0.18 - 0.42 * out, 1, 0, 0, 0, 1);
+      E.w_mech_hand(0, -0.30, 1.15, -0.25, 1, 0, 0, 0, 1);
+      E.w_mech_stand(0, CHEST, 0);
+      E.w_mech_apply(); E.w_step(1 / 72); E.w_vox_post();
+      const dp = E.w_dummy_state() >>> 2;
+      maxSwing = Math.max(maxSwing, Math.abs(mem()[dp + 2] + 0.55));
+    }
+  }
+  check("punches swing the whole dummy", maxSwing > 0.10, `${maxSwing.toFixed(2)} m`);
+  check("the plate sheds cells while the body moves", vst()[0] < 60,
+        `${vst()[0]} of 64 left`);
+  check("shed cells fly off as debris", E.w_count() > 5, `${E.w_count()} cubes`);
+
+  // Cut the plate across its waist at its CURRENT swung position: the top
+  // half must tear off as a slab born at the body's pose.
+  const dp2 = E.w_dummy_state() >>> 2;
+  const dz = mem()[dp2 + 2], dy = mem()[dp2 + 1];
+  for (let bx = -0.25; bx <= 0.25; bx += 0.07) E.w_vox_blast(bx, dy, dz + 0.16, 60);
+  const chunksNow = vst()[2];
+  check("a slab can tear off the moving body", chunksNow >= 1 || vst()[0] < 20,
+        `chunks ${chunksNow}, cells left ${vst()[0]}`);
+
   console.log(`\n${pass} passed, ${fail} failed, ${gaps} known gaps`);
   process.exit(fail === 0 ? 0 : 1);
 })().catch((e) => { console.error("HARNESS ERROR:", e); process.exit(2); });

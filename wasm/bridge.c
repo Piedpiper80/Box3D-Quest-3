@@ -58,6 +58,7 @@ static float s_groundY = 0.0f;
 static int s_mExists = 0;
 // The world is being torn down; forget every voxel grid that lived in it.
 static void vxWorldReset(void);
+static int s_dummyExists = 0;
 static Cube s_cubes[MAX_CUBES];
 static int s_count = 0;
 static int s_ambient = 0;      // initial cubes are never recycled
@@ -239,6 +240,7 @@ void w_reset(int enableSleep, float groundY)
     s_groundBody = ground;
     s_groundY = groundY;
     s_mExists = 0;
+    s_dummyExists = 0;
     vxWorldReset();
 }
 
@@ -1657,6 +1659,13 @@ float* w_mech_lengths(void)
 // mass times approach speed, spent killing cells outward from the hit point.
 // A fist counts the whole arm rigidly driving it.
 //
+// A grid does not have to stand on the ground. It can ride any body — cells
+// live in the BODY'S local space and only touch world space at the borders:
+// impacts come in through the body's transform, debris and detached chunks
+// leave through it. A wall is just the degenerate case where the body is
+// static and sits at the grid's corner. This is armour: the same cells,
+// worn by something that moves.
+//
 // Materials are why this section exists twice over: what a thing is made of
 // sets how dense its chunks are, how many hits a cell soaks, and what colour
 // it breaks into. The same punch that guts a wooden fence bounces off steel
@@ -1692,7 +1701,8 @@ typedef struct
     int n[3];
     float size;
     int material;
-    b3Vec3 origin;                 // world min corner
+    int anchorAxis;                // cells at coord 0 on this axis are the foundation
+    b3Vec3 local;                  // grid min corner, in the body's local space
     float hp[VOX_MAX];             // <= 0 means gone
     b3BodyId body;
     b3ShapeId rowShape[VOX_ROWS_MAX][VOX_RUNS_PER_ROW];
@@ -1765,6 +1775,26 @@ static void vxDebris(const VoxGrid* g, float x, float y, float z,
     b3Body_SetAngularVelocity(id, v);
 }
 
+// The grid's body pose, as a float transform.
+static b3Transform vxPose(const VoxGrid* g)
+{
+    b3WorldTransform wt = b3Body_GetTransform(g->body);
+    b3Transform t;
+    t.p.x = (float)wt.p.x; t.p.y = (float)wt.p.y; t.p.z = (float)wt.p.z;
+    t.q = wt.q;
+    return t;
+}
+
+// Cell centre in body-local space.
+static b3Vec3 vxCellLocal(const VoxGrid* g, int x, int y, int z)
+{
+    b3Vec3 v;
+    v.x = g->local.x + (x + 0.5f) * g->size;
+    v.y = g->local.y + (y + 0.5f) * g->size;
+    v.z = g->local.z + (z + 0.5f) * g->size;
+    return v;
+}
+
 static int vxIdx(const VoxGrid* g, int x, int y, int z)
 {
     return x + g->n[0] * (y + g->n[1] * z);
@@ -1806,9 +1836,9 @@ static void vxMeshRow(VoxGrid* g, int y, int z)
         const int len = x - x0;
         b3BoxHull hull = b3MakeBoxHull(len * half, half, half);
         b3Transform off = b3Transform_identity;
-        off.p.x = (x0 + 0.5f * len) * g->size;
-        off.p.y = (y + 0.5f) * g->size;
-        off.p.z = (z + 0.5f) * g->size;
+        off.p.x = g->local.x + (x0 + 0.5f * len) * g->size;
+        off.p.y = g->local.y + (y + 0.5f) * g->size;
+        off.p.z = g->local.z + (z + 0.5f) * g->size;
         b3Vec3 one = { 1.0f, 1.0f, 1.0f };
         g->rowShape[row][g->rowShapes[row]++] =
             b3CreateTransformedHullShape(g->body, &sd, &hull.base, off, one);
@@ -1816,10 +1846,10 @@ static void vxMeshRow(VoxGrid* g, int y, int z)
     g->rowDirty[row] = 0;
 }
 
-// Build a grid. Returns its handle, or -1 if there is no room.
-WASM_EXPORT("w_vox_create")
-int w_vox_create(float cx, float baseY, float cz, int nx, int ny, int nz,
-                 float size, int material)
+// Shared construction: fill the cells and mesh them onto whatever body the
+// grid rides. Returns the handle, or -1 if there is no room.
+static int vxBuild(b3BodyId body, b3Vec3 local, int nx, int ny, int nz,
+                   float size, int material, int anchorAxis)
 {
     if (nx * ny * nz > VOX_MAX) return -1;
     if (ny * nz > VOX_ROWS_MAX) return -1;
@@ -1834,22 +1864,15 @@ int w_vox_create(float cx, float baseY, float cz, int nx, int ny, int nz,
     g->n[0] = nx; g->n[1] = ny; g->n[2] = nz;
     g->size = size;
     g->material = material;
-    g->origin.x = cx - 0.5f * nx * size;
-    g->origin.y = baseY;
-    g->origin.z = cz - 0.5f * nz * size;
+    g->anchorAxis = anchorAxis;
+    g->local = local;
+    g->body = body;
     g->alive = nx * ny * nz;
     g->killed = 0;
 
     const float hp = VOX_MATS[material].hp;
     for (int i = 0; i < nx * ny * nz; i++) g->hp[i] = hp;
     for (int r = 0; r < ny * nz; r++) { g->rowShapes[r] = 0; g->rowDirty[r] = 0; }
-
-    b3BodyDef bd = b3DefaultBodyDef();
-    bd.type = b3_staticBody;
-    bd.position.x = g->origin.x;
-    bd.position.y = g->origin.y;
-    bd.position.z = g->origin.z;
-    g->body = b3CreateBody(s_world, &bd);
 
     for (int z = 0; z < nz; z++)
         for (int y = 0; y < ny; y++)
@@ -1860,12 +1883,32 @@ int w_vox_create(float cx, float baseY, float cz, int nx, int ny, int nz,
     return (int)(g - s_vxG);
 }
 
-// Spend impact damage killing cells outward from the hit cell.
+// A wall: a grid standing on the ground on its own static body.
+WASM_EXPORT("w_vox_create")
+int w_vox_create(float cx, float baseY, float cz, int nx, int ny, int nz,
+                 float size, int material)
+{
+    b3BodyDef bd = b3DefaultBodyDef();
+    bd.type = b3_staticBody;
+    bd.position.x = cx - 0.5f * nx * size;
+    bd.position.y = baseY;
+    bd.position.z = cz - 0.5f * nz * size;
+    b3BodyId body = b3CreateBody(s_world, &bd);
+    b3Vec3 zero = { 0.0f, 0.0f, 0.0f };
+    return vxBuild(body, zero, nx, ny, nz, size, material, 1);
+}
+
+// Spend impact damage killing cells outward from the hit cell. The point
+// arrives in world space and is pulled into the body's local frame, so a
+// grid riding a swinging body still knows exactly which cell was struck.
 static void vxDamageAt(VoxGrid* g, float wx, float wy, float wz, float damage)
 {
-    int cx = (int)((wx - g->origin.x) / g->size);
-    int cy = (int)((wy - g->origin.y) / g->size);
-    int cz = (int)((wz - g->origin.z) / g->size);
+    const b3Transform t = vxPose(g);
+    b3Vec3 w = { wx - t.p.x, wy - t.p.y, wz - t.p.z };
+    const b3Vec3 lp = b3InvRotateVector(t.q, w);
+    int cx = (int)((lp.x - g->local.x) / g->size);
+    int cy = (int)((lp.y - g->local.y) / g->size);
+    int cz = (int)((lp.z - g->local.z) / g->size);
     if (cx < 0) cx = 0; if (cx >= g->n[0]) cx = g->n[0] - 1;
     if (cy < 0) cy = 0; if (cy >= g->n[1]) cy = g->n[1] - 1;
     if (cz < 0) cz = 0; if (cz >= g->n[2]) cz = g->n[2] - 1;
@@ -1894,10 +1937,8 @@ static void vxDamageAt(VoxGrid* g, float wx, float wy, float wz, float damage)
             if (g->hp[idx] <= 0.0f)
             {
                 g->alive--; g->killed++;
-                vxDebris(g,
-                         g->origin.x + (x + 0.5f) * g->size,
-                         g->origin.y + (y + 0.5f) * g->size,
-                         g->origin.z + (z + 0.5f) * g->size,
+                const b3Vec3 wc = b3TransformPoint(t, vxCellLocal(g, x, y, z));
+                vxDebris(g, wc.x, wc.y, wc.z,
                          frnd(-0.6f, 0.6f), frnd(0.5f, 1.6f), frnd(-0.6f, 0.6f));
             }
         }
@@ -1914,12 +1955,18 @@ static void vxStructure(VoxGrid* g)
     const int total = nx * ny * nz;
     for (int i = 0; i < total; i++) { mark[i] = 0; island[i] = 0; }
 
+    // The foundation row: coordinate zero along the anchor axis. For a wall
+    // that is the row on the ground; for a worn plate it is the layer bolted
+    // to the body.
     int qn = 0;
     for (int z = 0; z < nz; z++)
-        for (int x = 0; x < nx; x++)
-            if (vxAliveAt(g, x, 0, z))
+        for (int y = 0; y < ny; y++)
+            for (int x = 0; x < nx; x++)
             {
-                const int i = vxIdx(g, x, 0, z);
+                const int c = g->anchorAxis == 0 ? x : (g->anchorAxis == 1 ? y : z);
+                if (c != 0) continue;
+                if (!vxAliveAt(g, x, y, z)) continue;
+                const int i = vxIdx(g, x, y, z);
                 mark[i] = 1;
                 queue[qn++] = (unsigned short)i;
             }
@@ -1967,6 +2014,7 @@ static void vxStructure(VoxGrid* g)
 
         if (mn <= 3)
         {
+            const b3Transform t = vxPose(g);
             for (int m = 0; m < mn; m++)
             {
                 const int i = members[m];
@@ -1974,10 +2022,8 @@ static void vxStructure(VoxGrid* g)
                 g->hp[i] = 0.0f;
                 g->alive--; g->killed++;
                 g->rowDirty[vxRow(g, y, z)] = 1;
-                vxDebris(g,
-                         g->origin.x + (x + 0.5f) * g->size,
-                         g->origin.y + (y + 0.5f) * g->size,
-                         g->origin.z + (z + 0.5f) * g->size,
+                const b3Vec3 wc = b3TransformPoint(t, vxCellLocal(g, x, y, z));
+                vxDebris(g, wc.x, wc.y, wc.z,
                          frnd(-0.4f, 0.4f), 0.0f, frnd(-0.4f, 0.4f));
             }
             continue;
@@ -1990,11 +2036,16 @@ static void vxStructure(VoxGrid* g)
         if (ch->used) b3DestroyBody(ch->body);
         s_vxChunkNext = (s_vxChunkNext + 1) % VOX_CHUNK_MAX;
 
+        // The chunk is born at the body's current pose with its velocity, so
+        // a plate knocked off a swinging target flies the way it should.
+        const b3Transform gt = vxPose(g);
         b3BodyDef bd = b3DefaultBodyDef();
         bd.type = b3_dynamicBody;
-        bd.position.x = g->origin.x;
-        bd.position.y = g->origin.y;
-        bd.position.z = g->origin.z;
+        bd.position.x = gt.p.x;
+        bd.position.y = gt.p.y;
+        bd.position.z = gt.p.z;
+        bd.rotation = gt.q;
+        bd.linearVelocity = b3Body_GetLinearVelocity(g->body);
         ch->body = b3CreateBody(s_world, &bd);
         ch->used = 1;
         ch->material = g->material;
@@ -2030,9 +2081,9 @@ static void vxStructure(VoxGrid* g)
                 const float half = 0.5f * g->size;
                 b3BoxHull hull = b3MakeBoxHull(len * half, half, half);
                 b3Transform off = b3Transform_identity;
-                off.p.x = (x0 + 0.5f * len) * g->size;
-                off.p.y = (y + 0.5f) * g->size;
-                off.p.z = (z + 0.5f) * g->size;
+                off.p.x = g->local.x + (x0 + 0.5f * len) * g->size;
+                off.p.y = g->local.y + (y + 0.5f) * g->size;
+                off.p.z = g->local.z + (z + 0.5f) * g->size;
                 b3Vec3 one = { 1.0f, 1.0f, 1.0f };
                 b3CreateTransformedHullShape(ch->body, &sd, &hull.base, off, one);
                 ch->runs[ch->runCount][0] = off.p.x;
@@ -2064,10 +2115,13 @@ void w_vox_blast(float x, float y, float z, float damage)
     {
         VoxGrid* g = &s_vxG[i];
         if (!g->used) continue;
+        const b3Transform t = vxPose(g);
+        b3Vec3 w = { x - t.p.x, y - t.p.y, z - t.p.z };
+        const b3Vec3 lp = b3InvRotateVector(t.q, w);
         const float m = g->size * 1.5f;
-        if (x < g->origin.x - m || x > g->origin.x + g->n[0] * g->size + m) continue;
-        if (y < g->origin.y - m || y > g->origin.y + g->n[1] * g->size + m) continue;
-        if (z < g->origin.z - m || z > g->origin.z + g->n[2] * g->size + m) continue;
+        if (lp.x < g->local.x - m || lp.x > g->local.x + g->n[0] * g->size + m) continue;
+        if (lp.y < g->local.y - m || lp.y > g->local.y + g->n[1] * g->size + m) continue;
+        if (lp.z < g->local.z - m || lp.z > g->local.z + g->n[2] * g->size + m) continue;
         vxDamageAt(g, x, y, z, damage);
         vxStructure(g);
         vxRemesh(g);
@@ -2138,20 +2192,22 @@ void w_vox_post(void)
     }
 }
 
-// Render data: every grid's intact cells as merged runs. Eight floats each:
-// centre, half extents, a hurt flag (cell under half health — a run breaks
-// where the flag changes, so damage is visible before cells die), material.
-static float s_vxRunBuf[VOX_GRIDS * VOX_ROWS_MAX * VOX_RUNS_PER_ROW * 8 / 2];
+// Render data: every grid's intact cells as merged runs, posed in world
+// space. Twelve floats each: centre, quat, half extents, a hurt flag (cell
+// under half health — a run breaks where the flag changes, so damage shows
+// before cells die), material.
+static float s_vxRunBuf[VOX_GRIDS * VOX_ROWS_MAX * VOX_RUNS_PER_ROW * 12 / 2];
 static int s_vxRunCount = 0;
 
 static void vxFillRuns(void)
 {
     s_vxRunCount = 0;
-    const int cap = (int)(sizeof(s_vxRunBuf) / sizeof(float) / 8);
+    const int cap = (int)(sizeof(s_vxRunBuf) / sizeof(float) / 12);
     for (int gi = 0; gi < VOX_GRIDS; gi++)
     {
         const VoxGrid* g = &s_vxG[gi];
         if (!g->used) continue;
+        const b3Transform t = vxPose(g);
         const float half = 0.5f * g->size;
         const float maxHp = VOX_MATS[g->material].hp;
         for (int z = 0; z < g->n[2]; z++)
@@ -2166,14 +2222,18 @@ static void vxFillRuns(void)
                 while (x < g->n[0] && vxAliveAt(g, x, y, z) &&
                        (g->hp[vxIdx(g, x, y, z)] < 0.5f * maxHp) == hurt0) x++;
                 if (s_vxRunCount >= cap) return;
-                float* o = &s_vxRunBuf[s_vxRunCount * 8];
+                float* o = &s_vxRunBuf[s_vxRunCount * 12];
                 const int len = x - x0;
-                o[0] = g->origin.x + (x0 + 0.5f * len) * g->size;
-                o[1] = g->origin.y + (y + 0.5f) * g->size;
-                o[2] = g->origin.z + (z + 0.5f) * g->size;
-                o[3] = len * half; o[4] = half; o[5] = half;
-                o[6] = hurt0 ? 1.0f : 0.0f;
-                o[7] = VOX_MATS[g->material].colorIdx;
+                b3Vec3 c;
+                c.x = g->local.x + (x0 + 0.5f * len) * g->size;
+                c.y = g->local.y + (y + 0.5f) * g->size;
+                c.z = g->local.z + (z + 0.5f) * g->size;
+                const b3Vec3 wc = b3TransformPoint(t, c);
+                o[0] = wc.x; o[1] = wc.y; o[2] = wc.z;
+                o[3] = t.q.v.x; o[4] = t.q.v.y; o[5] = t.q.v.z; o[6] = t.q.s;
+                o[7] = len * half; o[8] = half; o[9] = half;
+                o[10] = hurt0 ? 1.0f : 0.0f;
+                o[11] = VOX_MATS[g->material].colorIdx;
                 s_vxRunCount++;
             }
         }
@@ -2255,6 +2315,75 @@ float* w_vox_grid_stats(int grid)
     out[0] = (float)g->alive;
     out[1] = (float)g->killed;
     out[2] = (float)(g->n[0] * g->n[1] * g->n[2]);
+    return out;
+}
+
+
+// ---------------------------------------------------------------------------
+// The dummy — armour worn by something that moves
+//
+// A heavy core hangs from a pivot like a punching bag, wearing a plate of
+// voxel armour on its front face. Punch it and the whole body swings; the
+// plate cracks, sheds cells, and slabs of it tear off mid-swing, flying with
+// the body's own velocity. This is the fight in miniature: strip the armour,
+// then hit the thing inside.
+// ---------------------------------------------------------------------------
+
+static b3BodyId s_dummyCore;
+
+WASM_EXPORT("w_dummy_create")
+void w_dummy_create(float x, float z, int material)
+{
+    // The gantry the bag hangs from.
+    b3BodyDef gd = b3DefaultBodyDef();
+    gd.type = b3_staticBody;
+    gd.position.x = x; gd.position.y = 2.05f; gd.position.z = z;
+    b3BodyId gantry = b3CreateBody(s_world, &gd);
+
+    // The core: heavy, bare metal underneath.
+    b3BodyDef cd = b3DefaultBodyDef();
+    cd.type = b3_dynamicBody;
+    cd.position.x = x; cd.position.y = 1.15f; cd.position.z = z;
+    cd.angularDamping = 0.8f;
+    cd.linearDamping = 0.2f;
+    s_dummyCore = b3CreateBody(s_world, &cd);
+
+    b3ShapeDef csd = b3DefaultShapeDef();
+    csd.density = 380.0f;   // light enough that punches visibly swing it
+    csd.baseMaterial.friction = 0.6f;
+    b3BoxHull chull = b3MakeBoxHull(0.28f, 0.42f, 0.12f);
+    b3CreateHullShape(s_dummyCore, &csd, &chull.base);
+
+    // The rope: a pivot at the gantry.
+    b3SphericalJointDef sj = b3DefaultSphericalJointDef();
+    sj.base.bodyIdA = gantry;
+    sj.base.bodyIdB = s_dummyCore;
+    sj.base.localFrameA = b3Transform_identity;
+    sj.base.localFrameB = b3Transform_identity;
+    sj.base.localFrameB.p.y = 0.90f;      // hangs from above its head
+    sj.base.collideConnected = false;
+    b3CreateSphericalJoint(s_world, &sj);
+
+    // The armour: an 8 x 8 plate, one cell thick, bolted to the face toward
+    // the player (+z side — the fists arrive travelling -z). Anchor axis z:
+    // the layer against the core is the foundation, so cells that lose their
+    // connection to the body fall off it, wherever it is swinging.
+    b3Vec3 local = { -0.28f, -0.28f, 0.12f };
+    vxBuild(s_dummyCore, local, 8, 8, 1, 0.07f, material, 2);
+    s_dummyExists = 1;
+}
+
+// [px,py,pz, qx,qy,qz,qw, hx,hy,hz] — so the page can draw the bare core.
+WASM_EXPORT("w_dummy_state")
+float* w_dummy_state(void)
+{
+    static float out[10];
+    if (!s_dummyExists) return out;
+    b3Pos p = b3Body_GetPosition(s_dummyCore);
+    b3Quat q = b3Body_GetRotation(s_dummyCore);
+    out[0] = (float)p.x; out[1] = (float)p.y; out[2] = (float)p.z;
+    out[3] = q.v.x; out[4] = q.v.y; out[5] = q.v.z; out[6] = q.s;
+    out[7] = 0.28f; out[8] = 0.42f; out[9] = 0.12f;
     return out;
 }
 

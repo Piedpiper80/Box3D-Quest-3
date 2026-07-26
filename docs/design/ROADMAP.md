@@ -395,6 +395,27 @@ tuning — a punch is momentum, a material is a table row, and everything else
 falls out. `vox.html` now stands three walls side by side so the difference is
 felt, not read.
 
+#### Armour on a moving body: the fight's core tech is proven (`dummy.html`)
+
+A grid no longer has to stand on the ground — it can ride **any body**. Cells
+live in the body's local space and only touch world space at the borders:
+impacts come in through the body's transform, debris and detached slabs leave
+through it with the body's pose and velocity. A wall is now just the
+degenerate case (static body, identity pose), and all 51 wall checks pass
+unchanged through the posed code path.
+
+The proof is a plated punching bag: a swinging dynamic core wearing an 8×8
+stone plate anchored on its mount face (anchor axis is per-grid — a wall's
+foundation is the ground row, armour's is the layer bolted to the body).
+Measured: the bag swings 26 cm under punches while the plate sheds 64 → 11
+cells, debris flying with the motion, and a line cut across the plate mid-swing
+tears the upper half off as one slab born at the body's pose. Strip the plate
+and the bare core shows.
+
+That is the shape of every fight to come: armour first, then the machine
+inside. Next: the mech itself instanced (two machines in one world) and
+wearing these plates — which is Phase 4's front door.
+
 #### Phase 1 status: all three spikes built, awaiting headset verdicts
 
 | Spike | Page | Machine-verified | Needs from the headset |
