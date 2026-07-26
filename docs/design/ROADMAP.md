@@ -542,6 +542,25 @@ Known gaps, named: the beaten enemy freezes while you crawl (read it as the
 victor watching); travel is a rumble and a name, not a place; the pad
 recovery trigger is machine-verified but has not been felt in a headset.
 
+**The polish round that followed found the biggest one by thinking like a
+headset:** every number the page prints — heat, your own plate, the
+collapse countdown — is DOM, and *the DOM does not exist inside VR*. The
+player had no instruments at all. All of it is in the world now, diegetic,
+no text: heat shows on the metal itself (the arms take on heat colour, the
+actuator housings glow outright past the redline), your plate rides your
+left wrist as six pips that turn hull-red once the plate is gone, and the
+repair beacon *is* the countdown — the column drains like an hourglass and
+its pulse quickens as time does. Plus: the victor's visor breathes while
+you crawl so stillness reads as watching; the hauler ride thumps on an
+uneven road-beat and arrival lands with the sting; the final loss cuts the
+drives so your machine drops the way the enemy's does; the ending runs
+gold light around the ring; and the README's front door opens into the
+game instead of the tumbling-boxes hello-world.
+
+The rule that fell out of it, for every VR page from here on: **if the
+player needs it, it lives in the world.** The page card may repeat it; it
+may never own it.
+
 #### Phase 1 status: all three spikes built, awaiting headset verdicts
 
 | Spike | Page | Machine-verified | Needs from the headset |
