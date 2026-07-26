@@ -320,6 +320,82 @@ const wasi = new WASI({ version: "preview1" });
   check("the elbow does not wander", Math.max(...swiv) - Math.min(...swiv) < 60,
         `${(Math.max(...swiv) - Math.min(...swiv)).toFixed(0)} deg of drift`);
 
+  // --- knuckle-haul locomotion (legs gone) ---
+  //
+  // The fallback the locomotion ladder rests on: a machine that has lost its
+  // legs lies on the ground and drags itself with both fists. Standing at full
+  // height the fists cannot reach the floor at all — measured, the tip bottoms
+  // out 19 cm up — which is the geometry saying this mechanic belongs to the
+  // collapsed machine, not the standing one.
+  const heave = (density, cycles) => {
+    E.w_reset(1, 0);
+    E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, density, 4, 3, 1.5707, SHOULDER_HALF);
+    E.w_mech_legs(0);
+    const HEAD_TRACK = HEAD, O = { x: 0, y: 0, z: 0 };
+    const PULL = 30, SWING = 34, CYCLE = PULL + SWING;
+    let peak = 0, f = null;
+    for (let s = 0; s < 60 + cycles * CYCLE + 160; s++) {
+      // The stroke's height is given in WORLD terms, because that is what a
+      // player does: they watch the fist and put it on the ground, whatever
+      // their own height. Scripting it in tracking space made the gait depend
+      // on the head height — at 1.62 m the pull stroke mapped below the floor,
+      // the machine did a push-up on its own fists and lurched backwards.
+      let grips = [0, 0], hz = -0.25, hy = 0.60;
+      if (s >= 60 && s < 60 + cycles * CYCLE) {
+        const c = (s - 60) % CYCLE;
+        if (c < PULL) { grips = [1, 1]; hz = -0.45 + 0.5 * (c / PULL); hy = 0.10; }
+        else { const t = (c - PULL) / SWING; hz = 0.05 - 0.5 * t; hy = 0.14 + 0.14 * Math.sin(t * Math.PI); }
+      }
+      for (let i = 0; i < 2; i++) {
+        E.w_mech_anchor(i, grips[i]);
+        E.w_mech_hand(i, (i === 0 ? -0.24 : 0.24) + O.x, hy, hz + O.z, 1, 0, 0, 0, 1);
+      }
+      E.w_mech_stand(O.x, CHEST + O.y, O.z);
+      E.w_mech_apply(); E.w_step(1 / 72);
+      f = mech();
+      const dp = E.w_mech_drag_state() >>> 2, dd = mem();
+      O.y = (f[1] + 0.40) - HEAD_TRACK;
+      if (dd[dp + 4] > 0.5) { O.x = f[0]; O.z = f[2]; }
+      peak = Math.max(peak, dd[dp + 5]);
+    }
+    return { dist: -f[2], peak, y: f[1], tilt: tiltOf(f) };
+  };
+
+  const hMed = heave(800, 4);
+  check("legs gone, the hull rests on the ground", hMed.y < 0.30, `y ${hMed.y.toFixed(2)}`);
+  check("four heaves drag the machine over a metre", hMed.dist > 1.0, `${hMed.dist.toFixed(2)} m`);
+  check("it stays flat while dragging", hMed.tilt < 15, `tilt ${hMed.tilt.toFixed(0)} deg`);
+  const hLight = heave(350, 4), hHeavy = heave(2800, 4);
+  check("a heavy machine is much harder to drag", hLight.dist > hHeavy.dist * 2,
+        `light ${hLight.dist.toFixed(2)} m, heavy ${hHeavy.dist.toFixed(2)} m`);
+
+  // Squeezing in mid-air grabs nothing.
+  E.w_reset(1, 0);
+  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
+  for (let s = 0; s < 200; s++) {
+    E.w_mech_anchor(0, 1);
+    E.w_mech_hand(0, -0.24, 1.0, -0.35, 1, 0, 0, 0, 1);
+    E.w_mech_hand(1, 0.24, 1.0, -0.35, 1, 0, 0, 0, 1);
+    E.w_mech_stand(0, CHEST, 0); E.w_mech_apply(); E.w_step(1 / 72);
+  }
+  let fAir = mech();
+  const airDp = E.w_mech_drag_state() >>> 2;
+  check("gripping mid-air anchors nothing and moves nothing",
+        mem()[airDp] === 0 && Math.hypot(fAir[0], fAir[2]) < 0.05,
+        `anchored ${mem()[airDp]}, moved ${Math.hypot(fAir[0], fAir[2]).toFixed(3)} m`);
+
+  // And when the legs come back, the machine stands back up.
+  E.w_reset(1, 0);
+  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
+  E.w_mech_legs(0);
+  for (let s = 0; s < 200; s++) { E.w_mech_stand(0, CHEST, 0); E.w_mech_apply(); E.w_step(1 / 72); }
+  const collapsedY = mech()[1];
+  E.w_mech_legs(1);
+  for (let s = 0; s < 300; s++) { E.w_mech_stand(0, CHEST, 0); E.w_mech_apply(); E.w_step(1 / 72); }
+  const stoodY = mech()[1];
+  check("legs restored, it stands back up", collapsedY < 0.30 && Math.abs(stoodY - CHEST) < 0.06,
+        `collapsed ${collapsedY.toFixed(2)}, stood ${stoodY.toFixed(2)}, target ${CHEST.toFixed(2)}`);
+
   // The machine no longer collides with itself, which must not also mean it
   // stopped colliding with everything else.
   E.w_reset(1, 0);

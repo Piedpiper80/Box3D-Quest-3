@@ -354,6 +354,38 @@ Three rules came out of it, and they apply to every joint from here on:
    target is proof of a controller adding energy, and is the single most useful
    signal found here.
 
+#### Locomotion: the fallback is proven, and it belongs to the crippled machine
+
+The arm-drag spike is built and machine-verified (`docs/drag.html`). Three
+findings worth keeping:
+
+- **Geometry assigns the mechanic its role.** Standing at full height the fists
+  cannot reach the ground — measured, the tip bottoms out 19 cm up even with the
+  pilot crouched. So knuckle-hauling is not a general gait, it is what you do
+  when the legs are gone and the hull is on the ground — which is exactly the
+  fallback role the design gave it. `w_mech_legs(0)` drops the machine; real
+  contact friction resists the drag; `X` toggles it on the page.
+- **One planted fist is a push-up, two are a crawl.** Hauling on a single
+  anchored fist levers the hull off the ground, friction vanishes, and the free
+  arm's swing shoves the machine backwards (measured: −0.36 m in one swing).
+  Both fists together keep the belly loaded while the arms haul. The page
+  teaches the two-handed heave for this reason.
+- **The rig offset is the machine's, not the player's.** Vertically the pilot
+  rides a fixed height above the torso every frame — collapse sinks the
+  cockpit, standing re-aligns the real floor with the drawn one. Horizontally
+  the view is glued to the hull only while it is dragging itself, so real
+  walking still moves you 1:1 the rest of the time.
+
+Measured, four two-handed heaves, legs gone: light machine 2.81 m, medium
+1.44 m, heavy 0.53 m — same effort, so weight is legible in locomotion exactly
+as it is in punching. Grip in mid-air holds nothing. Over-stretched grips slip.
+Legs restored, it stands back up to head height.
+
+Comfort note: motion is strictly hand-caused (grab-and-heave), the same class
+of locomotion Gorilla Tag ships without a vignette, because self-caused motion
+is the most comfortable artificial locomotion known. A vignette pass comes with
+the game shell.
+
 #### The arm is solved, not dragged — and a machine must not fight itself
 
 Dragging the far end of a jointed chain with a force and letting the joints

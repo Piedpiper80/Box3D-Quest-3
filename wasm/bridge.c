@@ -53,6 +53,9 @@ typedef struct
 
 static b3WorldId s_world;
 static int s_worldCreated = 0;
+static b3BodyId s_groundBody;
+static float s_groundY = 0.0f;
+static int s_mExists = 0;
 static Cube s_cubes[MAX_CUBES];
 static int s_count = 0;
 static int s_ambient = 0;      // initial cubes are never recycled
@@ -228,6 +231,12 @@ void w_reset(int enableSleep, float groundY)
     // forever, which would quietly flatter the measurement.
     b3BoxHull hull = b3MakeBoxHull(20.0f, 0.1f, 20.0f);
     b3CreateHullShape(ground, &sd, &hull.base);
+
+    // Kept for the locomotion spike: planting a fist means jointing the arm's
+    // tip to this body, so the world itself is what the machine hauls against.
+    s_groundBody = ground;
+    s_groundY = groundY;
+    s_mExists = 0;
 }
 
 // Drop `n` cubes in a loose jittered cuboid, high enough that they fall,
@@ -518,11 +527,35 @@ static float s_mJointDamping = 1.0f;
 static b3Vec3 s_mIKElbow[MECH_ARMS];
 static b3Vec3 s_mIKWrist[MECH_ARMS];
 static b3Quat s_mShoulderFrame[MECH_ARMS];
+
+// --- knuckle-walk locomotion -------------------------------------------------
+//
+// A mech with no legs moves the way a gorilla does: plant a fist, haul the body
+// past it, swing, plant the other. Planting is a real joint between the arm's
+// tip and the ground body, so the machine is genuinely hauling against the
+// world — same IK, same springs, same mass. Pull your hand half a metre and the
+// machine advances half a metre, minus lag, plus momentum. Nothing kinematic
+// moves it.
+static b3JointId s_mAnchorJ[MECH_ARMS];
+static int s_mAnchored[MECH_ARMS];
+static int s_mSlipped[MECH_ARMS];       // grip broke from over-reach, until re-grip
+static int s_mCoastFrames = 0;          // how long the machine has been near-still
+static int s_mDragMode = 0;             // 1 while anchored or still sliding
+
+// A fist can only grab the ground when it is at the ground.
+#define ANCHOR_REACH_Y 0.16f
+
+// Whether the machine still has legs. Knuckle-hauling is the fallback for when
+// it does not: with the legs gone the hull drops and lies on the ground, real
+// contact friction resists the drag, and the shoulders sit low enough that the
+// fists reach the floor. Standing at full height the fists cannot reach the
+// ground at all — measured, the tip bottoms out 19 cm up even with the pilot
+// crouching — which is the geometry telling us what this mechanic is for.
+static int s_mLegsWork = 1;
 static b3Quat s_mIKUpper[MECH_ARMS];
 static b3Quat s_mIKSpringTarget[MECH_ARMS];
 static b3Vec3 s_mHandTarget[MECH_ARMS];
 static int s_mHandActive[MECH_ARMS] = {0, 0};
-static int s_mExists = 0;
 
 // The torso is held at a target by a spring with a hard force ceiling. That
 // ceiling is the machine's footing: push the arms hard enough and the legs
@@ -1230,13 +1263,144 @@ static void armIK(int i)
     b3RevoluteJoint_SetTargetAngle(s_mElbow[i], interior - 3.14159265f);
 }
 
+
+// World position of arm i's far face — the knuckles.
+static b3Vec3 mechTip(int i)
+{
+    b3Pos p = b3Body_GetPosition(s_mTool[i]);
+    b3Quat q = b3Body_GetRotation(s_mTool[i]);
+    b3Matrix3 m = b3MakeMatrixFromQuat(q);
+    const float d = -2.0f * s_mToolHalf;
+    b3Vec3 out;
+    out.x = (float)p.x + m.cz.x * d;
+    out.y = (float)p.y + m.cz.y * d;
+    out.z = (float)p.z + m.cz.z * d;
+    return out;
+}
+
+// Called every frame with the grip button's state. The engine decides whether a
+// grab actually takes hold: squeezing in mid-air does nothing, because a fist
+// with nothing under it has nothing to hold.
+WASM_EXPORT("w_mech_legs")
+void w_mech_legs(int working)
+{
+    s_mLegsWork = working ? 1 : 0;
+}
+
+WASM_EXPORT("w_mech_anchor")
+void w_mech_anchor(int i, int wantAnchor)
+{
+    if (i < 0 || i >= MECH_ARMS || !s_mExists) return;
+
+    if (!wantAnchor)
+    {
+        if (s_mAnchored[i])
+        {
+            b3DestroyJoint(s_mAnchorJ[i], true);
+            s_mAnchored[i] = 0;
+        }
+        s_mSlipped[i] = 0;   // opening the hand resets a slipped grip
+        return;
+    }
+
+    if (s_mAnchored[i] || s_mSlipped[i]) return;
+
+    b3Vec3 tip = mechTip(i);
+    if (tip.y > s_groundY + ANCHOR_REACH_Y) return;   // not at the ground
+
+    // A planted fist is a pivot: the tip cannot translate, the arm can still
+    // rotate about it. Grounded fists really do work like this.
+    b3Pos gp = b3Body_GetPosition(s_groundBody);
+    b3SphericalJointDef aj = b3DefaultSphericalJointDef();
+    aj.base.bodyIdA = s_groundBody;
+    aj.base.bodyIdB = s_mTool[i];
+    aj.base.localFrameA = b3Transform_identity;
+    aj.base.localFrameA.p.x = tip.x - (float)gp.x;
+    aj.base.localFrameA.p.y = tip.y - (float)gp.y;
+    aj.base.localFrameA.p.z = tip.z - (float)gp.z;
+    aj.base.localFrameB = b3Transform_identity;
+    aj.base.localFrameB.p.z = -2.0f * s_mToolHalf;
+    aj.base.collideConnected = false;
+    s_mAnchorJ[i] = b3CreateSphericalJoint(s_world, &aj);
+    s_mAnchored[i] = 1;
+}
+
+// [anchoredL, anchoredR, slippedL, slippedR, dragMode, speed]
+WASM_EXPORT("w_mech_drag_state")
+float* w_mech_drag_state(void)
+{
+    static float out[6];
+    out[0] = (float)s_mAnchored[0];
+    out[1] = (float)s_mAnchored[1];
+    out[2] = (float)s_mSlipped[0];
+    out[3] = (float)s_mSlipped[1];
+    out[4] = (float)s_mDragMode;
+    if (s_mExists)
+    {
+        b3Vec3 v = b3Body_GetLinearVelocity(s_mTorso);
+        out[5] = __builtin_sqrtf(v.x*v.x + v.z*v.z);
+    }
+    return out;
+}
+
 WASM_EXPORT("w_mech_apply")
 void w_mech_apply(void)
 {
     if (!s_mExists) return;
 
+    // Drag mode.
+    //
+    // While a fist is planted — and while the machine is still sliding after
+    // the last one let go — the feet give way and go along instead of holding
+    // their spot, exactly as knuckle-walking needs. It ends only when the
+    // machine has actually come to rest, so releasing mid-haul lets momentum
+    // carry it and the feet catch the stop at the end.
+    {
+        const int anyAnchor = s_mAnchored[0] || s_mAnchored[1];
+        b3Vec3 tv = b3Body_GetLinearVelocity(s_mTorso);
+        const float speed = __builtin_sqrtf(tv.x*tv.x + tv.z*tv.z);
+        if (anyAnchor)
+        {
+            s_mDragMode = 1;
+            s_mCoastFrames = 0;
+        }
+        else if (s_mDragMode)
+        {
+            if (speed < 0.10f) s_mCoastFrames++;
+            else s_mCoastFrames = 0;
+            if (s_mCoastFrames > 10) s_mDragMode = 0;   // planted again
+        }
+
+        // An over-stretched grip breaks. Without this, walking away from a
+        // planted fist loads an unbounded joint spring against a hard anchor,
+        // and the arm ends up violently rubber-banded to a spot on the floor.
+        for (int i = 0; i < MECH_ARMS; i++)
+        {
+            if (!s_mAnchored[i]) continue;
+            b3WorldTransform tx0 = b3Body_GetTransform(s_mTorso);
+            const b3Vec3 ls = { (i == 0) ? -s_mShoulderHalf : s_mShoulderHalf, 0.17f, 0.0f };
+            const b3Vec3 r = b3RotateVector(tx0.q, ls);
+            b3Vec3 tip = mechTip(i);
+            const float dx = tip.x - ((float)tx0.p.x + r.x);
+            const float dy = tip.y - ((float)tx0.p.y + r.y);
+            const float dz = tip.z - ((float)tx0.p.z + r.z);
+            const float reach = s_mUpperLen + s_mForeLen + 2.0f * s_mToolHalf;
+            if (__builtin_sqrtf(dx*dx + dy*dy + dz*dz) > reach * 0.97f)
+            {
+                b3DestroyJoint(s_mAnchorJ[i], true);
+                s_mAnchored[i] = 0;
+                s_mSlipped[i] = 1;
+            }
+        }
+    }
+
     // Legs.
     //
+    // Only while the machine still has them. With the legs gone no leg force
+    // exists at all — the hull falls, rests on the ground, and everything the
+    // machine does from then on is done against real contact friction.
+    if (s_mLegsWork)
+    {
     // They hold the machine's height, full stop. An earlier version made the
     // legs a plain spring that had to fight gravity, so heavier arms dragged the
     // whole mech downwards until it sank out from under the player and the arms
@@ -1257,8 +1421,21 @@ void w_mech_apply(void)
                  + (s_mTorsoTarget.y - (float)p.y) * s_mTorsoK * 3.0f
                  - v.y * s_mTorsoC * 2.0f;
 
-        float fx = (s_mTorsoTarget.x - (float)p.x) * s_mTorsoK - v.x * s_mTorsoC;
-        float fz = (s_mTorsoTarget.z - (float)p.z) * s_mTorsoK - v.z * s_mTorsoC;
+        // In drag mode the feet stop holding a spot: the spring term goes and
+        // only the damping stays, which is the drag of the feet over the
+        // ground. That resistance is also what brings the machine to rest when
+        // the fist lets go, so momentum ends in a slide rather than a glide.
+        float fx, fz;
+        if (s_mDragMode)
+        {
+            fx = -v.x * s_mTorsoC * 0.6f;
+            fz = -v.z * s_mTorsoC * 0.6f;
+        }
+        else
+        {
+            fx = (s_mTorsoTarget.x - (float)p.x) * s_mTorsoK - v.x * s_mTorsoC;
+            fz = (s_mTorsoTarget.z - (float)p.z) * s_mTorsoK - v.z * s_mTorsoC;
+        }
 
         // Only the horizontal is capped — that is the footing giving way.
         float hsq = fx*fx + fz*fz;
@@ -1270,6 +1447,7 @@ void w_mech_apply(void)
 
         b3Vec3 f; f.x = fx; f.y = fy; f.z = fz;
         b3Body_ApplyForceToCenter(s_mTorso, f, true);
+    }
     }
 
     // Staying upright.

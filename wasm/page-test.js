@@ -219,6 +219,12 @@ async function runPage(file, frames, poseAt) {
     session.inputSources.forEach((src) => {
       src.gamepad.buttons[0].pressed = !!p.trigger;
       src.gamepad.buttons[0].value = p.trigger ? 1 : 0;
+      src.gamepad.buttons[1].pressed = !!p.grip;
+      src.gamepad.buttons[1].value = p.grip ? 1 : 0;
+      // X lives on the left controller, A on the right.
+      const b4 = src.handedness === "left" ? !!p.xbtn : !!p.abtn;
+      src.gamepad.buttons[4].pressed = b4;
+      src.gamepad.buttons[4].value = b4 ? 1 : 0;
     });
     const before = drawLog.length;
     try {
@@ -284,11 +290,45 @@ function pose(f) {
   };
 }
 
+// The drag page's session: calibrate, blow the legs out with X, then heave —
+// both fists to the ground, grip, haul back, release, swing forward, repeat.
+function poseDrag(f) {
+  if (f < TPOSE_UNTIL) return pose(f);
+  const neutral = {
+    head: vec(0, HEAD_Y, 0),
+    controllers: [
+      { pos: vec(-0.24, 1.15, -0.30), q: quat(0, 0, 0, 1) },
+      { pos: vec(0.24, 1.15, -0.30), q: quat(0, 0, 0, 1) },
+    ],
+    trigger: false, grip: false, xbtn: false,
+  };
+  if (f < 34) return neutral;
+  if (f < 36) return { ...neutral, xbtn: true };          // legs out
+  if (f < 100) return neutral;                            // machine collapses
+  // Heave cycles. Tracking height ~1.08 maps a fist to the world floor once
+  // the cockpit has sunk with the hull.
+  const PULL = 30, SWING = 34, CYCLE = PULL + SWING;
+  const c = (f - 100) % CYCLE;
+  let z, y, grip;
+  if (c < PULL) { grip = true; y = 1.06; z = -0.45 + 0.5 * (c / PULL); }
+  else { grip = false; const t = (c - PULL) / SWING; y = 1.12 + 0.14 * Math.sin(t * Math.PI); z = 0.05 - 0.5 * t; }
+  return {
+    head: vec(0, HEAD_Y, 0),
+    controllers: [
+      { pos: vec(-0.24, y, z), q: quat(0, 0, 0, 1) },
+      { pos: vec(0.24, y, z), q: quat(0, 0, 0, 1) },
+    ],
+    trigger: false, grip, xbtn: false,
+  };
+}
+
 (async () => {
   const page = process.argv[2] || "mech.html";
   console.log(`--- ${page} ---`);
 
-  const r = await runPage(page, 190, pose);
+  const script = page === "drag.html" ? poseDrag : pose;
+  const frames = page === "drag.html" ? 420 : 190;
+  const r = await runPage(page, frames, script);
 
   check("no exception escaped the frame loop", r.errors.length === 0,
         (r.errors[0] || "") + "  [page said: " + r.status + "]");
@@ -300,6 +340,15 @@ function pose(f) {
   // 49 grid + head marker + 2 controllers + torso + 6 limb segments + 6 blocks
   // + 4 material pips = 69. Anything near that means the world is really there.
   check("the last frame drew the whole scene", last.length >= 60, `${last.length} boxes`);
+
+  if (page === "drag.html") {
+    check("the legs report as gone", /legs: GONE/.test(r.report), "no GONE line in the report");
+    const trav = r.report.match(/travelled: ([\d.]+) m/);
+    check("heaving dragged the machine", trav && parseFloat(trav[1]) > 0.35,
+          trav ? trav[1] + " m" : "no travelled line in the report");
+    const planted = /PLANTED/.test(r.report) || (trav && parseFloat(trav[1]) > 0.35);
+    check("the fists actually planted", planted, "no fist ever anchored");
+  }
 
   if (page === "mech.html") {
     // The torso is the widest thing drawn that is not the floor grid.
