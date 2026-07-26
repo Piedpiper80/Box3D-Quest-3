@@ -354,6 +354,36 @@ Three rules came out of it, and they apply to every joint from here on:
    target is proof of a controller adding energy, and is the single most useful
    signal found here.
 
+#### Phase 2 first cut: the voxel core is real (`vox.html`)
+
+A voxel is a **cell in a grid, not a physics body** — that one rule is what
+makes destruction affordable. The solver only ever sees:
+
+- one static body of greedy-merged runs — a 528-cell wall is **24 shapes** and
+  costs ~66 µs/step untouched, in the slowest (scalar wasm) build;
+- a debris pool with a **hard cap of 150 live cubes** — past it the oldest is
+  teleported to the newest break. Before the cap, levelling a wall put 496
+  live cubes in the solver and a step cost 8.8 ms; with it, **2.3 ms**;
+- one dynamic body per detached chunk (ring of 10, oldest retired).
+
+Damage is **momentum through contact hit events** — a fist, a thrown block and
+a falling chunk all hurt the wall through one mechanism, mass × approach
+speed. A fist counts the whole arm behind it, not just the end block (measured
+first: a committed heavy punch chipped one cell where it should crater).
+Measured after: 4 punches take out 6 cells light, 14 medium, 18 heavy, 28
+very heavy; a 26-hp wall accumulates damage and chips slowly.
+
+Structure is a flood fill from the ground row after any kill: orphaned regions
+detach — small ones burst into debris, big ones become a single falling slab.
+That query is the exact "is this limb still attached?" the mech needs in
+Phase 3.
+
+Not done yet, known: chunks don't take further per-cell damage (they are
+plain rigid bodies once fallen); nothing re-merges to static (the caps bound
+the body count instead); rendering runs split on a two-bucket damage
+threshold only. Next Phase 2 work: per-cell damage on chunks, then the same
+grid worn as a mech's own armour — which is where Phase 2 meets Phase 3.
+
 #### Phase 1 status: all three spikes built, awaiting headset verdicts
 
 | Spike | Page | Machine-verified | Needs from the headset |

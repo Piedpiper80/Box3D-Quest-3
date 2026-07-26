@@ -56,6 +56,7 @@ static int s_worldCreated = 0;
 static b3BodyId s_groundBody;
 static float s_groundY = 0.0f;
 static int s_mExists = 0;
+static int s_vxExists;
 static Cube s_cubes[MAX_CUBES];
 static int s_count = 0;
 static int s_ambient = 0;      // initial cubes are never recycled
@@ -237,6 +238,7 @@ void w_reset(int enableSleep, float groundY)
     s_groundBody = ground;
     s_groundY = groundY;
     s_mExists = 0;
+    s_vxExists = 0;
 }
 
 // Drop `n` cubes in a loose jittered cuboid, high enough that they fall,
@@ -1634,6 +1636,551 @@ float* w_mech_lengths(void)
 {
     static float out[3];
     out[0] = s_mUpperLen; out[1] = s_mForeLen; out[2] = s_mToolHalf;
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// Voxel core — Phase 2
+//
+// The unified static/dynamic system the whole damage model hangs off. The
+// design rule that makes it affordable on a Quest: a voxel is a CELL IN A
+// GRID, not a physics body. The solver only ever sees:
+//
+//   - one static body whose shapes are greedy-merged runs of intact cells —
+//     an untouched wall costs the solver almost nothing, however many voxels
+//     it is made of;
+//   - a bounded pool of small debris cubes (the existing recycler), spawned
+//     when single cells are smashed out — promotion;
+//   - a bounded ring of chunk bodies for whole regions that lose their
+//     connection to the ground and fall as one piece.
+//
+// Damage arrives through contact hit events, so a fist, a thrown block and a
+// falling chunk all hurt the wall through one mechanism: momentum. Impact
+// damage = approach speed x impactor mass, spent killing cells outward from
+// the hit point. What a punch does therefore scales with how hard the arms
+// are swung and how heavy they are, with no separate tuning.
+//
+// After any cells die, a flood fill from the ground row finds cells that no
+// longer connect to the foundation. Small orphan groups burst into debris;
+// big ones detach as a single chunk body. That query — "is this still
+// attached?" — is the same structural question the mech will ask about its
+// own limbs in Phase 3.
+//
+// Demotion, v1: debris lives in the existing capped recycler; chunks live in
+// a fixed ring where the oldest is destroyed to admit the newest. Nothing
+// re-merges yet; the caps are what keep the body count bounded.
+// ---------------------------------------------------------------------------
+
+#define VOX_MAX 8192
+#define VOX_ROWS_MAX 1024
+#define VOX_RUNS_PER_ROW 16
+#define VOX_CHUNK_MAX 10
+#define VOX_CHUNK_RUNS 96
+
+static int s_vxN[3];                       // cells: nx, ny, nz
+static float s_vxSize = 0.1f;
+static float s_vxMaxHp = 20.0f;
+static b3Vec3 s_vxOrigin;                  // world min corner
+static float s_vxHp[VOX_MAX];              // <= 0 means gone
+static b3BodyId s_vxBody;
+static b3ShapeId s_vxRowShape[VOX_ROWS_MAX][VOX_RUNS_PER_ROW];
+static int s_vxRowShapes[VOX_ROWS_MAX];
+static unsigned char s_vxRowDirty[VOX_ROWS_MAX];
+static int s_vxAlive = 0;
+static int s_vxKilled = 0;
+static int s_vxLastHits = 0;
+
+typedef struct
+{
+    b3BodyId body;
+    int used;
+    int runCount;
+    float runs[VOX_CHUNK_RUNS][6];         // local centre xyz + half extents
+} VoxChunk;
+static VoxChunk s_vxChunks[VOX_CHUNK_MAX];
+static int s_vxChunkNext = 0;
+
+// The live-debris budget. Cells burst into cubes from the shared pool, but no
+// more than this many may exist at once: past the cap the oldest is teleported
+// to the newest break instead of a new body being made. Measured before the
+// cap existed, levelling a whole wall put 496 live cubes in the solver at once
+// and a step cost 8.8 ms — most of the frame budget on rubble. The ring holds
+// body ids, not indices, because the shared pool compacts under recycling.
+#define VOX_DEBRIS_CAP 150
+static b3BodyId s_vxDebrisRing[VOX_DEBRIS_CAP];
+static int s_vxDebrisCount = 0;
+static int s_vxDebrisNext = 0;
+
+static void vxDebris(float x, float y, float z,
+                     float vx, float vy, float vz, float color)
+{
+    const float half = s_vxSize * 0.42f;
+    if (s_vxDebrisCount < VOX_DEBRIS_CAP && s_count < MAX_CUBES)
+    {
+        addCube(x, y, z, half, vx, vy, vz, color, 3.0f);
+        s_vxDebrisRing[s_vxDebrisCount++] = s_cubes[s_count - 1].id;
+        return;
+    }
+    if (s_vxDebrisCount == 0) return;
+
+    b3BodyId id = s_vxDebrisRing[s_vxDebrisNext];
+    const int slot = s_vxDebrisNext;
+    s_vxDebrisNext = (s_vxDebrisNext + 1) % s_vxDebrisCount;
+    if (!b3Body_IsValid(id))
+    {
+        // The shared recycler ate it. Spawn a replacement into this slot.
+        if (s_count >= MAX_CUBES) return;
+        addCube(x, y, z, half, vx, vy, vz, color, 3.0f);
+        s_vxDebrisRing[slot] = s_cubes[s_count - 1].id;
+        return;
+    }
+    b3Pos p; p.x = x; p.y = y; p.z = z;
+    b3Body_SetTransform(id, p, b3Quat_identity);
+    b3Vec3 v; v.x = vx; v.y = vy; v.z = vz;
+    b3Body_SetLinearVelocity(id, v);
+    v.x = frnd(-3.0f, 3.0f); v.y = frnd(-3.0f, 3.0f); v.z = frnd(-3.0f, 3.0f);
+    b3Body_SetAngularVelocity(id, v);
+}
+
+static int vxIdx(int x, int y, int z) { return x + s_vxN[0] * (y + s_vxN[1] * z); }
+static int vxRow(int y, int z) { return y + s_vxN[1] * z; }
+static int vxAliveAt(int x, int y, int z)
+{
+    if (x < 0 || y < 0 || z < 0 || x >= s_vxN[0] || y >= s_vxN[1] || z >= s_vxN[2]) return 0;
+    return s_vxHp[vxIdx(x, y, z)] > 0.0f;
+}
+
+// Rebuild one row's collision shapes as greedy runs along x.
+static void vxMeshRow(int y, int z)
+{
+    const int row = vxRow(y, z);
+    for (int i = 0; i < s_vxRowShapes[row]; i++)
+    {
+        b3DestroyShape(s_vxRowShape[row][i], false);
+    }
+    s_vxRowShapes[row] = 0;
+
+    b3ShapeDef sd = b3DefaultShapeDef();
+    sd.baseMaterial.friction = 0.7f;
+    sd.enableHitEvents = true;
+
+    int x = 0;
+    while (x < s_vxN[0])
+    {
+        if (!vxAliveAt(x, y, z)) { x++; continue; }
+        int x0 = x;
+        while (x < s_vxN[0] && vxAliveAt(x, y, z)) x++;
+        if (s_vxRowShapes[row] >= VOX_RUNS_PER_ROW)
+        {
+            // More fragments than slots: merge the remainder into the last
+            // run rather than dropping collision silently.
+            x = s_vxN[0];
+        }
+        const float half = 0.5f * s_vxSize;
+        const int len = x - x0;
+        b3BoxHull hull = b3MakeBoxHull(len * half, half, half);
+        b3Transform off = b3Transform_identity;
+        off.p.x = (x0 + 0.5f * len) * s_vxSize;
+        off.p.y = (y + 0.5f) * s_vxSize;
+        off.p.z = (z + 0.5f) * s_vxSize;
+        b3Vec3 one = { 1.0f, 1.0f, 1.0f };
+        s_vxRowShape[row][s_vxRowShapes[row]++] =
+            b3CreateTransformedHullShape(s_vxBody, &sd, &hull.base, off, one);
+    }
+    s_vxRowDirty[row] = 0;
+}
+
+WASM_EXPORT("w_vox_create")
+void w_vox_create(float cx, float baseY, float cz, int nx, int ny, int nz,
+                  float size, float hp)
+{
+    if (nx * ny * nz > VOX_MAX) return;
+    if (ny * nz > VOX_ROWS_MAX) return;
+
+    s_vxN[0] = nx; s_vxN[1] = ny; s_vxN[2] = nz;
+    s_vxSize = size;
+    s_vxMaxHp = hp;
+    s_vxOrigin.x = cx - 0.5f * nx * size;
+    s_vxOrigin.y = baseY;
+    s_vxOrigin.z = cz - 0.5f * nz * size;
+    s_vxAlive = nx * ny * nz;
+    s_vxKilled = 0;
+
+    for (int i = 0; i < nx * ny * nz; i++) s_vxHp[i] = hp;
+    for (int r = 0; r < ny * nz; r++) { s_vxRowShapes[r] = 0; s_vxRowDirty[r] = 0; }
+    for (int c = 0; c < VOX_CHUNK_MAX; c++) s_vxChunks[c].used = 0;
+    s_vxDebrisCount = 0;
+    s_vxDebrisNext = 0;
+
+    b3BodyDef bd = b3DefaultBodyDef();
+    bd.type = b3_staticBody;
+    bd.position.x = s_vxOrigin.x;
+    bd.position.y = s_vxOrigin.y;
+    bd.position.z = s_vxOrigin.z;
+    s_vxBody = b3CreateBody(s_world, &bd);
+
+    for (int z = 0; z < nz; z++)
+        for (int y = 0; y < ny; y++)
+            vxMeshRow(y, z);
+
+    // Anything slower than a shove should not chip the wall.
+    b3World_SetHitEventThreshold(s_world, 1.0f);
+    s_vxExists = 1;
+}
+
+// Spend impact damage killing cells outward from the hit cell.
+static void vxDamageAt(float wx, float wy, float wz, float damage)
+{
+    int cx = (int)((wx - s_vxOrigin.x) / s_vxSize);
+    int cy = (int)((wy - s_vxOrigin.y) / s_vxSize);
+    int cz = (int)((wz - s_vxOrigin.z) / s_vxSize);
+    if (cx < 0) cx = 0; if (cx >= s_vxN[0]) cx = s_vxN[0] - 1;
+    if (cy < 0) cy = 0; if (cy >= s_vxN[1]) cy = s_vxN[1] - 1;
+    if (cz < 0) cz = 0; if (cz >= s_vxN[2]) cz = s_vxN[2] - 1;
+
+    // Ring by ring outward, nearest cells soaking damage first. Radius 2 is
+    // as wide as a single impact reaches; bigger holes come from more hits.
+    for (int ring = 0; ring <= 2 && damage > 0.0f; ring++)
+    {
+        for (int dz = -ring; dz <= ring && damage > 0.0f; dz++)
+        for (int dy = -ring; dy <= ring && damage > 0.0f; dy++)
+        for (int dx = -ring; dx <= ring && damage > 0.0f; dx++)
+        {
+            int m = (dx < 0 ? -dx : dx);
+            int a = (dy < 0 ? -dy : dy);
+            if (a > m) m = a;
+            a = (dz < 0 ? -dz : dz);
+            if (a > m) m = a;
+            if (m != ring) continue;              // surface of this ring only
+            const int x = cx + dx, y = cy + dy, z = cz + dz;
+            if (!vxAliveAt(x, y, z)) continue;
+            const int idx = vxIdx(x, y, z);
+            const float spent = s_vxHp[idx] < damage ? s_vxHp[idx] : damage;
+            s_vxHp[idx] -= spent;
+            damage -= spent;
+            s_vxRowDirty[vxRow(y, z)] = 1;
+            if (s_vxHp[idx] <= 0.0f)
+            {
+                s_vxAlive--; s_vxKilled++;
+                // Promotion: the cell becomes one small dynamic cube in the
+                // capped debris pool, thrown loose from where it sat.
+                vxDebris(s_vxOrigin.x + (x + 0.5f) * s_vxSize,
+                         s_vxOrigin.y + (y + 0.5f) * s_vxSize,
+                         s_vxOrigin.z + (z + 0.5f) * s_vxSize,
+                         frnd(-0.6f, 0.6f), frnd(0.5f, 1.6f), frnd(-0.6f, 0.6f),
+                         (float)((x + y + z) % 2 ? 1 : 2));
+            }
+        }
+    }
+}
+
+// Flood from the ground row; anything alive that cannot reach it detaches.
+static void vxStructure(void)
+{
+    static unsigned char mark[VOX_MAX];
+    static unsigned short queue[VOX_MAX];
+    const int total = s_vxN[0] * s_vxN[1] * s_vxN[2];
+    for (int i = 0; i < total; i++) mark[i] = 0;
+
+    int qn = 0;
+    for (int z = 0; z < s_vxN[2]; z++)
+        for (int x = 0; x < s_vxN[0]; x++)
+            if (vxAliveAt(x, 0, z))
+            {
+                const int i = vxIdx(x, 0, z);
+                mark[i] = 1;
+                queue[qn++] = (unsigned short)i;
+            }
+
+    const int nx = s_vxN[0], ny = s_vxN[1], nz = s_vxN[2];
+    while (qn > 0)
+    {
+        const int i = queue[--qn];
+        const int x = i % nx, y = (i / nx) % ny, z = i / (nx * ny);
+        const int nbs[6][3] = { {x-1,y,z}, {x+1,y,z}, {x,y-1,z}, {x,y+1,z}, {x,y,z-1}, {x,y,z+1} };
+        for (int k = 0; k < 6; k++)
+        {
+            const int a = nbs[k][0], b = nbs[k][1], c = nbs[k][2];
+            if (!vxAliveAt(a, b, c)) continue;
+            const int j = vxIdx(a, b, c);
+            if (mark[j]) continue;
+            mark[j] = 1;
+            queue[qn++] = (unsigned short)j;
+        }
+    }
+
+    // Collect orphans into islands and detach them.
+    static unsigned char island[VOX_MAX];
+    for (int i = 0; i < total; i++) island[i] = 0;
+    for (int start = 0; start < total; start++)
+    {
+        if (s_vxHp[start] <= 0.0f || mark[start] || island[start]) continue;
+
+        int members[VOX_MAX / 8];
+        int mn = 0, qn2 = 0;
+        queue[qn2++] = (unsigned short)start;
+        island[start] = 1;
+        while (qn2 > 0 && mn < VOX_MAX / 8)
+        {
+            const int i = queue[--qn2];
+            members[mn++] = i;
+            const int x = i % nx, y = (i / nx) % ny, z = i / (nx * ny);
+            const int nbs[6][3] = { {x-1,y,z}, {x+1,y,z}, {x,y-1,z}, {x,y+1,z}, {x,y,z-1}, {x,y,z+1} };
+            for (int k = 0; k < 6; k++)
+            {
+                const int a = nbs[k][0], b = nbs[k][1], c = nbs[k][2];
+                if (!vxAliveAt(a, b, c)) continue;
+                const int j = vxIdx(a, b, c);
+                if (mark[j] || island[j]) continue;
+                island[j] = 1;
+                queue[qn2++] = (unsigned short)j;
+            }
+        }
+
+        if (mn <= 3)
+        {
+            // Too small to be a chunk: burst straight into debris.
+            for (int m = 0; m < mn; m++)
+            {
+                const int i = members[m];
+                const int x = i % nx, y = (i / nx) % ny, z = i / (nx * ny);
+                s_vxHp[i] = 0.0f;
+                s_vxAlive--; s_vxKilled++;
+                s_vxRowDirty[vxRow(y, z)] = 1;
+                vxDebris(s_vxOrigin.x + (x + 0.5f) * s_vxSize,
+                         s_vxOrigin.y + (y + 0.5f) * s_vxSize,
+                         s_vxOrigin.z + (z + 0.5f) * s_vxSize,
+                         frnd(-0.4f, 0.4f), 0.0f, frnd(-0.4f, 0.4f),
+                         (float)((x + y + z) % 2 ? 1 : 2));
+            }
+            continue;
+        }
+
+        // A real chunk: one dynamic body, its shapes the island's x-runs.
+        // The ring is the demotion budget — admitting a new chunk may retire
+        // the oldest one still falling.
+        VoxChunk* ch = &s_vxChunks[s_vxChunkNext];
+        if (ch->used) b3DestroyBody(ch->body);
+        s_vxChunkNext = (s_vxChunkNext + 1) % VOX_CHUNK_MAX;
+
+        b3BodyDef bd = b3DefaultBodyDef();
+        bd.type = b3_dynamicBody;
+        bd.position = s_vxOrigin;
+        ch->body = b3CreateBody(s_world, &bd);
+        ch->used = 1;
+        ch->runCount = 0;
+
+        b3ShapeDef sd = b3DefaultShapeDef();
+        sd.density = 600.0f;
+        sd.baseMaterial.friction = 0.7f;
+        sd.enableHitEvents = true;
+
+        // Greedy x-runs over the island, marking cells out of the grid.
+        for (int m = 0; m < mn; m++)
+        {
+            const int i = members[m];
+            if (s_vxHp[i] <= 0.0f) continue;      // swallowed by an earlier run
+            const int y = (i / nx) % ny, z = i / (nx * ny);
+            int x0 = i % nx, x1 = x0;
+            while (x1 + 1 < nx)
+            {
+                const int j = vxIdx(x1 + 1, y, z);
+                if (s_vxHp[j] <= 0.0f || !island[j] || mark[j]) break;
+                x1++;
+            }
+            const int len = x1 - x0 + 1;
+            for (int x = x0; x <= x1; x++)
+            {
+                s_vxHp[vxIdx(x, y, z)] = 0.0f;
+                s_vxAlive--;
+            }
+            s_vxRowDirty[vxRow(y, z)] = 1;
+
+            if (ch->runCount < VOX_CHUNK_RUNS)
+            {
+                const float half = 0.5f * s_vxSize;
+                b3BoxHull hull = b3MakeBoxHull(len * half, half, half);
+                b3Transform off = b3Transform_identity;
+                off.p.x = (x0 + 0.5f * len) * s_vxSize;
+                off.p.y = (y + 0.5f) * s_vxSize;
+                off.p.z = (z + 0.5f) * s_vxSize;
+                b3Vec3 one = { 1.0f, 1.0f, 1.0f };
+                b3CreateTransformedHullShape(ch->body, &sd, &hull.base, off, one);
+                ch->runs[ch->runCount][0] = off.p.x;
+                ch->runs[ch->runCount][1] = off.p.y;
+                ch->runs[ch->runCount][2] = off.p.z;
+                ch->runs[ch->runCount][3] = len * half;
+                ch->runs[ch->runCount][4] = half;
+                ch->runs[ch->runCount][5] = half;
+                ch->runCount++;
+            }
+        }
+    }
+}
+
+// Point damage from anything that is not a physical impact — explosions,
+// weapon hits, tests. Same crater logic as an impact, then the same structural
+// consequences on the next w_vox_post.
+WASM_EXPORT("w_vox_blast")
+void w_vox_blast(float x, float y, float z, float damage)
+{
+    if (!s_vxExists) return;
+    vxDamageAt(x, y, z, damage);
+    vxStructure();
+    for (int zz = 0; zz < s_vxN[2]; zz++)
+        for (int yy = 0; yy < s_vxN[1]; yy++)
+            if (s_vxRowDirty[vxRow(yy, zz)])
+                vxMeshRow(yy, zz);
+}
+
+// Call once per frame, after w_step: reads the step's impacts, damages cells,
+// detaches whatever lost its footing, and remeshes only the rows that changed.
+WASM_EXPORT("w_vox_post")
+void w_vox_post(void)
+{
+    if (!s_vxExists) return;
+
+    b3ContactEvents ev = b3World_GetContactEvents(s_world);
+    s_vxLastHits = 0;
+    int anyKill = 0;
+    const int aliveBefore = s_vxAlive;
+
+    for (int i = 0; i < ev.hitCount; i++)
+    {
+        const b3ContactHitEvent* h = &ev.hitEvents[i];
+        b3BodyId bodyA = b3Shape_GetBody(h->shapeIdA);
+        b3BodyId bodyB = b3Shape_GetBody(h->shapeIdB);
+        const int aIsWall = B3_ID_EQUALS(bodyA, s_vxBody);
+        const int bIsWall = B3_ID_EQUALS(bodyB, s_vxBody);
+        if (!aIsWall && !bIsWall) continue;
+
+        const b3BodyId other = aIsWall ? bodyB : bodyA;
+        float mass = b3Body_GetMass(other);
+        if (mass <= 0.0f) continue;
+
+        // A fist does not arrive alone: the whole arm is rigidly driving it,
+        // so the impactor's effective mass is the arm's, not the little block
+        // on the end. Without this a committed heavy punch chipped one cell
+        // where it should crater, because the tool body alone is a tenth of
+        // the mass actually behind the blow.
+        if (s_mExists)
+        {
+            for (int a = 0; a < MECH_ARMS; a++)
+            {
+                if (B3_ID_EQUALS(other, s_mTool[a]) || B3_ID_EQUALS(other, s_mFore[a]))
+                {
+                    mass = b3Body_GetMass(s_mUpper[a]) + b3Body_GetMass(s_mFore[a])
+                         + b3Body_GetMass(s_mTool[a]);
+                    break;
+                }
+            }
+        }
+
+        s_vxLastHits++;
+        // Momentum as damage: how heavy the impactor is times how fast it
+        // arrived. A fist, a thrown block and a falling chunk all use this.
+        vxDamageAt((float)h->point.x, (float)h->point.y, (float)h->point.z,
+                   h->approachSpeed * mass);
+    }
+
+    if (s_vxAlive != aliveBefore) anyKill = 1;
+    if (anyKill) vxStructure();
+
+    for (int z = 0; z < s_vxN[2]; z++)
+        for (int y = 0; y < s_vxN[1]; y++)
+            if (s_vxRowDirty[vxRow(y, z)])
+                vxMeshRow(y, z);
+}
+
+// Render data: the intact wall as merged runs. Two damage buckets, so hurt
+// cells read as hurt before they die — a run breaks where the bucket changes.
+static float s_vxRunBuf[VOX_ROWS_MAX * VOX_RUNS_PER_ROW * 7];
+static int s_vxRunCount = 0;
+
+// Call the count first — it does the work and caches the buffer; the pointer
+// accessor just hands the buffer back. Cached-count-behind-the-fill was a
+// footgun that cost a debugging session: every caller asked for the count
+// first and read a stale zero.
+static void vxFillRuns(void)
+{
+    s_vxRunCount = 0;
+    const float half = 0.5f * s_vxSize;
+    for (int z = 0; z < s_vxN[2]; z++)
+    for (int y = 0; y < s_vxN[1]; y++)
+    {
+        int x = 0;
+        while (x < s_vxN[0])
+        {
+            if (!vxAliveAt(x, y, z)) { x++; continue; }
+            const int hurt0 = s_vxHp[vxIdx(x, y, z)] < 0.5f * s_vxMaxHp;
+            int x0 = x;
+            while (x < s_vxN[0] && vxAliveAt(x, y, z) &&
+                   (s_vxHp[vxIdx(x, y, z)] < 0.5f * s_vxMaxHp) == hurt0) x++;
+            if (s_vxRunCount >= VOX_ROWS_MAX * VOX_RUNS_PER_ROW) break;
+            float* o = &s_vxRunBuf[s_vxRunCount * 7];
+            const int len = x - x0;
+            o[0] = s_vxOrigin.x + (x0 + 0.5f * len) * s_vxSize;
+            o[1] = s_vxOrigin.y + (y + 0.5f) * s_vxSize;
+            o[2] = s_vxOrigin.z + (z + 0.5f) * s_vxSize;
+            o[3] = len * half; o[4] = half; o[5] = half;
+            o[6] = hurt0 ? 1.0f : 0.0f;
+            s_vxRunCount++;
+        }
+    }
+}
+
+WASM_EXPORT("w_vox_run_count")
+int w_vox_run_count(void) { vxFillRuns(); return s_vxRunCount; }
+
+WASM_EXPORT("w_vox_runs")
+float* w_vox_runs(void) { return s_vxRunBuf; }
+
+// Fallen chunks, flattened to world-space boxes: pos, quat, half extents.
+static float s_vxChunkBuf[VOX_CHUNK_MAX * VOX_CHUNK_RUNS * 10];
+static int s_vxChunkBoxCount = 0;
+
+static void vxFillChunkBoxes(void)
+{
+    s_vxChunkBoxCount = 0;
+    for (int c = 0; c < VOX_CHUNK_MAX; c++)
+    {
+        if (!s_vxChunks[c].used) continue;
+        b3Pos p = b3Body_GetPosition(s_vxChunks[c].body);
+        b3Quat q = b3Body_GetRotation(s_vxChunks[c].body);
+        b3Matrix3 m = b3MakeMatrixFromQuat(q);
+        for (int r = 0; r < s_vxChunks[c].runCount; r++)
+        {
+            const float* run = s_vxChunks[c].runs[r];
+            float* o = &s_vxChunkBuf[s_vxChunkBoxCount * 10];
+            o[0] = (float)p.x + m.cx.x * run[0] + m.cy.x * run[1] + m.cz.x * run[2];
+            o[1] = (float)p.y + m.cx.y * run[0] + m.cy.y * run[1] + m.cz.y * run[2];
+            o[2] = (float)p.z + m.cx.z * run[0] + m.cy.z * run[1] + m.cz.z * run[2];
+            o[3] = q.v.x; o[4] = q.v.y; o[5] = q.v.z; o[6] = q.s;
+            o[7] = run[3]; o[8] = run[4]; o[9] = run[5];
+            s_vxChunkBoxCount++;
+        }
+    }
+}
+
+WASM_EXPORT("w_vox_chunk_box_count")
+int w_vox_chunk_box_count(void) { vxFillChunkBoxes(); return s_vxChunkBoxCount; }
+
+WASM_EXPORT("w_vox_chunk_boxes")
+float* w_vox_chunk_boxes(void) { return s_vxChunkBuf; }
+
+// [alive, killed, chunks, staticShapes, hitsLastPost]
+WASM_EXPORT("w_vox_stats")
+float* w_vox_stats(void)
+{
+    static float out[5];
+    int shapes = 0, chunks = 0;
+    for (int r = 0; r < s_vxN[1] * s_vxN[2]; r++) shapes += s_vxRowShapes[r];
+    for (int c = 0; c < VOX_CHUNK_MAX; c++) chunks += s_vxChunks[c].used ? 1 : 0;
+    out[0] = (float)s_vxAlive;
+    out[1] = (float)s_vxKilled;
+    out[2] = (float)chunks;
+    out[3] = (float)shapes;
+    out[4] = (float)s_vxLastHits;
     return out;
 }
 

@@ -417,12 +417,35 @@ function poseHands(f) {
   };
 }
 
+// The wall session: calibrate, then punch the same spot hard, repeatedly.
+function posePunch(f) {
+  if (f < TPOSE_UNTIL) return pose(f);
+  const g = f - TPOSE_UNTIL;
+  let z = -0.30, y = 1.05;
+  if (g > 30) {
+    const c = (g - 30) % 36, out = c < 18 ? c / 18 : (36 - c) / 18;
+    z = -0.25 - 0.43 * out;
+  }
+  return {
+    head: vec(0, HEAD_Y, 0),
+    controllers: [
+      { pos: vec(-0.30, 1.15, -0.25), q: quat(0, 0, 0, 1) },
+      { pos: vec(0.18, y, z), q: quat(0, 0, 0, 1) },
+    ],
+    trigger: false,
+  };
+}
+
 (async () => {
   const page = process.argv[2] || "mech.html";
   console.log(`--- ${page} ---`);
 
-  const script = page === "drag.html" ? poseDrag : page === "handtrack.html" ? poseHands : pose;
-  const frames = page === "drag.html" ? 420 : page === "handtrack.html" ? 320 : 190;
+  const script = page === "drag.html" ? poseDrag
+               : page === "handtrack.html" ? poseHands
+               : page === "vox.html" ? posePunch : pose;
+  const frames = page === "drag.html" ? 420
+               : page === "handtrack.html" ? 320
+               : page === "vox.html" ? 360 : 190;
   const r = await runPage(page, frames, script);
 
   check("no exception escaped the frame loop", r.errors.length === 0,
@@ -443,6 +466,22 @@ function poseHands(f) {
           trav ? trav[1] + " m" : "no travelled line in the report");
     const planted = /PLANTED/.test(r.report) || (trav && parseFloat(trav[1]) > 0.35);
     check("the fists actually planted", planted, "no fist ever anchored");
+  }
+
+  if (page === "vox.html") {
+    const standing = r.report.match(/wall: (\d+)/);
+    const smashed = r.report.match(/(\d+) smashed/);
+    check("punches broke cells out of the wall",
+          smashed && parseInt(smashed[1], 10) >= 3,
+          smashed ? smashed[1] + " smashed" : "no wall line in the report");
+    check("the wall is still mostly standing", standing && parseInt(standing[1], 10) > 400,
+          standing ? standing[1] + " standing" : "no wall line");
+    const deb = r.report.match(/debris: (\d+)/);
+    check("the dead cells are debris now", deb && parseInt(deb[1], 10) >= 3,
+          deb ? deb[1] + " cubes" : "no debris line");
+    const runs = last.filter((b) => b.color && Math.abs(b.color[0] - 0.56) < 0.03 && b.pos[2] < -0.3);
+    check("the wall is drawn as merged runs", runs.length >= 15 && runs.length <= 200,
+          `${runs.length} runs`);
   }
 
   if (page === "handtrack.html") {

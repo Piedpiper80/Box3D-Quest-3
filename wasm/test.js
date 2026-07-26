@@ -414,6 +414,89 @@ const wasi = new WASI({ version: "preview1" });
   const knocked = Math.hypot(nowAt[0]-wasAt[0], nowAt[1]-wasAt[1], nowAt[2]-wasAt[2]);
   check("a punch still knocks a block flying", knocked > 0.3, `moved ${(knocked*100).toFixed(0)} cm`);
 
+  // --- voxel core (Phase 2) ---
+  //
+  // A voxel is a cell in a grid, not a body. The solver sees greedy-merged
+  // static runs, a capped debris pool, and single chunk bodies for regions
+  // that lose their connection to the ground. Damage is momentum through
+  // contact hit events, so fists, thrown blocks and falling chunks all use
+  // one mechanism.
+  const vst = () => { const p = E.w_vox_stats() >>> 2; return mem().slice(p, p + 5); };
+  const vstep = () => { E.w_mech_apply(); E.w_step(1 / 72); E.w_vox_post(); };
+  const vpunch = (x, y) => {
+    for (let s = 0; s < 50; s++) {
+      const t = s / 50, out = t < 0.4 ? t / 0.4 : Math.max(0, 1 - (t - 0.4) / 0.5);
+      E.w_mech_hand(1, x, y, -0.20 - 0.45 * out, 1, 0, 0, 0, 1);
+      E.w_mech_hand(0, -0.30, 1.15, -0.25, 1, 0, 0, 0, 1);
+      E.w_mech_stand(0, CHEST, 0);
+      vstep();
+    }
+  };
+  const vwall = (density, hp) => {
+    E.w_reset(1, 0);
+    E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, density, 4, 3, 1.5707, SHOULDER_HALF);
+    E.w_vox_create(0, 0, -0.62, 22, 12, 2, 0.10, hp);
+  };
+
+  vwall(1600, 8);
+  let v = vst();
+  check("a 528-cell wall is 24 merged shapes", v[0] === 528 && v[3] <= 26,
+        `alive ${v[0]}, shapes ${v[3]}`);
+
+  for (let p = 0; p < 4; p++) vpunch(0.18, 1.05);
+  v = vst();
+  check("punches knock cells out of the wall", v[1] >= 6, `${v[1]} killed`);
+  check("dead cells became debris", E.w_count() >= 6, `${E.w_count()} cubes`);
+
+  const killsAt = (density) => {
+    vwall(density, 8);
+    for (let p = 0; p < 4; p++) vpunch(0.18, 1.05);
+    return vst()[1];
+  };
+  const kLight = killsAt(350), kHeavy = killsAt(2800);
+  check("a heavier arm smashes more wall", kHeavy > kLight * 1.5,
+        `light ${kLight}, heavy ${kHeavy}`);
+
+  // Structure: cut a column's waist and the top must fall as one chunk.
+  E.w_reset(1, 0);
+  E.w_vox_create(0, 0, -0.62, 2, 12, 1, 0.10, 8);
+  E.w_vox_blast(0, 0.55, -0.60, 400);
+  v = vst();
+  const chunkBoxes = E.w_vox_chunk_box_count();
+  check("the orphaned top detaches as a chunk", v[2] >= 1 && chunkBoxes >= 1,
+        `chunks ${v[2]}, boxes ${chunkBoxes}`);
+  const chunkTop = () => {
+    const n = E.w_vox_chunk_box_count(); if (!n) return null;
+    const p = E.w_vox_chunk_boxes() >>> 2, f = mem();
+    let hi = -1e9; for (let i = 0; i < n; i++) hi = Math.max(hi, f[p + i * 10 + 1]);
+    return hi;
+  };
+  const cy1 = chunkTop();
+  for (let s = 0; s < 90; s++) { E.w_step(1 / 72); E.w_vox_post(); }
+  const cy2 = chunkTop();
+  check("the chunk actually falls", cy1 !== null && cy2 !== null && cy1 - cy2 > 0.3,
+        `${cy1 === null ? "none" : cy1.toFixed(2)} -> ${cy2 === null ? "none" : cy2.toFixed(2)}`);
+
+  // Budget: level a whole wall at once. Live debris must stay capped and the
+  // step must stay far inside the frame even in this slowest build.
+  E.w_reset(1, 0);
+  E.w_vox_create(0, 0, -0.9, 22, 12, 2, 0.10, 8);
+  for (let x = -1.0; x <= 1.0; x += 0.2)
+    for (let y = 0.1; y <= 1.1; y += 0.3)
+      E.w_vox_blast(x, y, -0.9, 900);
+  const tv0 = process.hrtime.bigint();
+  for (let s = 0; s < 120; s++) { E.w_step(1 / 72); E.w_vox_post(); }
+  const collapseUs = Number(process.hrtime.bigint() - tv0) / 120 / 1000;
+  v = vst();
+  check("levelling the wall leaves nothing standing", v[0] === 0, `${v[0]} alive`);
+  check("live debris stays inside its budget", E.w_count() <= 160, `${E.w_count()} cubes`);
+  console.log(`perf: ${collapseUs.toFixed(0)} us/step during total wall collapse`);
+  check("a total collapse still fits the frame", collapseUs < 9000, `${collapseUs.toFixed(0)} us`);
+  const vp = E.w_state() >>> 2, vf = mem();
+  let vbad = 0;
+  for (let i = 0; i < E.w_count(); i++) if (!Number.isFinite(vf[vp + i * 9])) vbad++;
+  check("rubble has no NaNs", vbad === 0, `${vbad} bad`);
+
   console.log(`\n${pass} passed, ${fail} failed, ${gaps} known gaps`);
   process.exit(fail === 0 ? 0 : 1);
 })().catch((e) => { console.error("HARNESS ERROR:", e); process.exit(2); });
