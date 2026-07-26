@@ -44,15 +44,15 @@ never changes is an ordering nobody is using.
    loop (`scratchpad/shot.js`, Chromium) is part of every visual change:
    render it, look at it, then ship it. The flat page also means the designer
    can review style from a phone.
-3. **Measure before you design.** The perf HUD (Phase 0) exists so that every
+4. **Measure before you design.** The perf HUD (Phase 0) exists so that every
    later decision is made against real numbers instead of intuition. Quest 3 is
    a fixed budget; the numbers decide the design, not the other way round.
-4. **Keep a playable spine.** From Phase 5 on there is always a complete
+5. **Keep a playable spine.** From Phase 5 on there is always a complete
    game — two destructible mechs, a killable core, one arena — and every later
    phase is an addition to something that already works. This isn't about
    shipping early; it's so quality can be judged by *playing* rather than by
    imagining the finished thing.
-5. **Take the time.** There is no deadline. Where there's a fast path and a
+6. **Take the time.** There is no deadline. Where there's a fast path and a
    right path, take the right one — including tooling, rework, and throwing
    away things that turned out wrong.
 
