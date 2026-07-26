@@ -715,7 +715,11 @@
       }
       if (match === "READY") {
         fistTimer = fistsUp ? fistTimer + 1/72 : 0;
-        if (fistTimer > 0.9) { match = "FIGHT"; fistTimer = 0; audioInit(); sting(true); }
+        if (fistTimer > 0.9) {
+          match = "FIGHT"; fistTimer = 0;
+          if (AC && AC.state === "suspended") AC.resume();
+          sting(true);
+        }
       } else if (match === "FIGHT") {
         var pg2 = E.w_vox_grid_stats(playerGrid) >>> 2, pf2 = new Float32Array(E.memory.buffer);
         var hullDmg = ef[ep+25];
@@ -792,6 +796,11 @@
 
   enterBtn.addEventListener("click", function () {
     enterBtn.textContent = "Starting…";
+    // Audio must be born on a browser gesture — a controller gesture in VR
+    // does not count, and a context created in the frame loop stays suspended
+    // and silent. This click is the one browser gesture we get.
+    audioInit();
+    if (AC && AC.state === "suspended") AC.resume();
     navigator.xr.requestSession("immersive-vr", { optionalFeatures: ["local-floor"] })
       .then(function (s) {
         session = s;
