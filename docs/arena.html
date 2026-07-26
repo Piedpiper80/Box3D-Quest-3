@@ -818,8 +818,17 @@
       // the joints so left and right still read apart.
       var armCol = [[0.40,0.44,0.54],[0.46,0.44,0.50]];
       var armMat = 3;
+      // The heat gauge lives on the metal itself — the DOM readout does not
+      // exist inside the headset. Past a third of the gauge the arms take on
+      // heat colour; past the redline the actuator housings glow outright.
+      var hg = Math.max(0, heat - 0.35) / 0.65;
+      var hot = function (c) {
+        return [c[0] + (1.00 - c[0]) * hg,
+                c[1] + (0.30 - c[1]) * hg * 0.9,
+                c[2] + (0.10 - c[2]) * hg * 0.9];
+      };
       for (var aI = 0; aI < 2; aI++) {
-        var col = armCol[aI], dim = [col[0]*0.75, col[1]*0.75, col[2]*0.75];
+        var col = hot(armCol[aI]), dim = [col[0]*0.75, col[1]*0.75, col[2]*0.75];
         // Stride three, not two. Adding the attachment took the state from five
         // bodies to seven and this was left behind, so the right arm was drawn
         // from the left attachment and the right upper arm — the wrong bodies
@@ -829,7 +838,9 @@
         var liF = limbItem(fa, fo, segLen[1], THICK*0.9, dim); liF.mat = armMat; items.push(liF);
         // The attachment. A blunt block for now; a sword or a gripper bolts on
         // in its place.
-        var liT = limbItem(fa, to, segLen[2] * 2, segLen[2], [0.86,0.88,0.92]); liT.mat = 3; items.push(liT);
+        var liT = limbItem(fa, to, segLen[2] * 2, segLen[2],
+                           overheated ? [1.0, 0.32, 0.14] : hot([0.86,0.88,0.92]));
+        liT.mat = overheated ? 5 : 3; items.push(liT);
         // Dark blocks on the shoulder, elbow and wrist, so the joints are
         // things you can see rather than guess at from where two boxes meet.
         items.push({ m: trs([fa[up], fa[up+1], fa[up+2]], [0,0,0,1], THICK*1.15), c: [0.15,0.17,0.23] });
@@ -896,6 +907,12 @@
         var vc = eState === 5 ? [0.12,0.12,0.14]
                : (eState === 2 || eState === 3) ? [1.0,0.42,0.18]
                : [0.85,0.20,0.16];
+        // While you crawl, the victor holds still — but the visor breathes,
+        // slowly, so stillness reads as watching rather than as a hang.
+        if (match === "COLLAPSED") {
+          var wp = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(lastT * 0.004));
+          vc = [0.85 * wp, 0.20 * wp, 0.16 * wp];
+        }
         items.push({ m: trs([vx2, vy2, vz2], q, [0.13, 0.025, 0.02]),
                      c: vc, mat: eState === 5 ? 0 : 5 });
       })();
@@ -1046,9 +1063,14 @@
       items.push({ m: trs([padPos.x, floorY + 0.02, padPos.z], [0,0,0,1], [0.55, 0.02, 0.55]),
                    c: padUrgent ? [0.20, 0.95, 0.85] : [0.12, 0.35, 0.33], mat: 5 });
       if (padUrgent) {
-        var pulse = 0.5 + 0.5 * Math.sin(lastT * 0.012);
-        items.push({ m: trs([padPos.x, floorY + 1.2, padPos.z], [0,0,0,1],
-                            [0.04, 1.2, 0.04]),
+        // The beacon is the countdown — no numbers in the headset, so the
+        // column drains like an hourglass and its pulse quickens as the
+        // time does.
+        var padFrac = Math.max(0, padTimer) / 25;
+        var pulse = 0.5 + 0.5 * Math.sin(lastT * (0.010 + (1 - padFrac) * 0.024));
+        var bH = 0.15 + 1.05 * padFrac;
+        items.push({ m: trs([padPos.x, floorY + bH, padPos.z], [0,0,0,1],
+                            [0.04, bH, 0.04]),
                      c: [0.20, 0.9 * pulse + 0.1, 0.8], mat: 5 });
       }
 
@@ -1108,6 +1130,19 @@
                  "  (density " + DENSITIES[level] + ")");
       var NAMES = ["IDLE","APPROACH","WINDUP","SWING","RECOVER","DEAD"];
       var pg3 = E.w_vox_grid_stats(playerGrid) >>> 2, pf3 = new Float32Array(E.memory.buffer);
+      var pAlive2 = pf3[pg3], pTot2 = pf3[pg3 + 2];
+      // Your own gauge rides your left wrist — the page's numbers do not
+      // exist inside the headset. Plate cells while the plate holds; once it
+      // is gone the pips turn hull-red and count what is left of you.
+      var pFrac2 = pTot2 > 0 ? pAlive2 / pTot2 : 0;
+      var hullFrac2 = 1 - Math.min(1, ef[ep+25] / playerCoreLimit);
+      for (var wI = 0; wI < 6; wI++) {
+        var wlit = (pFrac2 > 0.06) ? (wI / 6 < pFrac2) : (wI / 6 < hullFrac2);
+        items.push({ m: trs([fa[ms+21] - 0.125 + wI * 0.05, fa[ms+22] + 0.12, fa[ms+23]],
+                            [0,0,0,1], 0.015),
+                     c: wlit ? ((pFrac2 > 0.06) ? [0.55,0.58,0.66] : [0.92,0.35,0.25])
+                             : [0.16,0.17,0.20], mat: 5 });
+      }
       var chNow = CAMPAIGN[Math.min(chapter, CAMPAIGN.length - 1)];
       lines.push("chapter " + (Math.min(chapter, CAMPAIGN.length - 1) + 1) + " of " +
                  CAMPAIGN.length + ": " + chNow.name + " — " + chNow.place);
