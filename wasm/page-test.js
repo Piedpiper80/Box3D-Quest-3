@@ -469,13 +469,14 @@ function posePunch(f) {
   }
 
   if (page === "vox.html") {
-    const standing = r.report.match(/wall: (\d+)/);
-    const smashed = r.report.match(/(\d+) smashed/);
-    check("punches broke cells out of the wall",
+    const stone = r.report.match(/stone (\d+)\/(\d+)/);
+    const smashed = r.report.match(/smashed total: (\d+)/);
+    check("punches broke cells out of the stone wall",
           smashed && parseInt(smashed[1], 10) >= 3,
-          smashed ? smashed[1] + " smashed" : "no wall line in the report");
-    check("the wall is still mostly standing", standing && parseInt(standing[1], 10) > 400,
-          standing ? standing[1] + " standing" : "no wall line");
+          smashed ? smashed[1] + " smashed" : "no smashed line in the report");
+    check("the stone wall is still mostly standing",
+          stone && parseInt(stone[1], 10) > 150 && parseInt(stone[1], 10) < parseInt(stone[2], 10),
+          stone ? `${stone[1]} of ${stone[2]}` : "no stone line");
     const deb = r.report.match(/debris: (\d+)/);
     check("the dead cells are debris now", deb && parseInt(deb[1], 10) >= 3,
           deb ? deb[1] + " cubes" : "no debris line");

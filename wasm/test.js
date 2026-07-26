@@ -432,13 +432,14 @@ const wasi = new WASI({ version: "preview1" });
       vstep();
     }
   };
-  const vwall = (density, hp) => {
+  // Materials: 0 wood, 1 stone, 2 steel.
+  const vwall = (density, mat) => {
     E.w_reset(1, 0);
     E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, density, 4, 3, 1.5707, SHOULDER_HALF);
-    E.w_vox_create(0, 0, -0.62, 22, 12, 2, 0.10, hp);
+    E.w_vox_create(0, 0, -0.62, 22, 12, 2, 0.10, mat);
   };
 
-  vwall(1600, 8);
+  vwall(1600, 1);
   let v = vst();
   check("a 528-cell wall is 24 merged shapes", v[0] === 528 && v[3] <= 26,
         `alive ${v[0]}, shapes ${v[3]}`);
@@ -448,18 +449,26 @@ const wasi = new WASI({ version: "preview1" });
   check("punches knock cells out of the wall", v[1] >= 6, `${v[1]} killed`);
   check("dead cells became debris", E.w_count() >= 6, `${E.w_count()} cubes`);
 
-  const killsAt = (density) => {
-    vwall(density, 8);
+  const killsAt = (density, mat) => {
+    vwall(density, mat);
     for (let p = 0; p < 4; p++) vpunch(0.18, 1.05);
     return vst()[1];
   };
-  const kLight = killsAt(350), kHeavy = killsAt(2800);
+  const kLight = killsAt(350, 1), kHeavy = killsAt(2800, 1);
   check("a heavier arm smashes more wall", kHeavy > kLight * 1.5,
         `light ${kLight}, heavy ${kHeavy}`);
 
+  // Materials: the same light arm guts wood and cannot mark steel.
+  const kWood = killsAt(350, 0), kSteel = killsAt(350, 2);
+  check("a light arm breaks wood", kWood >= 4, `${kWood} cells`);
+  check("the same arm cannot dent steel", kSteel === 0, `${kSteel} cells`);
+  const kSteelHeavy = killsAt(2800, 2);
+  check("steel yields only to a heavy arm", kSteelHeavy > kSteel,
+        `heavy ${kSteelHeavy} vs light ${kSteel}`);
+
   // Structure: cut a column's waist and the top must fall as one chunk.
   E.w_reset(1, 0);
-  E.w_vox_create(0, 0, -0.62, 2, 12, 1, 0.10, 8);
+  E.w_vox_create(0, 0, -0.62, 2, 12, 1, 0.10, 1);
   E.w_vox_blast(0, 0.55, -0.60, 400);
   v = vst();
   const chunkBoxes = E.w_vox_chunk_box_count();
@@ -468,7 +477,7 @@ const wasi = new WASI({ version: "preview1" });
   const chunkTop = () => {
     const n = E.w_vox_chunk_box_count(); if (!n) return null;
     const p = E.w_vox_chunk_boxes() >>> 2, f = mem();
-    let hi = -1e9; for (let i = 0; i < n; i++) hi = Math.max(hi, f[p + i * 10 + 1]);
+    let hi = -1e9; for (let i = 0; i < n; i++) hi = Math.max(hi, f[p + i * 11 + 1]);
     return hi;
   };
   const cy1 = chunkTop();
@@ -480,7 +489,7 @@ const wasi = new WASI({ version: "preview1" });
   // Budget: level a whole wall at once. Live debris must stay capped and the
   // step must stay far inside the frame even in this slowest build.
   E.w_reset(1, 0);
-  E.w_vox_create(0, 0, -0.9, 22, 12, 2, 0.10, 8);
+  E.w_vox_create(0, 0, -0.9, 22, 12, 2, 0.10, 1);
   for (let x = -1.0; x <= 1.0; x += 0.2)
     for (let y = 0.1; y <= 1.1; y += 0.3)
       E.w_vox_blast(x, y, -0.9, 900);

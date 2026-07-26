@@ -384,6 +384,17 @@ the body count instead); rendering runs split on a two-bucket damage
 threshold only. Next Phase 2 work: per-cell damage on chunks, then the same
 grid worn as a mech's own armour — which is where Phase 2 meets Phase 3.
 
+#### Phase 3 opened: materials are a table, and the wall system is many walls
+
+The voxel core is multi-grid (4 concurrent grids, shared debris budget and
+chunk ring) and cells now belong to a **material**: density, toughness, colour,
+debris colour. Wood 400 kg/m³ / 4 hp, stone 1600 / 9, steel 7800 / 26 —
+measured with the same four punches: a light arm takes 8 cells of wood and
+**zero** of steel; steel yields only to the heavy arms. Nothing is per-object
+tuning — a punch is momentum, a material is a table row, and everything else
+falls out. `vox.html` now stands three walls side by side so the difference is
+felt, not read.
+
 #### Phase 1 status: all three spikes built, awaiting headset verdicts
 
 | Spike | Page | Machine-verified | Needs from the headset |
