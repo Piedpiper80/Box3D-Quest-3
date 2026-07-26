@@ -42,10 +42,13 @@
 
   <div class="card">
     <ul>
-      <li>A wall stands at punching range. <strong>Hit it.</strong> Cells crack (they discolour),
-          then burst out as debris. Keep working a spot and you punch a hole through.</li>
-      <li><strong>Press A</strong> to cycle your arm weight. A light arm chips; a heavy arm craters.
-          Same wall, same punches — the difference is the mass behind your fist.</li>
+      <li>Three walls stand at punching range: <strong>wood</strong> on your left,
+          <strong>stone</strong> in front, <strong>steel</strong> on your right. <strong>Hit
+          them.</strong> Cells crack (they discolour), then burst out as debris.</li>
+      <li>The same punch guts wood, chips stone, and bounces off steel. Nothing is scripted —
+          each material is just density and toughness in a table, and your fist is just momentum.</li>
+      <li><strong>Press A</strong> to cycle your arm weight. Steel only starts to yield to the
+          heavy arms.</li>
       <li>Undercut it: smash out the bottom of a section and everything above <strong>tears off and
           falls as one slab</strong>. The wall knows what is still holding on and what is not.</li>
       <li>Debris is real and it stays — kick through it, watch chunks knock more dust off the wall
@@ -301,9 +304,12 @@
                     SHOULDER_HALF);
     var L = E.w_mech_lengths() >>> 2, lf = new Float32Array(E.memory.buffer);
     segLen = [lf[L], lf[L + 1], lf[L + 2]];
-    // The wall: 2.2 m wide, 1.2 m tall, two cells thick, its face just inside
-    // punching range. 528 cells, 24 collision shapes while intact.
-    E.w_vox_create(hx, floorY, hz - 0.62, 22, 12, 2, 0.10, 8);
+    // Three walls, three materials: wood on the left, stone in front, steel
+    // on the right. Same punches, very different results — the difference is
+    // only the table entry.
+    E.w_vox_create(hx - 1.15, floorY, hz - 0.62, 10, 12, 2, 0.10, 0);
+    E.w_vox_create(hx, floorY, hz - 0.62, 10, 12, 2, 0.10, 1);
+    E.w_vox_create(hx + 1.15, floorY, hz - 0.62, 10, 12, 2, 0.10, 2);
     built = true;
   }
 
@@ -531,22 +537,26 @@
       }
 
       // The wall: merged runs, hurt cells discoloured. Then fallen chunks.
+      // Materials wear their colours; hurt cells discolour toward scorch.
+      var MATC = [[0.55,0.42,0.26], [0.56,0.57,0.62], [0.60,0.65,0.74]];
       var rn = E.w_vox_run_count(), rp = E.w_vox_runs() >>> 2;
       var fb = new Float32Array(E.memory.buffer);
       for (var ri = 0; ri < rn; ri++) {
-        var ro = rp + ri * 7;
+        var ro = rp + ri * 8;
+        var mc = MATC[fb[ro+7] | 0] || MATC[1];
         items.push({ m: trs([fb[ro], fb[ro+1], fb[ro+2]], [0,0,0,1],
                             [fb[ro+3], fb[ro+4], fb[ro+5]]),
-                     c: fb[ro+6] > 0.5 ? [0.82,0.46,0.25] : [0.56,0.57,0.62] });
+                     c: fb[ro+6] > 0.5 ? [0.80, 0.44, 0.24] : mc });
       }
       var cn = E.w_vox_chunk_box_count(), cp = E.w_vox_chunk_boxes() >>> 2;
       fb = new Float32Array(E.memory.buffer);
       for (var ci2 = 0; ci2 < cn; ci2++) {
-        var co2 = cp + ci2 * 10;
+        var co2 = cp + ci2 * 11;
+        var cc = MATC[fb[co2+10] | 0] || MATC[1];
         items.push({ m: trs([fb[co2], fb[co2+1], fb[co2+2]],
                             [fb[co2+3], fb[co2+4], fb[co2+5], fb[co2+6]],
                             [fb[co2+7], fb[co2+8], fb[co2+9]]),
-                     c: [0.48,0.49,0.55] });
+                     c: [cc[0]*0.85, cc[1]*0.85, cc[2]*0.85] });
       }
 
       var n = E.w_count(), sp3 = E.w_state() >>> 2;
@@ -564,9 +574,14 @@
       lines.push("arm material " + (level+1) + " of " + DENSITIES.length +
                  "  (density " + DENSITIES[level] + ")");
       var vs = E.w_vox_stats() >>> 2, vf2 = new Float32Array(E.memory.buffer);
-      lines.push("wall: " + vf2[vs] + " of 528 standing, " + vf2[vs+1] + " smashed");
-      lines.push("chunks fallen: " + vf2[vs+2] + "   wall shapes: " + vf2[vs+3] +
-                 "   debris: " + n);
+      var names = ["wood", "stone", "steel"], per = [];
+      for (var gi = 0; gi < 3; gi++) {
+        var gp2 = E.w_vox_grid_stats(gi) >>> 2, gf = new Float32Array(E.memory.buffer);
+        per.push(names[gi] + " " + gf[gp2] + "/" + gf[gp2+2]);
+      }
+      lines.push("walls standing: " + per.join("   "));
+      lines.push("smashed total: " + vf2[vs+1] + "   chunks: " + vf2[vs+2] +
+                 "   shapes: " + vf2[vs+3] + "   debris: " + n);
     } else if (E && floorY !== null && armSpan !== null && !built) {
       // Take the head height before building, or the first frame constructs the
       // machine around a guess and only corrects on the next one.
