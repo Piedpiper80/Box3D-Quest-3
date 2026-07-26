@@ -409,7 +409,7 @@
   var unlockedLevel = 1;             // arm weights unlock as the campaign goes
   var match = "READY";
   var fistTimer = 0, endTimer = 0, frameDt = 1 / 72;
-  var travelTimer = 0, rumbleT = 0;
+  var travelTimer = 0, rumbleT = 0, travelThump = 0;
   var hitStop = 0;
   // Overheat: swing hard and long and the actuators cook. Heavier arms heat
   // faster. Past the redline they weaken until you let them cool.
@@ -1012,7 +1012,11 @@
             E.w_mech_legs(0);
             boom(); shake = 0.2;
           } else {
+            // No third chance. The machine dies the way the enemy's does:
+            // the drives cut and it drops where it stands.
             match = "LOST"; endTimer = 0; sting(false);
+            E.w_mech_legs(0);
+            boom(); shake = 0.2;
           }
         }
       } else if (match === "WON" || match === "LOST") {
@@ -1034,11 +1038,19 @@
           }
         }
       } else if (match === "TRAVEL") {
-        // Strapped to a hauler between fights. The world shakes; nothing else
-        // asks anything of you. Five seconds of being carried.
+        // Strapped to a hauler between fights. The world shakes, the road
+        // thumps by underneath; nothing else asks anything of you.
         travelTimer -= frameDt; rumbleT += frameDt;
         if (shake < 0.02) shake = 0.02;
-        if (travelTimer <= 0) built = false;   // rebuild -> READY, new chapter
+        travelThump -= frameDt;
+        if (travelThump <= 0) {
+          thud(0.7 + Math.random() * 0.5);
+          travelThump = 0.34 + Math.random() * 0.22;
+        }
+        if (travelTimer <= 0) {
+          built = false;                       // rebuild -> READY, new chapter
+          sting(true);                         // arrival
+        }
       } else if (match === "ENDING") {
         endTimer += frameDt;
         fistTimer = (fistsUp && endTimer > 3.0) ? fistTimer + frameDt : 0;
