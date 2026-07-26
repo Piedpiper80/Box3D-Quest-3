@@ -245,10 +245,10 @@
   // driving the arm anywhere. At the 1400 and 900 N m they used to carry, the
   // arm was being hauled by the hand and braked by its own joints at the same
   // time, and it thrashed.
-  // Measured: at 60/40 the joints had enough stiction to hold the arm 12 cm
-  // short of where the hand was, the same distance whatever the arm weighed —
-  // a deadband, not weight. At 25/16 that falls to 3 cm.
-  var SHOULDER_TORQUE = 25, ELBOW_TORQUE = 16;
+  // Joint friction only. The pose now comes from an IK solve driven into the
+  // joints' own springs, so any real stiction here just fights it: at 25/16 the
+  // arm barely moved at all, and the springs could not overcome the brake.
+  var SHOULDER_TORQUE = 4, ELBOW_TORQUE = 3;
   // A quarter turn is the widest cone Box3D accepts; it was being given 2.2 rad
   // and silently going degenerate, since the assert that would have caught it
   // is compiled out of a release build.
