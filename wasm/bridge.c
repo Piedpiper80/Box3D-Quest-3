@@ -60,6 +60,10 @@ static int s_mExists = 0;
 static void vxWorldReset(void);
 static int s_dummyExists = 0;
 static int s_eExists = 0;
+static float s_eScale = 1.0f;      // body size multiplier
+static float s_eTempo = 1.0f;      // how fast its will runs
+static int s_eHover = 0;           // the God does not stand on the ground
+static float s_eStandY = 1.15f;
 static Cube s_cubes[MAX_CUBES];
 static int s_count = 0;
 static int s_ambient = 0;      // initial cubes are never recycled
@@ -2325,6 +2329,28 @@ float* w_vox_stats(void)
 // damageable, but drawn in their face it is a wall across the bottom of the
 // view. Hidden grids keep simulating and taking hits; they just stay out of
 // the draw list, and the page shows their state as an instrument instead.
+// Restore every surviving structure of a grid to full health and refill the
+// holes — the repair pad's other half.
+WASM_EXPORT("w_vox_heal")
+void w_vox_heal(int grid)
+{
+    if (grid < 0 || grid >= VOX_GRIDS || !s_vxG[grid].used) return;
+    VoxGrid* g = &s_vxG[grid];
+    const float hp = VOX_MATS[g->material].hp;
+    const int total = g->n[0] * g->n[1] * g->n[2];
+    int revived = 0;
+    for (int i = 0; i < total; i++)
+    {
+        if (g->hp[i] <= 0.0f) revived++;
+        g->hp[i] = hp;
+    }
+    g->alive = total;
+    for (int z = 0; z < g->n[2]; z++)
+        for (int y = 0; y < g->n[1]; y++)
+            vxMeshRow(g, y, z);
+    (void)revived;
+}
+
 WASM_EXPORT("w_vox_hide")
 void w_vox_hide(int grid, int hide)
 {
@@ -2447,15 +2473,39 @@ static float s_eLastCoreHit = 0.0f;       // for the page's sound hooks
 static float s_eLastPlayerHit = 0.0f;
 
 // Height the enemy stands at, and how far away it wants to fight from.
-#define ENEMY_STAND_Y 1.15f
+#define ENEMY_STAND_Y s_eStandY
 // Close enough that both machines' arms genuinely reach each other: the
 // player's fist reaches 0.68 m and the enemy's club 0.60, so at 0.72 m
 // centre-to-centre the fight actually connects both ways. The first probe had
 // this at 1.05 and every player punch whiffed short.
 #define ENEMY_RANGE 0.72f
 
+static int w_enemy_create_inner(float x, float z, int material);
+
+// The full-fat constructor: size scales the whole machine, tempo speeds its
+// decisions, coreHp sets how much punishment the bared core takes, and hover
+// floats it — the last boss does not deign to stand.
+WASM_EXPORT("w_enemy_create_ex")
+int w_enemy_create_ex(float x, float z, int material, float scale,
+                      float coreHp, int hover, float tempo)
+{
+    s_eScale = scale < 0.5f ? 0.5f : (scale > 2.0f ? 2.0f : scale);
+    s_eTempo = tempo < 0.4f ? 0.4f : (tempo > 2.5f ? 2.5f : tempo);
+    s_eHover = hover ? 1 : 0;
+    s_eCoreHpMax = coreHp > 20.0f ? coreHp : 260.0f;
+    s_eStandY = s_eHover ? 1.45f : 1.15f * (0.7f + 0.3f * s_eScale);
+    return w_enemy_create_inner(x, z, material);
+}
+
 WASM_EXPORT("w_enemy_create")
 int w_enemy_create(float x, float z, int material)
+{
+    s_eScale = 1.0f; s_eTempo = 1.0f; s_eHover = 0;
+    s_eCoreHpMax = 260.0f; s_eStandY = 1.15f;
+    return w_enemy_create_inner(x, z, material);
+}
+
+static int w_enemy_create_inner(float x, float z, int material)
 {
     b3BodyDef td = b3DefaultBodyDef();
     td.type = b3_dynamicBody;
@@ -2470,7 +2520,8 @@ int w_enemy_create(float x, float z, int material)
     tsd.enableHitEvents = true;           // core hits are how it dies
     tsd.filter.categoryBits = ENEMY_CATEGORY;
     tsd.filter.maskBits = ~ENEMY_CATEGORY;
-    b3BoxHull thull = b3MakeBoxHull(0.24f, 0.34f, 0.14f);
+    const float sc = s_eScale;
+    b3BoxHull thull = b3MakeBoxHull(0.24f * sc, 0.34f * sc, 0.14f * sc);
     b3CreateHullShape(s_eTorso, &tsd, &thull.base);
 
     // Club arms: single rigid limbs on spherical joints with spring drives.
@@ -2481,8 +2532,8 @@ int w_enemy_create(float x, float z, int material)
         const float side = i == 0 ? -1.0f : 1.0f;
         b3BodyDef ad = b3DefaultBodyDef();
         ad.type = b3_dynamicBody;
-        ad.position.x = x + side * 0.32f;
-        ad.position.y = ENEMY_STAND_Y + 0.10f;
+        ad.position.x = x + side * 0.32f * sc;
+        ad.position.y = ENEMY_STAND_Y + 0.10f * sc;
         ad.position.z = z;
         ad.angularDamping = 1.0f;
         s_eArm[i] = b3CreateBody(s_world, &ad);
@@ -2493,7 +2544,7 @@ int w_enemy_create(float x, float z, int material)
         asd.enableHitEvents = true;
         asd.filter.categoryBits = ENEMY_CATEGORY;
         asd.filter.maskBits = ~ENEMY_CATEGORY;
-        b3BoxHull ahull = b3MakeBoxHull(0.07f, 0.07f, 0.30f);
+        b3BoxHull ahull = b3MakeBoxHull(0.07f * sc, 0.07f * sc, 0.30f * sc);
         b3Transform aoff = b3Transform_identity;
         // The club extends along its body's +z. The cone limit constrains the
         // club's +z to stay near the torso's +z (the facing direction), so the
@@ -2502,7 +2553,7 @@ int w_enemy_create(float x, float z, int material)
         // from the cone axis — maximally outside — and the spring spent every
         // frame pinned sideways against the limit. That was the 56 m/s of
         // chatter and every swing whiffing half a metre short.
-        aoff.p.z = 0.30f;
+        aoff.p.z = 0.30f * sc;
         b3Vec3 one = { 1.0f, 1.0f, 1.0f };
         b3CreateTransformedHullShape(s_eArm[i], &asd, &ahull.base, aoff, one);
 
@@ -2510,8 +2561,8 @@ int w_enemy_create(float x, float z, int material)
         sj.base.bodyIdA = s_eTorso;
         sj.base.bodyIdB = s_eArm[i];
         sj.base.localFrameA = b3Transform_identity;
-        sj.base.localFrameA.p.x = side * 0.32f;
-        sj.base.localFrameA.p.y = 0.10f;
+        sj.base.localFrameA.p.x = side * 0.32f * sc;
+        sj.base.localFrameA.p.y = 0.10f * sc;
         sj.base.localFrameB = b3Transform_identity;
         sj.base.collideConnected = false;
         sj.enableConeLimit = true;
@@ -2523,8 +2574,8 @@ int w_enemy_create(float x, float z, int material)
     }
 
     // Its armour: a plate over the chest, facing the player side (+z).
-    b3Vec3 local = { -0.245f, -0.245f, 0.14f };
-    s_eGrid = vxBuild(s_eTorso, local, 7, 7, 1, 0.07f, material, 2, ENEMY_CATEGORY);
+    b3Vec3 local = { -0.245f * sc, -0.245f * sc, 0.14f * sc };
+    s_eGrid = vxBuild(s_eTorso, local, 7, 7, 1, 0.07f * sc, material, 2, ENEMY_CATEGORY);
 
     s_eCoreHp = s_eCoreHpMax;
     s_eState = E_APPROACH;
@@ -2594,9 +2645,10 @@ void w_enemy_update(float px, float py, float pz, float dt)
         b3Vec3 toP = { px - (float)tp.x, 0.0f, pz - (float)tp.z };
         const float dist = __builtin_sqrtf(toP.x*toP.x + toP.z*toP.z);
         float gx = (float)tp.x, gz = (float)tp.z;
-        if (dist > ENEMY_RANGE)
+        const float wantRange = ENEMY_RANGE + (s_eScale - 1.0f) * 0.35f;
+        if (dist > wantRange)
         {
-            const float step = dist - ENEMY_RANGE;
+            const float step = dist - wantRange;
             gx += toP.x / dist * step;
             gz += toP.z / dist * step;
         }
@@ -2651,7 +2703,7 @@ void w_enemy_update(float px, float py, float pz, float dt)
     // edge — and the spring chattered against the limit at 55 m/s of tip speed
     // while the swing never got within half a metre of the player. Measured,
     // not guessed: the probe tracked the tip.
-    s_eTimer += dt;
+    s_eTimer += dt * s_eTempo;
     b3Vec3 toP = { px - (float)tp.x, py - (float)tp.y, pz - (float)tp.z };
     const float pl = __builtin_sqrtf(toP.x*toP.x + toP.y*toP.y + toP.z*toP.z);
     b3Vec3 pHat = { 1.0f, 0.0f, 0.0f };
@@ -2663,8 +2715,9 @@ void w_enemy_update(float px, float py, float pz, float dt)
         {
             eAimArm(0, guard, 2.5f);
             eAimArm(1, guard, 2.5f);
+            const float reach = ENEMY_RANGE + (s_eScale - 1.0f) * 0.35f;
             const float d2 = toP.x*toP.x + toP.z*toP.z;
-            if (d2 < (ENEMY_RANGE + 0.15f) * (ENEMY_RANGE + 0.15f) && s_eTimer > 0.8f)
+            if (d2 < (reach + 0.15f) * (reach + 0.15f) && s_eTimer > 0.8f)
             {
                 s_eState = E_WINDUP; s_eTimer = 0.0f;
                 s_eSwingArm = 1 - s_eSwingArm;
@@ -2787,6 +2840,20 @@ void w_enemy_post(void)
 
 // [x,y,z,qx,qy,qz,qw, state, coreFrac, armL(7), armR(7), lastCoreHit,
 //  lastPlayerHit, playerCoreDamage] — everything the page draws and sounds.
+// The repair pad wipes the hull damage the enemy has scored on the player.
+WASM_EXPORT("w_player_repair")
+void w_player_repair(void)
+{
+    s_eHitPlayerCore = 0.0f;
+}
+
+// Direct core damage, for tests and future weapons.
+WASM_EXPORT("w_enemy_damage_core")
+void w_enemy_damage_core(float amount)
+{
+    if (s_eExists && s_eState != E_DEAD) s_eCoreHp -= amount;
+}
+
 WASM_EXPORT("w_enemy_state")
 float* w_enemy_state(void)
 {

@@ -237,6 +237,7 @@ async function runPage(file, frames, poseAt) {
   // Drive frames. An exception escaping a frame callback is the exact failure
   // being guarded against, so it is caught here and reported, not thrown.
   const perFrame = [];
+  const matchSeq = [];   // every distinct match-state the report passed through
   for (let f = 0; f < frames; f++) {
     const p = poseAt(f);
     poses.head = p.head;
@@ -265,9 +266,12 @@ async function runPage(file, frames, poseAt) {
       break;
     }
     perFrame.push(drawLog.slice(before));
+    const mm = el("report").textContent.match(/match: (\w+)/);
+    if (mm && matchSeq[matchSeq.length - 1] !== mm[1]) matchSeq.push(mm[1]);
   }
 
-  return { drawLog, perFrame, errors, status: el("status").textContent, report: el("report").textContent };
+  return { drawLog, perFrame, errors, matchSeq,
+           status: el("status").textContent, report: el("report").textContent };
 }
 
 // --- checks -----------------------------------------------------------------
@@ -460,6 +464,27 @@ function poseArena(f) {
   return mk(vec(-0.26, 1.12, -0.25), vec(0.06, 1.12, -0.22 - 0.48 * out));
 }
 
+// The arena's losing path: start the fight, then keep the hands wide and low
+// and let the enemy work. The hull limit trips, the legs cut out, the pad
+// timer runs dry, and the rematch gesture rebuilds the chapter. This is the
+// second-wind flow end to end, minus the crawl itself (the crawl mechanics
+// are drag.html's tests; here what matters is the states around them).
+function poseArenaCollapse(f) {
+  if (f < TPOSE_UNTIL) return pose(f);
+  const mk = (l, r) => ({
+    head: vec(0, HEAD_Y, 0),
+    controllers: [
+      { pos: l, q: quat(0, 0, 0, 1) },
+      { pos: r, q: quat(0, 0, 0, 1) },
+    ],
+    trigger: false,
+  });
+  if (f < 40) return mk(vec(-0.24, 1.15, -0.30), vec(0.24, 1.15, -0.30));
+  if (f < 130) return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));  // start it
+  if (f < 6900) return mk(vec(-0.55, 0.80, -0.05), vec(0.55, 0.80, -0.05)); // take it
+  return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));               // rematch
+}
+
 (async () => {
   const page = process.argv[2] || "mech.html";
   console.log(`--- ${page} ---`);
@@ -506,6 +531,20 @@ function poseArena(f) {
     check("the enemy machine is drawn and acting",
           /enemy: (APPROACH|WINDUP|SWING|RECOVER|DEAD)/.test(r.report),
           (r.report.match(/enemy: \w+/) || ["no enemy line"])[0]);
+
+    // Second run: the losing path. Undefended, the fight should end in the
+    // collapse -> pad timeout -> loss -> rematch chain, in that order.
+    const r2 = await runPage(page, 9000, poseArenaCollapse);
+    check("collapse run: no exception escaped", r2.errors.length === 0, r2.errors[0] || "");
+    const seq = r2.matchSeq.join(">");
+    const chain = ["READY", "FIGHT", "COLLAPSED", "LOST", "READY"];
+    let at = 0;
+    for (const s of r2.matchSeq) if (s === chain[at]) at++;
+    check("undefended, the fight collapses, times out, and offers the rematch",
+          at >= chain.length, "states seen: " + seq);
+    check("the rematch rebuilt the chapter",
+          /you: plate 36\/36/.test(r2.report),
+          (r2.report.match(/you: plate \d+\/\d+/) || ["no plate line"])[0]);
   }
 
   if (page === "dummy.html") {

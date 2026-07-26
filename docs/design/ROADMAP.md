@@ -483,6 +483,65 @@ variety; win/lose is signalled by colour and sound rather than text; one
 arena, no props; no rounds/score. These are content and polish on a working
 spine — exactly where the roadmap wants the project to sit.
 
+#### The campaign: four chapters, a collapse you crawl out of, an ending
+
+`arena.html` is the whole game now. Four opponents, each a place and a story
+card: **SCRAPPER** (wood-armoured, small, quick — The Scrapfields),
+**WARDEN** (stone, your equal — Milltown Ring), **JUGGERNAUT** (steel, a
+quarter bigger, slow and committed — The Foundry), and **THE RETURNED**
+(steel, bigger still, fast, and it does not stand on the earth — The High
+Dark). The pillars of each arena are built from that chapter's material, so
+the place changes with the fight.
+
+The loop: win, and the world rumbles you five seconds down the road to the
+next chapter — each win unlocks the next arm weight. Lose and it's the same
+fight again. Beat the fourth and the sky is yours; fists up starts the
+campaign over with everything you earned. Two systems make the fights
+breathe: **heat** — actuator work cooks the arms, past the redline they
+derate to a third strength until they cool — and the **second wind**: the
+first time your hull gives out, the legs cut and you get twenty-five seconds
+to knuckle-haul the dead machine to the repair pad, the same crawl the
+crippled machine has owned since the drag spike. Reach it and you stand back
+up whole. Miss it and that's the loss.
+
+**What the look-at-it loop caught this round** — five real defects, none of
+which any existing test saw:
+
+- The flat preview's clock started at page load, not preview start, so the
+  scripted pilot's fists-up window was already over before the first frame
+  drew. The screenshots looked like a still life because they were one.
+- The fight-start gesture counted *frames* as time — at preview frame rates
+  it could never accumulate enough, and in a headset it was riding the edge.
+- **Hit-stop froze the game solid.** The engine's hit fields only refresh
+  when physics steps run; hit-stop stops the steps; the stale "core was hit"
+  field re-armed hit-stop every frame, forever, from the first core strike.
+  In a headset the first solid hit would have frozen the fight permanently.
+- The collapse required the plate stripped *and* the hull dead — but clubs
+  reach the hull around the plate's edges, so hull damage sailed past the
+  death line with the plate still half on and nothing happened. The plate
+  protects by absorbing, not by postponing the loss.
+- The entire heat system ran inside the audio gate — a gameplay system that
+  only existed once the player had clicked Enter VR with sound available,
+  and never in any test.
+
+The harness now records the sequence of match states a run passes through,
+and an undefended run proves the chain end to end: READY → FIGHT →
+COLLAPSED (countdown visibly draining) → LOST → rematch rebuilds the
+chapter. The flat preview rode chapter 1's win, the travel, and into the
+WARDEN fight live — the campaign advances, the unlock ladder pays out.
+
+Where each phase stands in the shipped game: **1–5 are built as designed**
+(spikes, voxel core, materials, the mech with heat, the fight). **6** is the
+unlock ladder and the four-machine roster — the shop and reputation are
+post-1.0. **7** is travel as a transition, not yet a world. **8** is the
+story cards and the Returned — a god that hovers — with the ending state;
+flight and space stay deferred. That is the full arc at first-playable
+depth, honestly labelled.
+
+Known gaps, named: the beaten enemy freezes while you crawl (read it as the
+victor watching); travel is a rumble and a name, not a place; the pad
+recovery trigger is machine-verified but has not been felt in a headset.
+
 #### Phase 1 status: all three spikes built, awaiting headset verdicts
 
 | Spike | Page | Machine-verified | Needs from the headset |

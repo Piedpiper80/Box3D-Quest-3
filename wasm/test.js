@@ -593,6 +593,38 @@ const wasi = new WASI({ version: "preview1" });
   check("the dead machine ends up on the ground", est()[1] < 0.60,
         `resting at y ${est()[1].toFixed(2)} (stood at 1.15)`);
 
+  // --- campaign machinery ---
+  // Variants, healing, and the debug damage path the balancing work uses.
+  E.w_reset(1, 0);
+  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
+  E.w_player_plate(1);
+  E.w_enemy_create_ex(0, -2.5, 2, 1.35, 430, 1, 1.25);   // the hovering God
+  for (let s = 0; s < 300; s++) {
+    E.w_mech_hand(0, -0.4, 1.0, -0.2, 1, 0, 0, 0, 1);
+    E.w_mech_hand(1, 0.4, 1.0, -0.2, 1, 0, 0, 0, 1);
+    E.w_mech_stand(0, CHEST, 0);
+    E.w_enemy_update(0, CHEST, 0, 1 / 72);
+    E.w_mech_apply(); E.w_step(1 / 72); E.w_vox_post(); E.w_enemy_post();
+  }
+  let boss = est();
+  check("the God hovers instead of standing", boss[1] > 1.2, `y ${boss[1].toFixed(2)}`);
+
+  E.w_enemy_damage_core(1000);
+  for (let s = 0; s < 10; s++) { E.w_enemy_update(0, CHEST, 0, 1/72); E.w_step(1/72); E.w_vox_post(); E.w_enemy_post(); }
+  check("direct core damage kills through the same death", est()[7] === 5,
+        `state ${est()[7]}`);
+
+  // Heal: wreck a plate, then restore it.
+  E.w_reset(1, 0);
+  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
+  const healG = E.w_player_plate(1);
+  E.w_vox_blast(0, CHEST, -0.24, 120);
+  const hurt = grid(healG)[0];
+  E.w_vox_heal(healG);
+  check("the repair pad's heal refills a wrecked plate",
+        hurt < 36 && grid(healG)[0] === 36,
+        `was ${hurt}, now ${grid(healG)[0]}`);
+
   console.log(`\n${pass} passed, ${fail} failed, ${gaps} known gaps`);
   process.exit(fail === 0 ? 0 : 1);
 })().catch((e) => { console.error("HARNESS ERROR:", e); process.exit(2); });

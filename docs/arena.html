@@ -217,14 +217,15 @@
         xx,yx,zx,0, xy,yy,zy,0, xz,yz,zz,0,
         -(xx*e[0]+xy*e[1]+xz*e[2]), -(yx*e[0]+yy*e[1]+yz*e[2]), -(zx*e[0]+zy*e[1]+zz*e[2]), 1]);
     }
-    // Scripted pilot: fists up to start, guard, then steady punching.
+    // Scripted pilot, state-aware: whatever the frame rate, it holds its fists
+    // up until the match actually starts, then throws a steady punch. Long
+    // previews ride the whole campaign — win, travel, next chapter.
     function pilot(tS) {
       var L = { x:-0.24, y:1.15, z:-0.30 }, R = { x:0.24, y:1.15, z:-0.30 };
-      if (tS > 1.0 && tS < 2.2) { L.y = R.y = 1.80; L.z = R.z = -0.10; }
-      else if (tS >= 3.0) {
-        var c = (tS - 3.0) % 0.9, out = c < 0.45 ? c/0.45 : (0.9-c)/0.45;
+      if (match === "FIGHT") {
+        var c = tS % 0.9, out = c < 0.45 ? c/0.45 : (0.9-c)/0.45;
         R = { x: 0.08, y: 1.10, z: -0.22 - 0.48*out };
-      }
+      } else if (tS > 1.0) { L.y = R.y = 1.80; L.z = R.z = -0.10; }
       return [L, R];
     }
     var fakeSpaces = [{ i: 0 }, { i: 1 }];
@@ -260,7 +261,8 @@
     };
     refSpace = { kind: "flat" }; spaceKind = "flat"; floorReal = true;
     var drive = function (tt, frame) {
-      fakeT = tt / 1000;                 // real seconds — frame rate free
+      if (t0 === null) t0 = tt;
+      fakeT = (tt - t0) / 1000;          // real seconds since preview start
       var ph = pilot(fakeT);
       hands[0] = ph[0]; hands[1] = ph[1];
       onFrame(tt, fakeFrame);
@@ -388,8 +390,37 @@
   // --- the match ---
   // CALIBRATE is implicit (floor/span). READY waits for fists-up. FIGHT runs
   // the enemy. WON/LOST hold until fists-up rematches.
+  // --- the campaign: four chapters, four machines, four places ---
+  var CAMPAIGN = [
+    { name: "SCRAPPER", place: "The Scrapfields",
+      story: "An old harvester frame, re-armed. It remembers being told to dig.",
+      mat: 0, scale: 0.85, core: 170, hover: 0, tempo: 1.15, pillarMat: 0 },
+    { name: "WARDEN", place: "Milltown Ring",
+      story: "Town watch chassis. Stone-plated. Patient. It has never lost here.",
+      mat: 1, scale: 1.0, core: 260, hover: 0, tempo: 1.0, pillarMat: 1 },
+    { name: "JUGGERNAUT", place: "The Foundry",
+      story: "Foundry guard, steel-skinned. Bring your heaviest arms.",
+      mat: 2, scale: 1.25, core: 340, hover: 0, tempo: 0.85, pillarMat: 1 },
+    { name: "THE RETURNED", place: "The High Dark",
+      story: "It does not stand on the earth. The old gods never did.",
+      mat: 2, scale: 1.35, core: 430, hover: 1, tempo: 1.25, pillarMat: 2 },
+  ];
+  var chapter = 0;
+  var unlockedLevel = 1;             // arm weights unlock as the campaign goes
   var match = "READY";
   var fistTimer = 0, endTimer = 0, frameDt = 1 / 72;
+  var travelTimer = 0, rumbleT = 0;
+  var hitStop = 0;
+  // Overheat: swing hard and long and the actuators cook. Heavier arms heat
+  // faster. Past the redline they weaken until you let them cool.
+  var heat = 0, overheated = false;
+  // The second wind: when your hull gives out the legs cut, the machine drops,
+  // and you get one chance — knuckle-drag yourself to the repair pad before
+  // the countdown dies, while the other machine keeps coming. Phase 1's
+  // locomotion fallback, exactly where the design always wanted it.
+  var O = { x: 0, y: 0, z: 0 };
+  var secondWind = false, padTimer = 0;
+  var padPos = { x: 0, z: 0 };
   var playerCoreLimit = 130;         // momentum the bare hull can take
   var enemyGrid = -1, playerGrid = -1;
   var prevStats = null, prevChunks = 0, prevEnemy = null;
@@ -515,15 +546,23 @@
     var L = E.w_mech_lengths() >>> 2, lf = new Float32Array(E.memory.buffer);
     segLen = [lf[L], lf[L + 1], lf[L + 2]];
     // You wear steel; it wears stone. It starts across the arena.
-    playerGrid = E.w_player_plate(1);   // matched stone — your edge is skill
+    var ch2 = CAMPAIGN[chapter];
+    playerGrid = E.w_player_plate(1);   // stone plate; your edge is skill
     E.w_vox_hide(playerGrid, 1);        // simulated, damageable, NOT in your face
-    enemyGrid = E.w_enemy_create(hx, hz - 3.2, 1);
-    // Four stone pillars: cover, scenery, and something to wreck when the
-    // fight drifts into them. Real voxel grids like everything else.
-    E.w_vox_create(hx - 2.1, floorY, hz - 2.1, 4, 16, 4, 0.10, 1);
-    E.w_vox_create(hx + 2.1, floorY, hz - 2.1, 4, 16, 4, 0.10, 1);
-    E.w_vox_create(hx - 2.1, floorY, hz + 1.4, 4, 16, 4, 0.10, 1);
-    E.w_vox_create(hx + 2.1, floorY, hz + 1.4, 4, 16, 4, 0.10, 1);
+    enemyGrid = E.w_enemy_create_ex(hx, hz - 3.2, ch2.mat, ch2.scale,
+                                    ch2.core, ch2.hover, ch2.tempo);
+    // Pillars: cover, scenery, wreckage-in-waiting. Their material sets the
+    // look of the place as much as the fight.
+    E.w_vox_create(hx - 2.1, floorY, hz - 2.1, 4, 16, 4, 0.10, ch2.pillarMat);
+    E.w_vox_create(hx + 2.1, floorY, hz - 2.1, 4, 16, 4, 0.10, ch2.pillarMat);
+    E.w_vox_create(hx - 2.1, floorY, hz + 1.4, 4, 16, 4, 0.10, ch2.pillarMat);
+    E.w_vox_create(hx + 2.1, floorY, hz + 1.4, 4, 16, 4, 0.10, ch2.pillarMat);
+    heat = 0; overheated = false;
+    E.w_mech_joint_spring(8000, 1.0);
+    E.w_mech_legs(1);
+    O.x = 0; O.y = 0; O.z = 0;
+    secondWind = false;
+    padPos = { x: hx + 2.6, z: hz + 0.6 };
     match = "READY";
     prevStats = null; prevChunks = 0; prevEnemy = null;
     endTimer = 0;
@@ -574,7 +613,7 @@
 
     var pose = frame.getViewerPose(refSpace);
     if (!pose) return;
-    eyePos = [pose.transform.position.x, pose.transform.position.y, pose.transform.position.z];
+    eyePos = [pose.transform.position.x + O.x, pose.transform.position.y + O.y, pose.transform.position.z + O.z];
     var dtMs = lastT ? Math.min(t - lastT, 100) : STEP * 1000;
     lastT = t;
     frameDt = dtMs / 1000;
@@ -592,7 +631,8 @@
       var a2 = shake * 60;
       sh = [Math.sin(a2 * 13.3) * 0.008, Math.cos(a2 * 17.1) * 0.006, 0];
     }
-    var shiftM = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, sh[0], sh[1], sh[2], 1]);
+    var shiftM = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0,
+                                   sh[0] - O.x, sh[1] - O.y, sh[2] - O.z, 1]);
     for (var v = 0; v < pose.views.length; v++) {
       var view = pose.views[v];
       var vp = layer.getViewport(view);
@@ -674,17 +714,19 @@
         if (floorCandidate === null || pos.y < floorCandidate) floorCandidate = pos.y;
       }
 
-      // Haul the matching wrist toward this controller.
+      // Hand targets ride the rig offset, and the grip is the grab — the
+      // engine only lets a fist hold ground it is actually touching.
       if (E && built) {
-        // Position and aim — the attachment turns to face where you point.
-        E.w_mech_hand(src.handedness === "right" ? 1 : 0,
-                      pos.x, pos.y, pos.z, 1, q.x, q.y, q.z, q.w);
+        var armIdx = src.handedness === "right" ? 1 : 0;
+        E.w_mech_hand(armIdx, pos.x + O.x, pos.y + O.y, pos.z + O.z,
+                      1, q.x, q.y, q.z, q.w);
+        E.w_mech_anchor(armIdx, grip ? 1 : 0);
       }
       // A cycles the arm material.
       if (gp && gp.buttons && gp.buttons.length > 4 && src.handedness === "right") {
         var aDown = gp.buttons[4].pressed;
-        if (aDown && !prevA && E && built) {
-          level = (level + 1) % DENSITIES.length;
+        if (aDown && !prevA && E && built && match !== "FIGHT") {
+          level = (level + 1) % (unlockedLevel + 1);
           built = false;   // material is baked into the bodies, so rebuild
         }
         prevA = aDown;
@@ -693,7 +735,7 @@
       // Small marker exactly on the controller — the truth your hand knows.
       // Turns green while the arm span is being measured, so you can see the
       // headset has both hands before you pull.
-      items.push({ m: trs([pos.x, pos.y, pos.z], [q.x,q.y,q.z,q.w],
+      items.push({ m: trs([pos.x + O.x, pos.y + O.y, pos.z + O.z], [q.x,q.y,q.z,q.w],
                           (!calibrating && armSpan === null) ? 0.05 : 0.022),
                    c: (!calibrating && armSpan === null) ? [0.35,0.85,0.45] : [0.62,0.66,0.74] });
 
@@ -740,9 +782,12 @@
 
     if (E && built) {
       headY = hp.y;
-      E.w_mech_stand(hp.x, chestY(), hp.z);
+      E.w_mech_stand(hp.x + O.x, chestY(), hp.z + O.z);
+      if (hitStop > 0) { hitStop -= frameDt; acc = 0; }
+      var stepped = false;
       while (acc >= STEP) {
         acc -= STEP;
+        stepped = true;
         if (match === "FIGHT") {
           var msP = E.w_mech_state() >>> 2, fP0 = new Float32Array(E.memory.buffer);
           E.w_enemy_update(fP0[msP], fP0[msP+1], fP0[msP+2], STEP);
@@ -756,6 +801,13 @@
       // Seven bodies, seven floats each: torso, then upper / forearm /
       // attachment for the left arm, then the same three for the right.
       var ms = E.w_mech_state() >>> 2, fa = new Float32Array(E.memory.buffer);
+
+      // Ride the machine: the cockpit sinks if the hull drops, and while the
+      // machine drags itself the world moves past the player, not the player
+      // past their room.
+      var dsA = E.w_mech_drag_state() >>> 2;
+      O.y = fa[ms + 1] - chestY();
+      if (fa[dsA + 4] > 0.5) { O.x = fa[ms] - hp.x; O.z = fa[ms + 2] - hp.z; }
 
       // The pilot sits inside the machine, so the machine's own torso is not
       // drawn — from the cockpit it was a wall across the bottom of the view,
@@ -856,28 +908,60 @@
         if (dk > 0) { clang(Math.min(3, dk)); thud(Math.min(3, dk * 0.6)); }
         if (chunksNow > prevChunks) boom();
       }
-      if (prevEnemy !== null) {
-        if (ef[ep+23] > 1) { thud(2.5); }                    // you hit its core
+      // Only on frames that actually stepped: during hit-stop the engine's
+      // last-hit fields are stale, and re-arming hit-stop off a stale hit
+      // froze the whole fight solid at the first core strike.
+      if (prevEnemy !== null && stepped) {
+        if (ef[ep+23] > 1) {                                  // you hit its core
+          thud(2.5);
+          hitStop = Math.min(0.09, 0.03 + ef[ep+23] * 0.001); // the hit lands, time flinches
+        }
         if (ef[ep+24] > 1) {                                  // it hit your hull
           thud(3); shake = 0.16;
           for (var hI = 0; hI < srcs.length; hI++) haptic(srcs[hI], 1.0, 120);
         }
+        if (chunksNow > prevChunks) hitStop = Math.max(hitStop, 0.05);
       }
       prevStats = killedNow; prevChunks = chunksNow; prevEnemy = eState;
 
-      // servo hum follows your fastest arm
+      // Arm speed, from attachment motion against real frame time. Feeds the
+      // servo hum and the heat model — the heat is gameplay, so it must not
+      // live behind the audio gate.
+      var msH = E.w_mech_state() >>> 2, fH = new Float32Array(E.memory.buffer);
+      var armSpd = 0;
+      if (window.__lastTool) {
+        var lt = window.__lastTool;
+        armSpd = Math.hypot(fH[msH+21]-lt[0], fH[msH+22]-lt[1], fH[msH+23]-lt[2])
+                 / Math.max(frameDt, 1e-3);
+      }
+      window.__lastTool = [fH[msH+21], fH[msH+22], fH[msH+23]];
       if (AC && humGain) {
-        var msH = E.w_mech_state() >>> 2, fH = new Float32Array(E.memory.buffer);
-        var armSpd = 0;
-        // approximate from attachment motion frame to frame
-        if (window.__lastTool) {
-          var lt = window.__lastTool;
-          armSpd = Math.hypot(fH[msH+21]-lt[0], fH[msH+22]-lt[1], fH[msH+23]-lt[2]) * 72;
-        }
-        window.__lastTool = [fH[msH+21], fH[msH+22], fH[msH+23]];
         var target = Math.min(0.06, armSpd * 0.012);
         humGain.gain.value += (target - humGain.gain.value) * 0.2;
-        humFilt.frequency.value = 120 + Math.min(900, armSpd * 260);
+        humFilt.frequency.value = 120 + Math.min(900, armSpd * 260) + heat * 500;
+      }
+      {
+        // Heat: work done by the actuators. Heavier arms cook faster; idling
+        // cools. Past the redline the actuators derate until they recover.
+        var heatRate = armSpd * armSpd * (DENSITIES[level] / 800) * 0.004;
+        heat = Math.min(1, Math.max(0, heat + (heatRate - 0.10) * frameDt * 4));
+        var wasOver = overheated;
+        if (heat > 0.92) overheated = true;
+        if (heat < 0.45) overheated = false;
+        var derate = overheated ? 0.30 : 1.0;
+        E.w_mech_joint_spring(8000 * derate, 1.0);
+        if (overheated && !wasOver && AC) {
+          for (var wq2 = 0; wq2 < 3; wq2++) {
+            (function (k2) {
+              var o2 = AC.createOscillator(); o2.type = "square"; o2.frequency.value = 880;
+              var g2 = AC.createGain(); g2.gain.value = 0.0001;
+              var t02 = AC.currentTime + k2 * 0.18;
+              g2.gain.setValueAtTime(0.12, t02);
+              g2.gain.exponentialRampToValueAtTime(0.001, t02 + 0.12);
+              o2.connect(g2); g2.connect(AC.destination); o2.start(t02); o2.stop(t02 + 0.14);
+            })(wq2);
+          }
+        }
       }
 
       // ---- match flow ----
@@ -892,25 +976,80 @@
         fistsUp = up >= 2;
       }
       if (match === "READY") {
-        fistTimer = fistsUp ? fistTimer + 1/72 : 0;
+        fistTimer = fistsUp ? fistTimer + frameDt : 0;
         if (fistTimer > 0.9) {
           match = "FIGHT"; fistTimer = 0;
           if (AC && AC.state === "suspended") AC.resume();
           sting(true);
         }
       } else if (match === "FIGHT") {
-        var pg2 = E.w_vox_grid_stats(playerGrid) >>> 2, pf2 = new Float32Array(E.memory.buffer);
+        // The plate protects by absorbing hits, not by postponing the loss —
+        // clubs reach the hull around its edges, and those hits count.
         var hullDmg = ef[ep+25];
         if (eState === 5) { match = "WON"; endTimer = 0; sting(true); boom(); }
-        else if (pf2[pg2] < 4 && hullDmg > playerCoreLimit) {
-          match = "LOST"; endTimer = 0; sting(false);
+        else if (hullDmg > playerCoreLimit) {
+          if (!secondWind) {
+            // The legs cut out. One chance: drag yourself to the pad.
+            secondWind = true;
+            match = "COLLAPSED"; padTimer = 25;
+            E.w_mech_legs(0);
+            boom(); shake = 0.2;
+          } else {
+            match = "LOST"; endTimer = 0; sting(false);
+          }
         }
       } else if (match === "WON" || match === "LOST") {
         endTimer += frameDt;
         if (endTimer > 2.0) {
           fistTimer = fistsUp ? fistTimer + frameDt : 0;
-          if (fistTimer > 0.9) { built = false; fistTimer = 0; }
+          if (fistTimer > 0.9) {
+            fistTimer = 0;
+            if (match === "LOST") { built = false; }        // same fight again
+            else if (chapter + 1 < CAMPAIGN.length) {
+              // Win pay-off: the next weight class, and the road there.
+              chapter++;
+              if (unlockedLevel < DENSITIES.length - 1) unlockedLevel++;
+              match = "TRAVEL"; travelTimer = 5; rumbleT = 0;
+            } else {
+              if (unlockedLevel < DENSITIES.length - 1) unlockedLevel++;
+              match = "ENDING"; endTimer = 0;
+            }
+          }
         }
+      } else if (match === "TRAVEL") {
+        // Strapped to a hauler between fights. The world shakes; nothing else
+        // asks anything of you. Five seconds of being carried.
+        travelTimer -= frameDt; rumbleT += frameDt;
+        if (shake < 0.02) shake = 0.02;
+        if (travelTimer <= 0) built = false;   // rebuild -> READY, new chapter
+      } else if (match === "ENDING") {
+        endTimer += frameDt;
+        fistTimer = (fistsUp && endTimer > 3.0) ? fistTimer + frameDt : 0;
+        if (fistTimer > 0.9) { chapter = 0; built = false; fistTimer = 0; }
+      } else if (match === "COLLAPSED") {
+        padTimer -= frameDt;
+        var msC = E.w_mech_state() >>> 2, fC = new Float32Array(E.memory.buffer);
+        var nearPad = Math.hypot(fC[msC] - padPos.x, fC[msC+2] - padPos.z) < 0.75;
+        if (nearPad) {
+          // The pad takes you back: legs, plate, hull. The fight is still out
+          // there and it watched you crawl.
+          E.w_mech_legs(1);
+          E.w_vox_heal(playerGrid);
+          E.w_player_repair();
+          match = "FIGHT";
+          sting(true);
+        } else if (padTimer <= 0) { match = "LOST"; endTimer = 0; sting(false); }
+      }
+
+      // The repair pad: always there, only urgent when you are crawling.
+      var padUrgent = match === "COLLAPSED";
+      items.push({ m: trs([padPos.x, floorY + 0.02, padPos.z], [0,0,0,1], [0.55, 0.02, 0.55]),
+                   c: padUrgent ? [0.20, 0.95, 0.85] : [0.12, 0.35, 0.33], mat: 5 });
+      if (padUrgent) {
+        var pulse = 0.5 + 0.5 * Math.sin(lastT * 0.012);
+        items.push({ m: trs([padPos.x, floorY + 1.2, padPos.z], [0,0,0,1],
+                            [0.04, 1.2, 0.04]),
+                     c: [0.20, 0.9 * pulse + 0.1, 0.8], mat: 5 });
       }
 
       // ---- arena dressing ----
@@ -965,8 +1104,20 @@
                  "  (density " + DENSITIES[level] + ")");
       var NAMES = ["IDLE","APPROACH","WINDUP","SWING","RECOVER","DEAD"];
       var pg3 = E.w_vox_grid_stats(playerGrid) >>> 2, pf3 = new Float32Array(E.memory.buffer);
+      var chNow = CAMPAIGN[Math.min(chapter, CAMPAIGN.length - 1)];
+      lines.push("chapter " + (Math.min(chapter, CAMPAIGN.length - 1) + 1) + " of " +
+                 CAMPAIGN.length + ": " + chNow.name + " — " + chNow.place);
+      if (match === "READY") lines.push("  \"" + chNow.story + "\"");
       lines.push("match: " + match + (match === "READY" ? "  — RAISE BOTH FISTS TO FIGHT" :
-                 (match === "WON" || match === "LOST") ? "  — fists up to rematch" : ""));
+                 match === "WON" ? "  — fists up to travel on" :
+                 match === "TRAVEL" ? "  — travelling to " + CAMPAIGN[Math.min(chapter, CAMPAIGN.length-1)].place :
+                 match === "ENDING" ? "  — THE SKY IS YOURS. Fists up to begin again." :
+                 match === "COLLAPSED" ? "  — LEGS GONE. GRAB THE GROUND, HAUL TO THE PAD. " +
+                   Math.max(0, padTimer).toFixed(0) + " s" :
+                 match === "LOST" ? "  — fists up to try again" : ""));
+      lines.push("heat: " + Math.round(heat * 100) + "%" +
+                 (overheated ? "  OVERHEATED — actuators derated, let them cool" : "") +
+                 "   arms unlocked: " + (unlockedLevel + 1) + " of " + DENSITIES.length);
       lines.push("enemy: " + NAMES[ef ? ef[ep+7] : 0] + "   its plate " +
                  ePlateAlive + "/" + ePlateTotal +
                  "   its core " + Math.round((ef ? ef[ep+8] : 1) * 100) + "%");
