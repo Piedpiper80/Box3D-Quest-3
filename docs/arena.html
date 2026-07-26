@@ -1056,9 +1056,13 @@
       // glow posts marking the ring, and a far skyline swallowed by the fog
       for (var rI = 0; rI < 14; rI++) {
         var ang = rI / 14 * Math.PI * 2;
+        // The ring answers the match: green for a win, red for a loss, and
+        // when the last god is down, gold — running the circle like a lap.
+        var endP = 0.55 + 0.45 * Math.sin(lastT * 0.006 - rI * 0.9);
         items.push({ m: trs([hpBase.x + Math.cos(ang) * 3.4, floorY + 0.22,
                              hpBase.z + Math.sin(ang) * 3.4], [0,0,0,1], [0.035, 0.22, 0.035]),
-                     c: match === "WON" ? [0.25,0.85,0.42]
+                     c: match === "ENDING" ? [0.95*endP, 0.80*endP, 0.25*endP]
+                       : match === "WON" ? [0.25,0.85,0.42]
                        : match === "LOST" ? [0.85,0.25,0.20] : [0.28,0.45,0.75], mat: 5 });
       }
       for (var kI = 0; kI < 9; kI++) {
