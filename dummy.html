@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Smash the wall</title>
+<title>Strip its armour</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -30,8 +30,8 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Smash the wall</h1>
-  <p class="sub">The voxel core, first contact: a wall of 528 cells that chips, craters and collapses under your fists. Damage is momentum — how heavy your arms are and how hard they arrive.</p>
+  <h1>Strip its armour</h1>
+  <p class="sub">Armour worn by something that moves. A plated bag hangs in front of you: punch it and the whole body swings while its plate cracks, sheds, and tears off in slabs.</p>
 
   <div class="card">
     <button id="enter" disabled>Checking headset…</button>
@@ -42,19 +42,17 @@
 
   <div class="card">
     <ul>
-      <li>Three walls stand at punching range: <strong>wood</strong> on your left,
-          <strong>stone</strong> in front, <strong>steel</strong> on your right. <strong>Hit
-          them.</strong> Cells crack (they discolour), then burst out as debris.</li>
-      <li>The same punch guts wood, chips stone, and bounces off steel. Nothing is scripted —
-          each material is just density and toughness in a table, and your fist is just momentum.</li>
-      <li><strong>Press A</strong> to cycle your arm weight. Steel only starts to yield to the
-          heavy arms.</li>
-      <li>Undercut it: smash out the bottom of a section and everything above <strong>tears off and
-          falls as one slab</strong>. The wall knows what is still holding on and what is not.</li>
-      <li>Debris is real and it stays — kick through it, watch chunks knock more dust off the wall
-          when they land. There is a hard budget: past 150 loose pieces the oldest are reused, so
-          the frame rate survives any collapse.</li>
-      <li>Floor and arm span calibration are shared with the other pages — set once.</li>
+      <li>A heavy bag hangs at punching range wearing a <strong>stone armour plate</strong>.
+          <strong>Hit it.</strong> The bag swings — and the plate takes the damage, not the bag,
+          until it is gone.</li>
+      <li>Cells crack, discolour and burst off <strong>mid-swing</strong>, flying with the body's
+          motion. Work a line across the plate and the piece above <strong>tears off as one
+          slab</strong>.</li>
+      <li>Strip the plate and the <strong>bare core</strong> shows underneath — dark metal. That is
+          the shape of every fight to come: armour first, then the machine inside.</li>
+      <li><strong>Press A</strong> to cycle your arm weight. The plate is stone; a light arm barely
+          marks it.</li>
+      <li>Floor and arm span calibration are shared with the other pages.</li>
     </ul>
   </div>
 
@@ -304,12 +302,8 @@
                     SHOULDER_HALF);
     var L = E.w_mech_lengths() >>> 2, lf = new Float32Array(E.memory.buffer);
     segLen = [lf[L], lf[L + 1], lf[L + 2]];
-    // Three walls, three materials: wood on the left, stone in front, steel
-    // on the right. Same punches, very different results — the difference is
-    // only the table entry.
-    E.w_vox_create(hx - 1.15, floorY, hz - 0.62, 10, 12, 2, 0.10, 0);
-    E.w_vox_create(hx, floorY, hz - 0.62, 10, 12, 2, 0.10, 1);
-    E.w_vox_create(hx + 1.15, floorY, hz - 0.62, 10, 12, 2, 0.10, 2);
+    // The plated bag, hanging at punching range.
+    E.w_dummy_create(hx, hz - 0.55, 1);
     built = true;
   }
 
@@ -575,14 +569,14 @@
       lines.push("arm material " + (level+1) + " of " + DENSITIES.length +
                  "  (density " + DENSITIES[level] + ")");
       var vs = E.w_vox_stats() >>> 2, vf2 = new Float32Array(E.memory.buffer);
-      var names = ["wood", "stone", "steel"], per = [];
-      for (var gi = 0; gi < 3; gi++) {
-        var gp2 = E.w_vox_grid_stats(gi) >>> 2, gf = new Float32Array(E.memory.buffer);
-        per.push(names[gi] + " " + gf[gp2] + "/" + gf[gp2+2]);
-      }
-      lines.push("walls standing: " + per.join("   "));
-      lines.push("smashed total: " + vf2[vs+1] + "   chunks: " + vf2[vs+2] +
-                 "   shapes: " + vf2[vs+3] + "   debris: " + n);
+      lines.push("plate: " + vf2[vs] + " of 64 cells left   smashed: " + vf2[vs+1]);
+      lines.push("slabs torn off: " + vf2[vs+2] + "   debris: " + n);
+      // The bare core, dark metal under the plate.
+      var dp3 = E.w_dummy_state() >>> 2, df = new Float32Array(E.memory.buffer);
+      items.push({ m: trs([df[dp3], df[dp3+1], df[dp3+2]],
+                          [df[dp3+3], df[dp3+4], df[dp3+5], df[dp3+6]],
+                          [df[dp3+7], df[dp3+8], df[dp3+9]]),
+                   c: [0.22, 0.24, 0.30] });
     } else if (E && floorY !== null && armSpan !== null && !built) {
       // Take the head height before building, or the first frame constructs the
       // machine around a guess and only corrects on the next one.
