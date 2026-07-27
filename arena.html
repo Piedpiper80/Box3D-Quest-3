@@ -197,6 +197,13 @@
 
   function flatStart() {
     floorY = 0; armSpan = 1.75; sizeArm();
+    // ?flat=1&ch=N previews a later chapter directly — the only way to look
+    // at the Foundry or the High Dark without playing there first.
+    var fch = (location.search.match(/[?&]ch=(\d)/) || [])[1];
+    if (fch) {
+      chapter = Math.min(CAMPAIGN.length - 1, +fch);
+      unlockedLevel = Math.min(DENSITIES.length - 1, chapter + 1);
+    }
     var t0 = null, fakeT = 0;
     var perspM = (function () {
       var f = 1 / Math.tan(0.5 * 1.05), a = canvas.width / canvas.height;
@@ -417,7 +424,7 @@
   var match = "READY";
   var fistTimer = 0, endTimer = 0, frameDt = 1 / 72;
   var travelTimer = 0, rumbleT = 0, travelThump = 0, eStepT = 0;
-  var sparks = [], prevEPlate = null;
+  var sparks = [], prevEPlate = null, scrapeT = 0;
   var hitStop = 0;
   // Overheat: swing hard and long and the actuators cook. Heavier arms heat
   // faster. Past the redline they weaken until you let them cool.
@@ -817,6 +824,16 @@
       var dsA = E.w_mech_drag_state() >>> 2;
       O.y = fa[ms + 1] - chestY();
       if (fa[dsA + 4] > 0.5) { O.x = fa[ms] - hp.x; O.z = fa[ms + 2] - hp.z; }
+      // The hull scrapes as it is hauled: short gravel bursts paced and
+      // scaled by how fast the machine is actually moving over the ground.
+      if (fa[dsA + 4] > 0.5 && AC) {
+        var crawlSpd = fa[dsA + 5];
+        scrapeT -= frameDt;
+        if (crawlSpd > 0.12 && scrapeT <= 0) {
+          noiseBurst(0.14, 210, Math.min(0.22, 0.06 + crawlSpd * 0.12));
+          scrapeT = 0.16 + Math.random() * 0.10;
+        }
+      }
 
       // The pilot sits inside the machine, so the machine's own torso is not
       // drawn — from the cockpit it was a wall across the bottom of the view,
@@ -858,6 +875,8 @@
       }
 
       // ---- the arena floor: the world has a ground now ----
+      // The chapter decides the dressing from here down, so it is read once,
+      // ahead of everything that draws with it.
       var chD = CAMPAIGN[Math.min(chapter, CAMPAIGN.length - 1)];
       items.push({ m: trs([hpBase.x, floorY - 0.06, hpBase.z], [0,0,0,1], [7.5, 0.06, 7.5]),
                    c: chD.floorC, mat: 4 });
@@ -890,17 +909,21 @@
       // ---- the enemy ----
       var ep = E.w_enemy_state() >>> 2, ef = new Float32Array(E.memory.buffer);
       var eState = ef[ep+7], coreFrac = ef[ep+8];
+      // The drawn machine matches the simulated one at every chapter scale —
+      // a God drawn small would land hits past its visible club tip.
+      var eS = chD.scale;
       var windupArm = -1;
       if (eState === 2) windupArm = 1;      // drawing up: warn colour
       // torso: dark hull, its core glows through as it weakens
       items.push({ m: trs([ef[ep], ef[ep+1], ef[ep+2]],
-                          [ef[ep+3], ef[ep+4], ef[ep+5], ef[ep+6]], [0.24, 0.34, 0.14]),
+                          [ef[ep+3], ef[ep+4], ef[ep+5], ef[ep+6]],
+                          [0.24*eS, 0.34*eS, 0.14*eS]),
                    c: eState === 5 ? [0.15,0.15,0.17]
                      : [0.30 + 0.5*(1-coreFrac), 0.24, 0.28] });
       for (var ai2 = 0; ai2 < 2; ai2++) {
         var ao = ep + 9 + ai2*7;
         var warn = (eState === 2 || eState === 3);
-        var li2 = limbItem(ef, ao, 0.60, 0.07,
+        var li2 = limbItem(ef, ao, 0.60*eS, 0.07*eS,
           warn ? [0.95, 0.35, 0.22] : [0.35, 0.33, 0.40]);
         li2.mat = warn ? 5 : 0;
         items.push(li2);
@@ -909,7 +932,7 @@
       // brighter in the instant before a swing — and dies with the machine.
       (function () {
         var q = [ef[ep+3], ef[ep+4], ef[ep+5], ef[ep+6]];
-        var vz = 0.15, vy = 0.20;
+        var vz = 0.15 * eS, vy = 0.20 * eS;
         var tx3 = 2*(q[1]*vz), ty3 = 2*(-q[0]*vz);
         var vx2 = ef[ep] + q[3]*tx3 + (q[1]*0 - q[2]*ty3);
         var vy2 = ef[ep+1] + vy + q[3]*ty3 + (q[2]*tx3 - q[0]*0);
@@ -923,7 +946,7 @@
           var wp = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(lastT * 0.004));
           vc = [0.85 * wp, 0.20 * wp, 0.16 * wp];
         }
-        items.push({ m: trs([vx2, vy2, vz2], q, [0.13, 0.025, 0.02]),
+        items.push({ m: trs([vx2, vy2, vz2], q, [0.13*eS, 0.025*eS, 0.02*eS]),
                      c: vc, mat: eState === 5 ? 0 : 5 });
       })();
 
@@ -1194,18 +1217,21 @@
       }
       for (var pI = 0; pI < 8; pI++) {
         var lit = (plateFrac > 0.06) ? (pI / 8 < plateFrac) : (pI / 8 < coreFrac);
-        items.push({ m: trs([ef[ep] - 0.28 + pI * 0.08, ef[ep+1] + 0.62, ef[ep+2]],
+        items.push({ m: trs([ef[ep] - 0.28 + pI * 0.08, ef[ep+1] + 0.62 * eS, ef[ep+2]],
                             [0,0,0,1], 0.022),
                      c: lit ? ((plateFrac > 0.06) ? [0.55,0.58,0.66] : [0.92,0.35,0.25])
                             : [0.16,0.17,0.20], mat: 5 });
       }
 
+      // Debris wears the material it broke from — wood browns, stone greys,
+      // steel pales. The toy palette belongs to the spike pages, not here.
+      var DEBC = { 1: [0.47,0.36,0.23], 2: [0.50,0.51,0.56], 4: [0.58,0.62,0.70] };
       var n = E.w_count(), sp3 = E.w_state() >>> 2;
       for (var ci = 0; ci < n; ci++) {
         var co = sp3 + ci*9, ch = fa[co+7];
         items.push({ m: trs([fa[co], fa[co+1], fa[co+2]],
                             [fa[co+3], fa[co+4], fa[co+5], fa[co+6]], ch),
-                     c: [[.90,.30,.24],[.95,.61,.20],[.96,.85,.30],[.30,.69,.44],[.26,.52,.86],[.55,.36,.78]][(fa[co+8]|0)%6] });
+                     c: DEBC[fa[co+8]|0] || [0.45,0.46,0.50] });
       }
 
       for (var mI = 0; mI < DENSITIES.length; mI++) {
