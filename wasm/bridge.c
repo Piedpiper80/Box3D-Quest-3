@@ -3470,7 +3470,7 @@ void w_enemy_damage_core(float amount)
 WASM_EXPORT("w_enemy_state")
 float* w_enemy_state(void)
 {
-    static float out[29];
+    static float out[30];
     if (!s_eExists) return out;
     b3Pos p = b3Body_GetPosition(s_eTorso);
     b3Quat q = b3Body_GetRotation(s_eTorso);
@@ -3492,6 +3492,13 @@ float* w_enemy_state(void)
     out[26] = s_eBlockHit;
     out[27] = (float)s_eSwingStyle;
     out[28] = ePartDead(PART_HEAD) ? 0.0f : 1.0f;   // the visor needs a head
+    {
+        // How many of its fourteen parts are gone — the page turns a rise
+        // in this into the severed-part moment (clang, burst, hit-stop).
+        int dead = 0;
+        for (int i = 0; i < PART_COUNT; i++) if (ePartDead(i)) dead++;
+        out[29] = (float)dead;
+    }
     return out;
 }
 
