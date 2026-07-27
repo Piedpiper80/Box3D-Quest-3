@@ -481,7 +481,7 @@ function poseArenaCollapse(f) {
   });
   if (f < 40) return mk(vec(-0.24, 1.15, -0.30), vec(0.24, 1.15, -0.30));
   if (f < 130) return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));  // start it
-  if (f < 6900) return mk(vec(-0.55, 0.80, -0.05), vec(0.55, 0.80, -0.05)); // take it
+  if (f < 5200) return mk(vec(-0.55, 0.80, -0.05), vec(0.55, 0.80, -0.05)); // take it
   return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));               // rematch
 }
 
@@ -534,7 +534,7 @@ function poseArenaCollapse(f) {
 
     // Second run: the losing path. Undefended, the fight should end in the
     // collapse -> pad timeout -> loss -> rematch chain, in that order.
-    const r2 = await runPage(page, 10400, poseArenaCollapse);
+    const r2 = await runPage(page, 12600, poseArenaCollapse);
     check("collapse run: no exception escaped", r2.errors.length === 0, r2.errors[0] || "");
     const seq = r2.matchSeq.join(">");
     const chain = ["READY", "FIGHT", "COLLAPSED", "LOST", "READY"];
@@ -542,9 +542,14 @@ function poseArenaCollapse(f) {
     for (const s of r2.matchSeq) if (s === chain[at]) at++;
     check("undefended, the fight collapses, times out, and offers the rematch",
           at >= chain.length, "states seen: " + seq);
-    check("the rematch rebuilt the chapter",
-          /you: plate 36\/36/.test(r2.report),
-          (r2.report.match(/you: plate \d+\/\d+/) || ["no plate line"])[0]);
+    // Loop closure: with the fists still up, the rebuilt chapter starts a
+    // fresh fight — the final plate count is whatever that new fight has
+    // done to it, so the proof is the state sequence, not the last frame.
+    const afterLost = r2.matchSeq.slice(r2.matchSeq.indexOf("LOST"));
+    check("the rematch rebuilt the chapter and it fights again",
+          afterLost.indexOf("READY") > 0 &&
+          afterLost.indexOf("FIGHT") > afterLost.indexOf("READY"),
+          "after LOST: " + afterLost.join(">"));
   }
 
   if (page === "dummy.html") {

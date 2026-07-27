@@ -2730,11 +2730,12 @@ void w_enemy_update(float px, float py, float pz, float dt)
                 s_eState = E_WINDUP; s_eTimer = 0.0f;
                 s_eSwingArm = 1 - s_eSwingArm;
                 // Two lines of attack, mixed unpredictably but
-                // deterministically. Bit 7 of the Knuth hash: bit 3 turned
-                // out to run eight identical swings in a row, which is a
-                // pattern, not a mix.
+                // deterministically (Knuth hash bits — low bits ran eight
+                // identical swings in a row, which is a pattern, not a mix).
+                // The sweep comes around a guard AND the chest plate, so it
+                // stays the rarer line: roughly three swings in eight.
                 s_eSwingCount++;
-                s_eSwingStyle = (int)((s_eSwingCount * 2654435761u) >> 7) & 1;
+                s_eSwingStyle = (int)(((s_eSwingCount * 2654435761u) >> 7) & 7u) < 3;
             }
             break;
         }
@@ -2762,7 +2763,9 @@ void w_enemy_update(float px, float py, float pz, float dt)
             }
             eAimArm(s_eSwingArm, up, 5.0f);
             eAimArm(1 - s_eSwingArm, guard, 2.5f);
-            if (s_eTimer > 0.45f) { s_eState = E_SWING; s_eTimer = 0.0f; }
+            // The sweep is the harder hit to answer, so it telegraphs longer.
+            if (s_eTimer > (s_eSwingStyle ? 0.62f : 0.45f))
+            { s_eState = E_SWING; s_eTimer = 0.0f; }
             break;
         }
         case E_SWING:

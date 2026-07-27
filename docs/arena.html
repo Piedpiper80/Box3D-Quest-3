@@ -440,7 +440,8 @@
   var O = { x: 0, y: 0, z: 0 };
   var secondWind = false, padTimer = 0;
   var padPos = { x: 0, z: 0 };
-  var playerCoreLimit = 130;         // momentum the bare hull can take
+  var playerCoreLimit = 130;         // momentum the bare hull can take;
+                                     // grows with the machine you have earned
   var enemyGrid = -1, playerGrid = -1;
   var prevStats = null, prevChunks = 0, prevEnemy = null;
   var shake = 0;                     // seconds of view shake left
@@ -577,6 +578,10 @@
     E.w_vox_create(hx - 2.1, floorY, hz + 1.4, 4, 16, 4, 0.10, ch2.pillarMat);
     E.w_vox_create(hx + 2.1, floorY, hz + 1.4, 4, 16, 4, 0.10, ch2.pillarMat);
     heat = 0; overheated = false;
+    // The hull hardens with the campaign: a Juggernaut's club lands ~130
+    // momentum in one clean hit, and a one-hit collapse is a coin flip,
+    // not a fight. Each unlocked weight class buys the frame under you.
+    playerCoreLimit = 130 + unlockedLevel * 45;
     E.w_mech_joint_spring(8000, 1.0);
     E.w_mech_legs(1);
     O.x = 0; O.y = 0; O.z = 0;
