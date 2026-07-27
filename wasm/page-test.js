@@ -153,7 +153,7 @@ function makeFrame(session, poses) {
 }
 
 // --- run a page -------------------------------------------------------------
-async function runPage(file, frames, poseAt) {
+async function runPage(file, frames, poseAt, extraStore) {
   const html = readFileSync(path.join(DOCS, file), "utf8");
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
   if (!scripts.length) throw new Error(`${file}: no inline script`);
@@ -163,6 +163,7 @@ async function runPage(file, frames, poseAt) {
   const els = {};
   const errors = [];
   const store = new Map([["box3d.floorY", "0"]]);   // floor done, span is measured below
+  if (extraStore) for (const [k, v] of Object.entries(extraStore)) store.set(k, v);
 
   const poses = poseAt(0);
   let session = null;
@@ -550,6 +551,16 @@ function poseArenaCollapse(f) {
           afterLost.indexOf("READY") > 0 &&
           afterLost.indexOf("FIGHT") > afterLost.indexOf("READY"),
           "after LOST: " + afterLost.join(">"));
+
+    // Third run: a saved campaign boots where it was left. Seeded storage
+    // says lap 2, chapter 3, all arms — the report must agree.
+    const r3 = await runPage(page, 200, pose,
+      { "box3d.campaign": JSON.stringify({ c: 2, u: 3, l: 1, v: 3 }),
+        "box3d.armSpan": "1.75" });
+    check("a saved campaign boots where it was left",
+          /chapter 3 of 4/.test(r3.report) && /arms unlocked: 4 of 4/.test(r3.report) &&
+          /lap 2/.test(r3.report),
+          (r3.report.match(/chapter [^\n]*/) || ["no chapter line"])[0]);
   }
 
   if (page === "dummy.html") {
