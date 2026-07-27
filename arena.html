@@ -947,6 +947,10 @@
           thud(3); shake = 0.16;
           for (var hI = 0; hI < srcs.length; hI++) haptic(srcs[hI], 1.0, 120);
         }
+        if (ef[ep+26] > 1.2) {                                // its club rang on your ARM
+          clang(1.4);                                         // the parry, working
+          for (var bH = 0; bH < srcs.length; bH++) haptic(srcs[bH], 0.55, 60);
+        }
         if (chunksNow > prevChunks) hitStop = Math.max(hitStop, 0.05);
       }
       // The enemy is heard before it is felt: a servo catch as the club
