@@ -1516,7 +1516,9 @@
                    "  hull x " + fR[msR].toFixed(2) + " y " + fR[msR+1].toFixed(2) +
                    " z " + fR[msR+2].toFixed(2) +
                    "  tips y " + fR[msR+22].toFixed(2) + "/" + fR[msR+43].toFixed(2) +
-                   "  pad x " + padPos.x.toFixed(2) + " z " + padPos.z.toFixed(2));
+                   "  pad x " + padPos.x.toFixed(2) + " z " + padPos.z.toFixed(2) +
+                   "  foe x " + ef[ep].toFixed(2) + " z " + ef[ep+2].toFixed(2) +
+                   (provoked ? " PROVOKED" : ""));
       }
       lines.push("enemy: " + NAMES[ef ? ef[ep+7] : 0] +
                  ((ef && ef[ep+27] > 0.5 && (ef[ep+7] === 2 || ef[ep+7] === 3)) ? " (sweep)" : "") +

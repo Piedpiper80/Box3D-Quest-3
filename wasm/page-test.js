@@ -532,16 +532,29 @@ function poseArenaCrawl(f) {
   if (f < 2400) return mk(vec(-0.55, 0.80, -0.05), vec(0.55, 0.80, -0.05));
   // Phase B: arms high and wide, no grip — frees them from under the hull.
   if (f < 2520) return mk(vec(-0.6, 1.5, -0.05), vec(0.6, 1.5, -0.05));
-  // Phase C: side strokes toward the pad, slight forward bias.
+  // Phase C: a dogleg. The foe stands 0.55 m off the direct line and any
+  // fist that grazes it provokes a beating, so haul +z away from it first,
+  // then +x along the clear lane to the pad. Plant far in the direction of
+  // travel, pull through to the other side; the hull follows the anchors.
   const PULL = 24, SWING = 24, CYCLE = PULL + SWING;
-  const c = (f - 2520) % CYCLE;
+  const C1_END = 2520 + 6 * CYCLE;
+  if (f < C1_END) {
+    const c1 = (f - 2520) % CYCLE;
+    if (c1 < PULL) {
+      const t = c1 / PULL, z = 0.45 - 0.60 * t;
+      return mk(vec(-0.24, 1.06, z), vec(0.24, 1.06, z), true);
+    }
+    const t = (c1 - PULL) / SWING, y1 = 1.06 + 0.30 * Math.sin(t * Math.PI);
+    return mk(vec(-0.24, y1, -0.15 + 0.60 * t), vec(0.24, y1, -0.15 + 0.60 * t), false);
+  }
+  const c = (f - C1_END) % CYCLE;
   if (c < PULL) {
     const t = c / PULL, x = 0.50 - 0.70 * t;
-    return mk(vec(x - 0.48, 1.06, 0.12 + 0.16 * t), vec(x, 1.06, 0.12 + 0.16 * t), true);
+    return mk(vec(x - 0.48, 1.06, -0.12), vec(x, 1.06, -0.12), true);
   }
   const t = (c - PULL) / SWING, y = 1.06 + 0.30 * Math.sin(t * Math.PI);
   const x = -0.20 + 0.70 * t;
-  return mk(vec(x - 0.48, y, 0.12), vec(x, y, 0.12), false);
+  return mk(vec(x - 0.48, y, -0.12), vec(x, y, -0.12), false);
 }
 
 (async () => {
@@ -634,12 +647,17 @@ function poseArenaCrawl(f) {
     check("the God can be beaten, and the fourth win fires the ending",
           endAt >= endChain.length, "states seen: " + r4.matchSeq.join(">"));
 
-    if (process.env.DBG5) {
-      const r5 = await runPage(page, 6500, poseArenaCrawl);
-      console.log("DBG5 states: " + r5.matchSeq.join(">"));
-      console.log("DBG5 final: " +
-        (r5.report.match(/match: [^\n]*|you: [^\n]*|drag[^\n]*/g) || []).join("  |  "));
-    }
+    // Fifth run: the second wind survived, end to end. Take the beating,
+    // collapse, then knuckle-haul a dogleg to the repair pad — +z away from
+    // the watching foe, then +x along the clear lane — and stand back up
+    // healed, back in the fight. COLLAPSED followed by FIGHT is the pad
+    // recovery; nothing else produces that pair.
+    const r5 = await runPage(page, 4200, poseArenaCrawl);
+    const swChain = ["FIGHT", "COLLAPSED", "FIGHT"];
+    let swAt = 0;
+    for (const s of r5.matchSeq) if (s === swChain[swAt]) swAt++;
+    check("the second wind can be survived: crawl, pad, stand back up",
+          swAt >= swChain.length, "states seen: " + r5.matchSeq.join(">"));
   }
 
   if (page === "dummy.html") {
