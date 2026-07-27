@@ -263,7 +263,7 @@
     gl.bindVertexArray(null);
     return { vao: dvao, vbo: dvbo, verts: va, idx: ia, n: idx.length,
              cx: cx, cy: cy, cz: cz, half: half, dirty: false,
-             hits: 0, deepest: 0,
+             hits: 0, deepest: 0, busted: false, rested: false, vy: 0, fallA: 0,
              m: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, cx, cy, cz, 1]) };
   }
   // An impact: cave every vertex near the contact point inward along the
@@ -836,7 +836,7 @@
   // the Pages CDN both cache hard — a playtest once got the old game and,
   // fairly, could not tell), and it is printed on the card so which build
   // loaded is never a guess.
-  var BUILD = 18;
+  var BUILD = 19;
   var bTag = document.getElementById("buildTag");
   if (bTag) bTag.textContent = "(build " + BUILD + ")";
   fetch("box3d.wasm?v=" + BUILD)
@@ -908,7 +908,11 @@
     // and reports every impact; what you SEE is the real mesh, caving
     // vertex by vertex where you land. Behind your right shoulder at
     // spawn, within arm's reach, in VR and passthrough alike.
-    practiceGrid = E.w_vox_create(hx + 0.75, floorY + 0.85, hz + 0.35, 4, 4, 4, 0.085, 2);
+    // ONE piece, one life: a single-cell collider whose whole budget is
+    // dents. Nothing chips off along the way — when the budget is spent
+    // the piece breaks free and the crumpled mesh itself falls.
+    practiceGrid = E.w_vox_create(hx + 0.75, floorY + 0.85, hz + 0.35, 1, 1, 1, 0.34, 2);
+    if (E.w_vox_scale_hp) E.w_vox_scale_hp(practiceGrid, 5);
     E.w_vox_hide(practiceGrid, 1);
     if (defBox) { gl.deleteVertexArray(defBox.vao); gl.deleteBuffer(defBox.vbo); }
     defBox = buildDeformMesh(hx + 0.75, floorY + 1.02, hz + 0.35, 0.17);
@@ -1417,6 +1421,33 @@
                        c: vc, mat: eState === 5 ? 0 : 5 });
         }
       })();
+
+      // When the piece's budget is spent it breaks free: the crumpled
+      // mesh itself drops, tumbles, and rests on the floor — dents kept.
+      if (practiceGrid >= 0 && defBox && !defBox.busted) {
+        var pbs = E.w_vox_grid_stats(practiceGrid) >>> 2;
+        var pbf = new Float32Array(E.memory.buffer);
+        if (pbf[pbs + 2] > 0 && pbf[pbs] < 0.5) {
+          defBox.busted = true; defBox.vy = 0; defBox.fallA = 0;
+          clang(3); boom();
+        }
+      }
+      if (defBox && defBox.busted && !defBox.rested) {
+        defBox.vy -= 9.8 * frameDt;
+        defBox.cy += defBox.vy * frameDt;
+        defBox.fallA += frameDt * 2.4;
+        if (defBox.cy - defBox.half * 1.15 <= floorY) {
+          defBox.cy = floorY + defBox.half * 1.15;
+          defBox.rested = true;
+        }
+        var fx2 = 0.37, fz2 = 0.93, fa2 = defBox.fallA;
+        var ca2 = Math.cos(fa2), sa2 = Math.sin(fa2), tt2 = 1 - ca2;
+        var mm2 = defBox.m;
+        mm2[0] = tt2*fx2*fx2 + ca2; mm2[1] = fz2*sa2;        mm2[2] = tt2*fx2*fz2;
+        mm2[4] = -fz2*sa2;          mm2[5] = ca2;            mm2[6] = fx2*sa2;
+        mm2[8] = tt2*fx2*fz2;       mm2[9] = -fx2*sa2;       mm2[10] = tt2*fz2*fz2 + ca2;
+        mm2[13] = defBox.cy;
+      }
 
       // Impacts into the practice box crumple its mesh where they landed.
       if (practiceGrid >= 0 && defBox && stepped) {
@@ -2004,7 +2035,8 @@
                  match === "LOST" ? "  — fists up to try again" : ""));
       if (defBox && defBox.hits > 0)
         lines.push("practice box: " + defBox.hits + " hits, deepest dent " +
-                   (defBox.deepest * 1000).toFixed(0) + " mm");
+                   (defBox.deepest * 1000).toFixed(0) + " mm" +
+                   (defBox.busted ? "  — BUSTED OFF, on the floor" : ""));
       lines.push("heat: " + Math.round(heat * 100) + "%" +
                  (overheated ? "  OVERHEATED — actuators derated, let them cool" : "") +
                  "   arms unlocked: " + (unlockedLevel + 1) + " of " + DENSITIES.length);

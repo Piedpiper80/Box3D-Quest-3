@@ -2430,6 +2430,18 @@ static void vxFillRuns(void)
     }
 }
 
+// Scale a grid's hp budget (and its dent ceiling with it) — the practice
+// piece wants one LONG life, not sixty-four small ones.
+WASM_EXPORT("w_vox_scale_hp")
+void w_vox_scale_hp(int grid, float mul)
+{
+    if (grid < 0 || grid >= VOX_GRIDS || !s_vxG[grid].used || mul <= 0.0f) return;
+    VoxGrid* g = &s_vxG[grid];
+    const int total = g->n[0] * g->n[1] * g->n[2];
+    for (int i = 0; i < total; i++) g->hp[i] *= mul;
+    g->cellHpMax *= mul;
+}
+
 WASM_EXPORT("w_vox_hit_count")
 int w_vox_hit_count(void) { return s_vxHitEvCount; }
 
