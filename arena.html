@@ -36,6 +36,7 @@
 
   <div class="card">
     <button id="enter" disabled>Checking headset…</button>
+    <button id="enterAR" disabled style="display:none">Passthrough</button>
     <button id="resetFloor" style="background:#2b3242;color:#e8ecf4;margin-left:10px">Reset floor</button>
     <button id="resetSpan" style="background:#2b3242;color:#e8ecf4;margin-left:10px">Reset arm span</button>
     <button id="resetCamp" style="background:#2b3242;color:#e8ecf4;margin-left:10px">Reset campaign</button>
@@ -74,6 +75,8 @@
           machine breaks to its corner and the count bells strike. Raise both fists above
           your head and hold — the machine stands back up whole. Once per fight; the second
           knockdown is the loss.</li>
+      <li><strong>Passthrough:</strong> the second button starts the same fight in YOUR room —
+          just you and the machine, no arena. Works anywhere you have a clear couple of metres.</li>
       <li>Five chapters, five machines, five places. Beat the thing that does not stand on the
           earth and the sky is yours — and if you go again, the machines remember you: every
           lap they come faster. Every sound is synthesised from the physics — nothing is a
@@ -356,10 +359,16 @@
     }, 60);
   }
   else if (!navigator.xr) { setStatus("No WebXR. Open this in the Meta Quest Browser.", true); }
-  else navigator.xr.isSessionSupported("immersive-vr").then(function (ok) {
-    if (ok) { enterBtn.disabled = false; enterBtn.textContent = "Enter VR"; setStatus("Ready."); }
-    else setStatus("WebXR present but no VR device.", true);
-  });
+  else {
+    navigator.xr.isSessionSupported("immersive-vr").then(function (ok) {
+      if (ok) { enterBtn.disabled = false; enterBtn.textContent = "Enter VR"; setStatus("Ready."); }
+      else setStatus("WebXR present but no VR device.", true);
+    });
+    // Passthrough: the same fight, standing in YOUR room.
+    navigator.xr.isSessionSupported("immersive-ar").then(function (ok) {
+      if (ok && arBtn) { arBtn.disabled = false; arBtn.style.display = ""; }
+    }).catch(function () {});
+  }
 
   var refSpace = null, spaceKind = "?", floorReal = false, session = null;
   var lines = [];
@@ -557,6 +566,8 @@
   // the countdown dies, while the other machine keeps coming. Phase 1's
   // locomotion fallback, exactly where the design always wanted it.
   var O = { x: 0, y: 0, z: 0 };
+  var AR = false;                    // passthrough: draw the machines, not the world
+  var arBtn = document.getElementById("enterAR");
   var secondWind = false, padTimer = 0;
   var playerCoreLimit = 130;         // momentum the bare hull can take;
                                      // grows with the machine you have earned
@@ -702,7 +713,7 @@
   // the Pages CDN both cache hard — a playtest once got the old game and,
   // fairly, could not tell), and it is printed on the card so which build
   // loaded is never a guess.
-  var BUILD = 15;
+  var BUILD = 16;
   var bTag = document.getElementById("buildTag");
   if (bTag) bTag.textContent = "(build " + BUILD + ")";
   fetch("box3d.wasm?v=" + BUILD)
@@ -763,7 +774,9 @@
     // Pillars: cover, scenery, wreckage-in-waiting. Each chapter lays its
     // own ground — scattered heaps, the mill square, foundry aisles, and
     // the High Dark strips the cover entirely: you, the God, the stars.
-    for (var pP = 0; pP < ch2.pillars.length; pP++) {
+    // (Not in passthrough — nobody wants foundry stacks in their lounge,
+    // and an undrawn collider is worse than none.)
+    if (!AR) for (var pP = 0; pP < ch2.pillars.length; pP++) {
       E.w_vox_create(hx + ch2.pillars[pP][0], floorY, hz + ch2.pillars[pP][1],
                      4, 16, 4, 0.10, ch2.pillarMat);
     }
@@ -829,7 +842,8 @@
     session.requestAnimationFrame(onFrame);
     var layer = session.renderState.baseLayer;
     gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
-    gl.clearColor(0.045, 0.06, 0.095, 1);
+    if (AR) gl.clearColor(0, 0, 0, 0);
+    else gl.clearColor(0.045, 0.06, 0.095, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     var pose = frame.getViewerPose(refSpace);
@@ -1131,8 +1145,9 @@
       // The chapter decides the dressing from here down, so it is read once,
       // ahead of everything that draws with it.
       var chD = CAMPAIGN[Math.min(chapter, CAMPAIGN.length - 1)];
-      items.push({ m: trs([hpBase.x, floorY - 0.06, hpBase.z], [0,0,0,1], [7.5, 0.06, 7.5]),
-                   c: chD.floorC, mat: 4 });
+      if (!AR)
+        items.push({ m: trs([hpBase.x, floorY - 0.06, hpBase.z], [0,0,0,1], [7.5, 0.06, 7.5]),
+                     c: chD.floorC, mat: 4 });
 
       // ---- worn plates and anything torn off them ----
       var MATC = [[0.55,0.42,0.26], [0.56,0.57,0.62], [0.62,0.66,0.74]];
@@ -1624,6 +1639,10 @@
       }
 
       // ---- arena dressing ----
+      // None of it in passthrough: your room is the arena there, and the
+      // only things drawn are the machines and what the fight itself needs
+      // (nameplate, count, markers, sparks).
+      if (!AR) {
       // glow posts marking the ring, and a far skyline swallowed by the fog
       for (var rI = 0; rI < 14; rI++) {
         var ang = rI / 14 * Math.PI * 2;
@@ -1682,6 +1701,7 @@
                          c: [0.60*tw + 0.15, 0.65*tw + 0.15, 0.85*tw + 0.18], mat: 5 });
           }
         }
+      }
       }
       // verdict pillar
       if (match === "WON" || match === "LOST") {
@@ -1856,19 +1876,23 @@
     report(lines.join("\n"));
   }
 
-  enterBtn.addEventListener("click", function () {
-    enterBtn.textContent = "Starting…";
-    // Audio must be born on a browser gesture — a controller gesture in VR
-    // does not count, and a context created in the frame loop stays suspended
-    // and silent. This click is the one browser gesture we get.
+  // One start path for both realities. "immersive-vr" is the arena;
+  // "immersive-ar" is PASSTHROUGH — your real room, the robot standing in
+  // it, and nothing else drawn. The world rebuilds on entry because the
+  // two modes furnish it differently (no pillars in your living room).
+  function startXR(mode) {
     audioInit();
     if (AC && AC.state === "suspended") AC.resume();
-    navigator.xr.requestSession("immersive-vr", { optionalFeatures: ["local-floor"] })
+    navigator.xr.requestSession(mode, { optionalFeatures: ["local-floor"] })
       .then(function (s) {
         session = s;
+        var wasAR = AR;
+        AR = mode === "immersive-ar";
+        if (AR !== wasAR) built = false;   // refurnish for the new reality
         s.addEventListener("end", function () {
           enterBtn.textContent = "Enter VR";
-          setStatus("Left VR. The report above is what your headset actually reported.");
+          if (arBtn) arBtn.textContent = "Passthrough";
+          setStatus("Left the headset view. The report above is what it reported.");
         });
         return gl.makeXRCompatible().then(function () {
           s.updateRenderState({ baseLayer: new XRWebGLLayer(s, gl) });
@@ -1882,13 +1906,25 @@
         }).then(function (sp) {
           refSpace = sp;
           s.requestAnimationFrame(onFrame);
-          setStatus("In VR.");
+          setStatus(AR ? "Passthrough: the robot is in your room." : "In VR.");
         });
       })
       .catch(function (e) {
         enterBtn.textContent = "Enter VR";
-        setStatus("Could not start VR: " + (e && e.message ? e.message : e), true);
+        if (arBtn) arBtn.textContent = "Passthrough";
+        setStatus("Could not start: " + (e && e.message ? e.message : e), true);
       });
+  }
+  enterBtn.addEventListener("click", function () {
+    enterBtn.textContent = "Starting…";
+    // Audio must be born on a browser gesture — a controller gesture in VR
+    // does not count, and a context created in the frame loop stays suspended
+    // and silent. This click is the one browser gesture we get.
+    startXR("immersive-vr");
+  });
+  if (arBtn) arBtn.addEventListener("click", function () {
+    arBtn.textContent = "Starting…";
+    startXR("immersive-ar");
   });
 })();
 </script>
