@@ -554,6 +554,13 @@ guard, punches at the bobbing core's height — so it holds under the
 new rule. A permanent crawl instrument (anchors, hull position, tip
 heights, pad bearing) joined the COLLAPSED report.
 
+**The lap curve, measured.** NG+ tempo compounds on the God:
+kill/undefended-death times run 13.6 s/4.3 s at lap 1, 9.7/5.3 at ×1.15,
+6.9/2.4 at ×1.30, 4.6/2.3 at ×1.45. Faster machines lunge more and
+expose their cores more — so the attacker's deficit *narrows* with each
+lap (−9.3 s → −2.3 s) and laps produce knife-edge sprints, not
+unwinnable walls. No tuning needed; the shape is what NG+ should be.
+
 **The proof trilogy closed.** The crawl script finally reached the pad
 with a dogleg — haul +z away from the watching foe first (any fist that
 grazes it provokes the beating), then +x along the clear lane — and the
