@@ -36,6 +36,19 @@ No headset handy? Add `?flat=1` to the arena URL for a flat in-browser
 preview with a scripted pilot, and `&ch=2` (0–3) to drop straight into a
 later chapter's arena.
 
+### What it looks like
+
+Flat-preview captures from the screenshot loop that reviews every visual
+change (the in-headset view is first-person from the cockpit):
+
+| The Scrapfields | The Foundry |
+| --- | --- |
+| ![Chapter 1 — the rust-hulled SCRAPPER at close quarters](docs/design/shots/ch1-scrapper.png) | ![Chapter 3 — the JUGGERNAUT looming over a collapsed hull between foundry aisles](docs/design/shots/ch3-juggernaut.png) |
+
+| The High Dark | Victory |
+| --- | --- |
+| ![Chapter 4 — the Returned, hovering, steel-plated, arena stripped bare](docs/design/shots/ch4-thereturned.png) | ![The wreck, the green ring, fists raised](docs/design/shots/victory.png) |
+
 All of it is the **real Box3D engine compiled to WebAssembly** (~360 KB,
 scalar, single-threaded) — see [`wasm/`](wasm/) for the C bridge, build
 command, and the headless test harnesses that drive every page in CI.
