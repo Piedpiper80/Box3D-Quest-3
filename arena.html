@@ -448,6 +448,7 @@
 
   // --- sound: synthesised from the physics, no recordings ---
   var AC = null, humOsc = null, humGain = null, humFilt = null;
+  var droneGain = null;
   function audioInit() {
     if (AC) return;
     try {
@@ -457,6 +458,13 @@
       humGain = AC.createGain(); humGain.gain.value = 0.0;
       humOsc.connect(humFilt); humFilt.connect(humGain); humGain.connect(AC.destination);
       humOsc.start();
+      // The God's drone: a low beat-note pair that only opens while a
+      // hovering machine is alive and the fight is on.
+      var d1 = AC.createOscillator(); d1.type = "sine"; d1.frequency.value = 47;
+      var d2 = AC.createOscillator(); d2.type = "sine"; d2.frequency.value = 47.7;
+      droneGain = AC.createGain(); droneGain.gain.value = 0.0;
+      d1.connect(droneGain); d2.connect(droneGain); droneGain.connect(AC.destination);
+      d1.start(); d2.start();
     } catch (e) { AC = null; }
   }
   function noiseBurst(dur, cutoff, gain) {
@@ -654,7 +662,10 @@
     if (shake > 0) {
       shake -= 1 / 72;
       var a2 = shake * 60;
-      sh = [Math.sin(a2 * 13.3) * 0.008, Math.cos(a2 * 17.1) * 0.006, 0];
+      // Travel sustains its rumble for five seconds, so it runs at half
+      // amplitude — comfort is physiology, not preference.
+      var shAmp = match === "TRAVEL" ? 0.5 : 1;
+      sh = [Math.sin(a2 * 13.3) * 0.008 * shAmp, Math.cos(a2 * 17.1) * 0.006 * shAmp, 0];
     }
     var shiftM = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0,
                                    sh[0] - O.x, sh[1] - O.y, sh[2] - O.z, 1]);
@@ -1030,6 +1041,10 @@
         var target = Math.min(0.06, armSpd * 0.012);
         humGain.gain.value += (target - humGain.gain.value) * 0.2;
         humFilt.frequency.value = 120 + Math.min(900, armSpd * 260) + heat * 500;
+      }
+      if (AC && droneGain) {
+        var dTgt = (chD.hover && eState < 5 && match === "FIGHT") ? 0.055 : 0;
+        droneGain.gain.value += (dTgt - droneGain.gain.value) * 0.04;
       }
       {
         // Heat: work done by the actuators. Heavier arms cook faster; idling
