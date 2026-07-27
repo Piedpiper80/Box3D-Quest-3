@@ -554,6 +554,12 @@ guard, punches at the bobbing core's height — so it holds under the
 new rule. A permanent crawl instrument (anchors, hull position, tip
 heights, pad bearing) joined the COLLAPSED report.
 
+A property worth knowing about the ground fight: hull damage has no
+further consequence during the collapse — the machine is already down —
+so the provoked victor's blows cost the crawler **time and position**,
+never death. Obstruction, not execution: it can shove you away from the
+pad while the clock drains, but the knife-fight is never a trap.
+
 The last reviewed-only path fell to a script that went for the win: an
 aggressive metronome (high guard, fast punches at the hovering chest)
 now beats the God in the harness every run, and the check asserts the
