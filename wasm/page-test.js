@@ -486,7 +486,7 @@ function poseArenaCollapse(f) {
   });
   if (f < 40) return mk(vec(-0.24, 1.15, -0.30), vec(0.24, 1.15, -0.30));
   if (f < 130) return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));  // start it
-  if (f < 5200) return mk(vec(-0.55, 0.80, -0.05), vec(0.55, 0.80, -0.05)); // take it
+  if (f < 3600) return mk(vec(-0.55, 0.80, -0.05), vec(0.55, 0.80, -0.05)); // take it
   return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));               // rematch
 }
 
@@ -616,7 +616,7 @@ function poseArenaCrawl(f) {
 
     // Second run: the losing path. Undefended, the fight should end in the
     // collapse -> pad timeout -> loss -> rematch chain, in that order.
-    const r2 = await runPage(page, 12600, poseArenaCollapse);
+    const r2 = await runPage(page, 6800, poseArenaCollapse);
     check("collapse run: no exception escaped", r2.errors.length === 0, r2.errors[0] || "");
     const seq = r2.matchSeq.join(">");
     const chain = ["READY", "FIGHT", "COLLAPSED", "LOST", "READY"];
@@ -648,7 +648,7 @@ function poseArenaCrawl(f) {
     // its knees, as it happens — the collapsed win counts), the fourth win
     // fires ENDING, and begin-again reboots the campaign on the next lap.
     // This is the only thing that executes the ENDING transition.
-    const r4 = await runPage(page, 6000, poseArenaWin,
+    const r4 = await runPage(page, 4500, poseArenaWin,
       { "box3d.campaign": JSON.stringify({ c: 3, u: 3, l: 0, v: 3 }),
         "box3d.armSpan": "1.75" });
     const endChain = ["FIGHT", "WON", "ENDING", "READY"];
@@ -662,7 +662,7 @@ function poseArenaCrawl(f) {
     // the watching foe, then +x along the clear lane — and stand back up
     // healed, back in the fight. COLLAPSED followed by FIGHT is the pad
     // recovery; nothing else produces that pair.
-    const r5 = await runPage(page, 4200, poseArenaCrawl);
+    const r5 = await runPage(page, 3200, poseArenaCrawl);
     const swChain = ["FIGHT", "COLLAPSED", "FIGHT"];
     let swAt = 0;
     for (const s of r5.matchSeq) if (s === swChain[swAt]) swAt++;
