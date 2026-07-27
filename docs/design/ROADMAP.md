@@ -541,6 +541,19 @@ depth, honestly labelled.
 Known gaps, named: the beaten enemy freezes while you crawl (read it as the
 victor watching); travel is a rumble and a name, not a place; the pad
 recovery trigger is machine-verified but has not been felt in a headset.
+**Playing to win kept legislating.** A crawl script aimed at the repair
+pad discovered, in order: that a gripping stroke mid-fight anchors the
+moment a knock dips a fist to the floor and hauls the standing machine
+out of the arena; that a collapsed hull can land on its own arms; and
+that a crawling machine could grind its stroking fists into the frozen
+victor and kill it risk-free. That last one forced the rule: **hit the
+frozen victor and it wakes** — the freeze is mercy, and attacking ends
+it. The collapsed kill stays possible as a knife-fight on the ground,
+and the completability proof was rebuilt to win standing — centre
+guard, punches at the bobbing core's height — so it holds under the
+new rule. A permanent crawl instrument (anchors, hull position, tip
+heights, pad bearing) joined the COLLAPSED report.
+
 The last reviewed-only path fell to a script that went for the win: an
 aggressive metronome (high guard, fast punches at the hovering chest)
 now beats the God in the harness every run, and the check asserts the
