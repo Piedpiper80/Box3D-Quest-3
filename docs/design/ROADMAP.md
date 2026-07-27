@@ -554,6 +554,17 @@ guard, punches at the bobbing core's height — so it holds under the
 new rule. A permanent crawl instrument (anchors, hull position, tip
 heights, pad bearing) joined the COLLAPSED report.
 
+**The proof trilogy closed.** The crawl script finally reached the pad
+with a dogleg — haul +z away from the watching foe first (any fist that
+grazes it provokes the beating), then +x along the clear lane — and the
+collapsed machine stood back up healed and fought on. COLLAPSED
+followed by FIGHT is the pad recovery, nothing else produces the pair,
+and CI asserts it every run. With the standing kill (completable), the
+undefended chain (losable), and this (survivable), **every match-state
+transition in the game is exercised code**. The navigation lesson is
+recorded in the crawl instrument itself: it prints the foe's bearing
+and the provoked flag, because that is what the route was built from.
+
 A property worth knowing about the ground fight: hull damage has no
 further consequence during the collapse — the machine is already down —
 so the provoked victor's blows cost the crawler **time and position**,
