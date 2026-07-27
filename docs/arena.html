@@ -59,6 +59,10 @@
       <li><strong>Watch your wrists and your metal.</strong> Left wrist: your plate, then your
           hull in red. Right wrist: your arm class. Arms glowing hot: you're near the redline —
           past it they weaken until they cool. Pace your punches.</li>
+      <li><strong>Tune the feel yourself:</strong> add <code>?grip=1.3</code> or
+          <code>?spring=1.25</code> (0.3–3, multipliers) to this page's address before
+          entering VR to scale the wrist pull and the arm actuators. The report names
+          any active knob — tell me the numbers that feel right.</li>
       <li>Press <strong>A</strong> between fights to change arm weight. Heavy arms hit far harder,
           lumber, and cook fast; light arms dance and sting. Each victory unlocks the next class
           and toughens your hull.</li>
@@ -208,6 +212,19 @@
       localStorage.setItem("box3d.floorY", "0");
       localStorage.setItem("box3d.armSpan", "1.75");
     } catch (e) {}
+  }
+
+  // Feel knobs, straight from the URL, usable IN VR: add ?grip=1.3 or
+  // ?spring=1.25 (multipliers) to the address before Enter VR and the
+  // wrist pull / joint actuators scale to match. The report names any
+  // active knob. This exists so a headset session can A/B the punch feel
+  // in minutes instead of round-tripping every guess through a rebuild.
+  var KNOB_GRIP = 1, KNOB_SPRING = 1;
+  if (typeof location !== "undefined") {
+    var mG = location.search.match(/[?&]grip=([0-9.]+)/);
+    var mS = location.search.match(/[?&]spring=([0-9.]+)/);
+    if (mG) KNOB_GRIP = Math.min(3, Math.max(0.3, parseFloat(mG[1]) || 1));
+    if (mS) KNOB_SPRING = Math.min(3, Math.max(0.3, parseFloat(mS[1]) || 1));
   }
 
   function flatStart() {
@@ -642,11 +659,13 @@
                      4, 16, 4, 0.10, ch2.pillarMat);
     }
     heat = 0; overheated = false;
+    if (KNOB_GRIP !== 1)
+      E.w_mech_tune(5200 * KNOB_GRIP, 1.0, 7800 * KNOB_GRIP, 14000);
     // The hull hardens with the campaign: a Juggernaut's club lands ~130
     // momentum in one clean hit, and a one-hit collapse is a coin flip,
     // not a fight. Each unlocked weight class buys the frame under you.
     playerCoreLimit = 130 + unlockedLevel * 45;
-    E.w_mech_joint_spring(18000, 1.0);
+    E.w_mech_joint_spring(18000 * KNOB_SPRING, 1.0);
     E.w_mech_legs(1);
     O.x = 0; O.y = 0; O.z = 0;
     secondWind = false;
@@ -1237,7 +1256,7 @@
         var derate = overheated ? 0.22 : 1.0;
         // A lost machine is dead: drives out, arms limp where they fell.
         // (COLLAPSED keeps them — the crawl IS the arms.)
-        E.w_mech_joint_spring(match === "LOST" ? 0 : 18000 * derate, 1.0);
+        E.w_mech_joint_spring(match === "LOST" ? 0 : 18000 * KNOB_SPRING * derate, 1.0);
         if (overheated && !wasOver && AC) {
           for (var wq2 = 0; wq2 < 3; wq2++) {
             (function (k2) {
@@ -1599,6 +1618,9 @@
                        : mI <= unlockedLevel ? [0.45,0.36,0.16] : [0.16,0.17,0.20],
                      mat: mI === level ? 5 : 0 });
       }
+      if (KNOB_GRIP !== 1 || KNOB_SPRING !== 1)
+        lines.push("FEEL KNOBS  grip x" + KNOB_GRIP.toFixed(2) +
+                   "  spring x" + KNOB_SPRING.toFixed(2));
       lines.push("arm material " + (level+1) + " of " + DENSITIES.length +
                  "  (density " + DENSITIES[level] + ")");
       var NAMES = ["IDLE","APPROACH","WINDUP","SWING","RECOVER","DEAD","TRIUMPH"];
