@@ -122,6 +122,29 @@
     ]);
   }
 
+  // Block letters, 3x5, forged from the same cubes as everything else. The
+  // campaign has to be written IN the world — the page's chapter titles do
+  // not exist inside a headset, and a playtest that never saw them asked,
+  // fairly, where the campaign was. 3-bit rows, top first, bit 2 = left.
+  var GLYPH = {
+    A:[2,5,7,5,5], C:[3,4,4,4,3], D:[6,5,5,5,6], E:[7,4,6,4,7], F:[7,4,6,4,4],
+    G:[3,4,5,5,3], H:[5,5,7,5,5], I:[7,2,2,2,7], J:[1,1,1,5,2], N:[5,7,7,5,5],
+    O:[2,5,5,5,2], P:[6,5,6,4,4], R:[6,5,6,5,5], S:[3,4,2,1,6], T:[7,2,2,2,2],
+    U:[5,5,5,5,7], V:[5,5,5,5,2], W:[5,5,7,7,5], " ":[0,0,0,0,0]
+  };
+  function drawText(items, str, cx, cy, cz, s, col) {
+    var x0 = cx - ((str.length * 4 - 1) * s) / 2;
+    for (var gI2 = 0; gI2 < str.length; gI2++) {
+      var gRows = GLYPH[str[gI2]];
+      if (!gRows) continue;
+      for (var gRy = 0; gRy < 5; gRy++)
+        for (var gRx = 0; gRx < 3; gRx++)
+          if (gRows[gRy] & (4 >> gRx))
+            items.push({ m: trs([x0 + (gI2 * 4 + gRx) * s, cy + (4 - gRy) * s, cz],
+                                [0, 0, 0, 1], s * 0.46), c: col, mat: 5 });
+    }
+  }
+
   function sh(t, src) {
     var s = gl.createShader(t); gl.shaderSource(s, src); gl.compileShader(s);
     if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) setStatus("Shader: " + gl.getShaderInfoLog(s), true);
@@ -1634,6 +1657,24 @@
       if (match === "WON" || match === "LOST") {
         items.push({ m: trs([ef[ep], floorY + 1.5, ef[ep+2]], [0,0,0,1], [0.05, 1.5, 0.05]),
                      c: match === "WON" ? [0.30,0.95,0.45] : [0.95,0.30,0.22], mat: 5 });
+      }
+      // The campaign, written where you can see it: while both machines
+      // wait, the opponent's name stands in block letters over its head
+      // and your place on the ladder under it — chapter N of V, in the
+      // machine's own hull colour. The first thing you read in every
+      // arena is who you are about to fight.
+      if (match === "READY") {
+        var chIdx = Math.min(chapter, CAMPAIGN.length - 1);
+        var nmC = [Math.min(1, chD.hullC[0] * 1.6 + 0.30),
+                   Math.min(1, chD.hullC[1] * 1.6 + 0.30),
+                   Math.min(1, chD.hullC[2] * 1.6 + 0.30)];
+        var nmY = ef[ep+1] + 0.34 * eS + 0.42;
+        var nmP = 0.75 + 0.25 * Math.sin(lastT * 0.004);
+        drawText(items, chD.name, ef[ep], nmY + 0.26, ef[ep+2],
+                 0.055, [nmC[0] * nmP, nmC[1] * nmP, nmC[2] * nmP]);
+        drawText(items, ["I","II","III","IV","V"][chIdx] + " OF V",
+                 ef[ep], nmY, ef[ep+2], 0.030,
+                 [0.55 * nmP, 0.58 * nmP, 0.62 * nmP]);
       }
       // enemy status pips: its plate first, its core once bared. The stats
       // export reuses one static buffer, so the values are copied out before
