@@ -429,7 +429,7 @@
   var fistTimer = 0, endTimer = 0, frameDt = 1 / 72;
   var travelTimer = 0, rumbleT = 0, travelThump = 0, eStepT = 0;
   var sparks = [], prevEPlate = null, scrapeT = 0;
-  var motes = [], moteT = 0;
+  var motes = [], moteT = 0, prevPlateFrac = null;
   var hitStop = 0;
   // Overheat: swing hard and long and the actuators cook. Heavier arms heat
   // faster. Past the redline they weaken until you let them cool.
@@ -599,7 +599,7 @@
     match = "READY";
     prevStats = null; prevChunks = 0; prevEnemy = null;
     sparks.length = 0; prevEPlate = null;
-    motes.length = 0;
+    motes.length = 0; prevPlateFrac = null;
     endTimer = 0;
     built = true;
   }
@@ -915,7 +915,13 @@
         items.push({ m: trs([fbA[roA], fbA[roA+1], fbA[roA+2]],
                             [fbA[roA+3], fbA[roA+4], fbA[roA+5], fbA[roA+6]],
                             [fbA[roA+7], fbA[roA+8], fbA[roA+9]]),
-                     c: fbA[roA+10] > 0.5 ? [0.80, 0.44, 0.24] : mcA,
+                     c: fbA[roA+10] > 0.5
+                        ? (function () {
+                            // Hurt cells flicker — damaged, not painted.
+                            var fk = 0.75 + 0.25 * Math.sin(lastT * 0.02 + fbA[roA] * 7 + fbA[roA+1] * 13);
+                            return [0.85 * fk, 0.46 * fk, 0.22 * fk];
+                          })()
+                        : mcA,
                      mat: (fbA[roA+11] | 0) + 1 });
       }
       var cn2 = E.w_vox_chunk_box_count(), cp2 = E.w_vox_chunk_boxes() >>> 2;
@@ -1283,6 +1289,22 @@
       var eg2 = E.w_vox_grid_stats(enemyGrid) >>> 2, egf = new Float32Array(E.memory.buffer);
       var ePlateAlive = egf[eg2], ePlateTotal = egf[eg2+2];
       var plateFrac = ePlateTotal > 0 ? ePlateAlive / ePlateTotal : 0;
+      // The moment the plate stops counting, the kill window opens — and it
+      // is announced: two quick rising notes, the hunt's change of key.
+      if (prevPlateFrac !== null && prevPlateFrac >= 0.06 && plateFrac < 0.06 && AC) {
+        for (var kb = 0; kb < 2; kb++) {
+          (function (k4) {
+            var oK = AC.createOscillator(); oK.type = "square";
+            oK.frequency.value = k4 ? 988 : 659;
+            var gK = AC.createGain(); gK.gain.value = 0.0001;
+            var tK = AC.currentTime + k4 * 0.12;
+            gK.gain.setValueAtTime(0.10, tK);
+            gK.gain.exponentialRampToValueAtTime(0.001, tK + 0.15);
+            oK.connect(gK); gK.connect(AC.destination); oK.start(tK); oK.stop(tK + 0.18);
+          })(kb);
+        }
+      }
+      prevPlateFrac = plateFrac;
       // Sparks where the armour gives: emissive chips thrown off the enemy's
       // plate as cells die, gone in a third of a second. Its death burst
       // showers them, for free, from the same delta.
@@ -1295,23 +1317,28 @@
                         vz: 0.8 + Math.random()*1.4, t: 0.28 + Math.random()*0.14 });
         }
       }
-      // The ending's air: slow gold motes rising over the wreck while the
-      // ring runs its lap — the sky, being yours.
-      if (match === "ENDING") {
+      // The ending's air: slow gold motes rising over the arena while the
+      // ring runs its lap — and over any fresh wreck, grey smoke instead.
+      var mSmoke = (match === "WON" || match === "TRAVEL") && eState === 5;
+      if (match === "ENDING" || mSmoke) {
         moteT -= frameDt;
         if (moteT <= 0 && motes.length < 14) {
-          motes.push({ x: hpBase.x + (Math.random() - 0.5) * 5, y: floorY + 0.2,
-                       z: hpBase.z + (Math.random() - 0.5) * 5, t: 0 });
-          moteT = 0.4;
+          var mR = mSmoke ? 0.5 : 5;
+          var mOx = mSmoke ? ef[ep] : hpBase.x, mOz = mSmoke ? ef[ep+2] : hpBase.z;
+          motes.push({ x: mOx + (Math.random() - 0.5) * mR, y: floorY + 0.2,
+                       z: mOz + (Math.random() - 0.5) * mR, t: 0, s: mSmoke ? 1 : 0 });
+          moteT = mSmoke ? 0.7 : 0.4;
         }
       }
       for (var mJ = motes.length - 1; mJ >= 0; mJ--) {
         var mo = motes[mJ];
-        mo.t += frameDt; mo.y += 0.25 * frameDt;
-        if (mo.t > 6 || match !== "ENDING") { motes.splice(mJ, 1); continue; }
+        mo.t += frameDt; mo.y += (mo.s ? 0.18 : 0.25) * frameDt;
+        if (mo.t > 6 || (match !== "ENDING" && !mSmoke)) { motes.splice(mJ, 1); continue; }
         var mg = Math.min(1, mo.t) * Math.min(1, (6 - mo.t) / 1.5);
-        items.push({ m: trs([mo.x, mo.y, mo.z], [0,0,0,1], 0.014),
-                     c: [0.95*mg, 0.78*mg, 0.30*mg], mat: 5 });
+        items.push({ m: trs([mo.x, mo.y, mo.z], [0,0,0,1], mo.s ? 0.022 : 0.014),
+                     c: mo.s ? [0.16*mg + 0.05, 0.16*mg + 0.05, 0.17*mg + 0.05]
+                             : [0.95*mg, 0.78*mg, 0.30*mg],
+                     mat: mo.s ? 0 : 5 });
       }
       prevEPlate = ePlateAlive;
       for (var sJ = sparks.length - 1; sJ >= 0; sJ--) {
