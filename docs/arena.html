@@ -391,25 +391,33 @@
   // CALIBRATE is implicit (floor/span). READY waits for fists-up. FIGHT runs
   // the enemy. WON/LOST hold until fists-up rematches.
   // --- the campaign: four chapters, four machines, four places ---
+  // Each chapter is a machine AND a place: skyline height/colour, floor
+  // tint, and the pillar material change with the fight, so travelling
+  // arrives somewhere that looks like its name.
   var CAMPAIGN = [
     { name: "SCRAPPER", place: "The Scrapfields",
       story: "An old harvester frame, re-armed. It remembers being told to dig.",
-      mat: 0, scale: 0.85, core: 170, hover: 0, tempo: 1.15, pillarMat: 0 },
+      mat: 0, scale: 0.85, core: 170, hover: 0, tempo: 1.15, pillarMat: 0,
+      skyC: [0.14,0.115,0.085], skyH: 0.6, skyN: 11, floorC: [0.185,0.175,0.195] },
     { name: "WARDEN", place: "Milltown Ring",
       story: "Town watch chassis. Stone-plated. Patient. It has never lost here.",
-      mat: 1, scale: 1.0, core: 260, hover: 0, tempo: 1.0, pillarMat: 1 },
+      mat: 1, scale: 1.0, core: 260, hover: 0, tempo: 1.0, pillarMat: 1,
+      skyC: [0.115,0.115,0.13], skyH: 1.0, skyN: 9, floorC: [0.16,0.185,0.235] },
     { name: "JUGGERNAUT", place: "The Foundry",
       story: "Foundry guard, steel-skinned. Bring your heaviest arms.",
-      mat: 2, scale: 1.25, core: 340, hover: 0, tempo: 0.85, pillarMat: 1 },
+      mat: 2, scale: 1.25, core: 340, hover: 0, tempo: 0.85, pillarMat: 1,
+      skyC: [0.125,0.10,0.095], skyH: 1.7, skyN: 11, floorC: [0.155,0.16,0.20], ember: 1 },
     { name: "THE RETURNED", place: "The High Dark",
       story: "It does not stand on the earth. The old gods never did.",
-      mat: 2, scale: 1.35, core: 430, hover: 1, tempo: 1.25, pillarMat: 2 },
+      mat: 2, scale: 1.35, core: 430, hover: 1, tempo: 1.25, pillarMat: 2,
+      skyC: [0.05,0.055,0.095], skyH: 2.3, skyN: 5, floorC: [0.095,0.11,0.155] },
   ];
   var chapter = 0;
   var unlockedLevel = 1;             // arm weights unlock as the campaign goes
   var match = "READY";
   var fistTimer = 0, endTimer = 0, frameDt = 1 / 72;
-  var travelTimer = 0, rumbleT = 0, travelThump = 0;
+  var travelTimer = 0, rumbleT = 0, travelThump = 0, eStepT = 0;
+  var sparks = [], prevEPlate = null;
   var hitStop = 0;
   // Overheat: swing hard and long and the actuators cook. Heavier arms heat
   // faster. Past the redline they weaken until you let them cool.
@@ -565,6 +573,7 @@
     padPos = { x: hx + 2.6, z: hz + 0.6 };
     match = "READY";
     prevStats = null; prevChunks = 0; prevEnemy = null;
+    sparks.length = 0; prevEPlate = null;
     endTimer = 0;
     built = true;
   }
@@ -849,8 +858,9 @@
       }
 
       // ---- the arena floor: the world has a ground now ----
+      var chD = CAMPAIGN[Math.min(chapter, CAMPAIGN.length - 1)];
       items.push({ m: trs([hpBase.x, floorY - 0.06, hpBase.z], [0,0,0,1], [7.5, 0.06, 7.5]),
-                   c: [0.16, 0.185, 0.235], mat: 4 });
+                   c: chD.floorC, mat: 4 });
 
       // ---- worn plates and anything torn off them ----
       var MATC = [[0.55,0.42,0.26], [0.56,0.57,0.62], [0.62,0.66,0.74]];
@@ -938,6 +948,21 @@
           for (var hI = 0; hI < srcs.length; hI++) haptic(srcs[hI], 1.0, 120);
         }
         if (chunksNow > prevChunks) hitStop = Math.max(hitStop, 0.05);
+      }
+      // The enemy is heard before it is felt: a servo catch as the club
+      // draws up, air as it comes down, and its tread while it closes.
+      if (prevEnemy !== null && stepped && AC) {
+        if (prevEnemy !== 2 && eState === 2) noiseBurst(0.09, 2200, 0.09);
+        if (prevEnemy !== 3 && eState === 3) noiseBurst(0.24, 760, 0.20);
+        var chS = CAMPAIGN[Math.min(chapter, CAMPAIGN.length - 1)];
+        if (eState === 1 && !chS.hover) {
+          eStepT -= frameDt;
+          if (eStepT <= 0) {
+            var dS = Math.hypot(ef[ep] - (hp.x + O.x), ef[ep+2] - (hp.z + O.z));
+            thud(Math.max(0, 1.5 - dS * 0.35));
+            eStepT = 0.54 / chS.tempo;
+          }
+        }
       }
       prevStats = killedNow; prevChunks = chunksNow; prevEnemy = eState;
 
@@ -1099,12 +1124,34 @@
                        : match === "WON" ? [0.25,0.85,0.42]
                        : match === "LOST" ? [0.85,0.25,0.20] : [0.28,0.45,0.75], mat: 5 });
       }
-      for (var kI = 0; kI < 9; kI++) {
-        var ka = kI / 9 * Math.PI * 2 + 0.35;
-        var kh = 1.6 + ((kI * 37) % 5) * 0.9;
-        items.push({ m: trs([hpBase.x + Math.cos(ka) * 14, floorY + kh,
-                             hpBase.z + Math.sin(ka) * 14], [0,0,0,1], [1.4, kh, 1.2]),
-                     c: [0.10, 0.12, 0.17], mat: 0 });
+      if (match === "TRAVEL") {
+        // Being carried: the destination's skyline streams past on both
+        // sides of the road while the hauler thumps along under you.
+        for (var kT = 0; kT < 12; kT++) {
+          var sideT = (kT % 2) ? 8.5 : -8.5;
+          var zT = ((kT * 6.1 + rumbleT * 9) % 40) - 20;
+          var hT = (0.9 + ((kT * 29) % 4) * 0.8) * chD.skyH;
+          items.push({ m: trs([hpBase.x + sideT + ((kT * 13) % 3), floorY + hT,
+                               hpBase.z + zT], [0,0,0,1], [1.0, hT, 1.0]),
+                       c: chD.skyC, mat: 0 });
+        }
+      } else {
+        // The standing skyline wears the chapter: scrap heaps low and rusty,
+        // mill rows, foundry stacks with embers, and the High Dark's spires.
+        for (var kI = 0; kI < chD.skyN; kI++) {
+          var ka = kI / chD.skyN * Math.PI * 2 + 0.35;
+          var kh = (1.0 + ((kI * 37) % 5) * 0.55) * chD.skyH + 0.6;
+          var kw = chD.skyH > 2 ? 0.6 : 1.4;
+          var kx = hpBase.x + Math.cos(ka) * 14, kz = hpBase.z + Math.sin(ka) * 14;
+          items.push({ m: trs([kx, floorY + kh, kz], [0,0,0,1], [kw, kh, kw * 0.85]),
+                       c: chD.skyC, mat: 0 });
+          if (chD.ember && kI % 4 === 0) {
+            var eGlow = 0.55 + 0.45 * Math.sin(lastT * 0.002 + kI * 2.1);
+            items.push({ m: trs([kx, floorY + kh * 2 + 0.25, kz], [0,0,0,1],
+                                [0.22, 0.22, 0.22]),
+                         c: [0.95 * eGlow, 0.38 * eGlow, 0.10 * eGlow], mat: 5 });
+          }
+        }
       }
       // verdict pillar
       if (match === "WON" || match === "LOST") {
@@ -1118,6 +1165,29 @@
       var eg2 = E.w_vox_grid_stats(enemyGrid) >>> 2, egf = new Float32Array(E.memory.buffer);
       var ePlateAlive = egf[eg2], ePlateTotal = egf[eg2+2];
       var plateFrac = ePlateTotal > 0 ? ePlateAlive / ePlateTotal : 0;
+      // Sparks where the armour gives: emissive chips thrown off the enemy's
+      // plate as cells die, gone in a third of a second. Its death burst
+      // showers them, for free, from the same delta.
+      if (prevEPlate !== null && ePlateAlive < prevEPlate && sparks.length < 36) {
+        var burst = Math.min(6, 2 + (prevEPlate - ePlateAlive) * 2);
+        for (var sI = 0; sI < burst; sI++) {
+          sparks.push({ x: ef[ep] + (Math.random()-0.5)*0.2, y: ef[ep+1] + 0.05,
+                        z: ef[ep+2] + 0.16,
+                        vx: (Math.random()-0.5)*2.2, vy: 1.2 + Math.random()*1.6,
+                        vz: 0.8 + Math.random()*1.4, t: 0.28 + Math.random()*0.14 });
+        }
+      }
+      prevEPlate = ePlateAlive;
+      for (var sJ = sparks.length - 1; sJ >= 0; sJ--) {
+        var sp2 = sparks[sJ];
+        sp2.t -= frameDt;
+        if (sp2.t <= 0) { sparks.splice(sJ, 1); continue; }
+        sp2.vy -= 9.8 * frameDt;
+        sp2.x += sp2.vx * frameDt; sp2.y += sp2.vy * frameDt; sp2.z += sp2.vz * frameDt;
+        var sg2 = Math.min(1, sp2.t / 0.18);
+        items.push({ m: trs([sp2.x, sp2.y, sp2.z], [0,0,0,1], 0.016),
+                     c: [Math.min(1, 1.0*sg2 + 0.2), 0.55*sg2, 0.12*sg2], mat: 5 });
+      }
       for (var pI = 0; pI < 8; pI++) {
         var lit = (plateFrac > 0.06) ? (pI / 8 < plateFrac) : (pI / 8 < coreFrac);
         items.push({ m: trs([ef[ep] - 0.28 + pI * 0.08, ef[ep+1] + 0.62, ef[ep+2]],
