@@ -1196,6 +1196,18 @@
         items.push({ m: trs([padPos.x, floorY + bH, padPos.z], [0,0,0,1],
                             [0.04, bH, 0.04]),
                      c: [0.20, 0.9 * pulse + 0.1, 0.8], mat: 5 });
+        // And the grip is taught by the ground: until a fist is planted, a
+        // teal patch pulses on the floor under each free hand. Grab there.
+        var gpp = 0.5 + 0.5 * Math.sin(lastT * 0.010);
+        for (var gH = 0; gH < srcs.length && gH < handPos.length; gH++) {
+          var aIx = srcs[gH].handedness === "right" ? 1 : 0;
+          if (fa[dsA + aIx] > 0.5) continue;       // that fist is planted
+          items.push({ m: trs([handPos[gH].x + O.x, floorY + 0.015,
+                               handPos[gH].z + O.z], [0,0,0,1],
+                              [0.09, 0.012, 0.09]),
+                       c: [0.20*gpp + 0.08, 0.80*gpp + 0.10, 0.72*gpp + 0.08],
+                       mat: 5 });
+        }
       }
 
       // ---- arena dressing ----
