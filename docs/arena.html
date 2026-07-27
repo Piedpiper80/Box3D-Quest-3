@@ -405,19 +405,23 @@
     { name: "SCRAPPER", place: "The Scrapfields",
       story: "An old harvester frame, re-armed. It remembers being told to dig.",
       mat: 0, scale: 0.85, core: 170, hover: 0, tempo: 1.15, pillarMat: 0,
-      skyC: [0.14,0.115,0.085], skyH: 0.6, skyN: 11, floorC: [0.185,0.175,0.195] },
+      skyC: [0.14,0.115,0.085], skyH: 0.6, skyN: 11, floorC: [0.185,0.175,0.195],
+      hullC: [0.36,0.26,0.20] },
     { name: "WARDEN", place: "Milltown Ring",
       story: "Town watch chassis. Stone-plated. Patient. It has never lost here.",
       mat: 1, scale: 1.0, core: 260, hover: 0, tempo: 1.0, pillarMat: 1,
-      skyC: [0.115,0.115,0.13], skyH: 1.0, skyN: 9, floorC: [0.16,0.185,0.235] },
+      skyC: [0.115,0.115,0.13], skyH: 1.0, skyN: 9, floorC: [0.16,0.185,0.235],
+      hullC: [0.28,0.30,0.36] },
     { name: "JUGGERNAUT", place: "The Foundry",
       story: "Foundry guard, steel-skinned. Bring your heaviest arms.",
       mat: 2, scale: 1.25, core: 340, hover: 0, tempo: 0.85, pillarMat: 1,
-      skyC: [0.125,0.10,0.095], skyH: 1.7, skyN: 11, floorC: [0.155,0.16,0.20], ember: 1 },
+      skyC: [0.125,0.10,0.095], skyH: 1.7, skyN: 11, floorC: [0.155,0.16,0.20], ember: 1,
+      hullC: [0.17,0.16,0.17] },
     { name: "THE RETURNED", place: "The High Dark",
       story: "It does not stand on the earth. The old gods never did.",
       mat: 2, scale: 1.35, core: 430, hover: 1, tempo: 1.25, pillarMat: 2,
-      skyC: [0.05,0.055,0.095], skyH: 2.3, skyN: 5, floorC: [0.095,0.11,0.155] },
+      skyC: [0.05,0.055,0.095], skyH: 2.3, skyN: 5, floorC: [0.095,0.11,0.155],
+      hullC: [0.20,0.14,0.26] },
   ];
   var chapter = 0;
   var unlockedLevel = 1;             // arm weights unlock as the campaign goes
@@ -914,17 +918,21 @@
       var eS = chD.scale;
       var windupArm = -1;
       if (eState === 2) windupArm = 1;      // drawing up: warn colour
-      // torso: dark hull, its core glows through as it weakens
+      // torso: each chapter's hull wears its own iron — rust, slate, black
+      // foundry iron, the Returned's violet dark — and the core glows
+      // through it as the machine weakens.
+      var hC = chD.hullC;
       items.push({ m: trs([ef[ep], ef[ep+1], ef[ep+2]],
                           [ef[ep+3], ef[ep+4], ef[ep+5], ef[ep+6]],
                           [0.24*eS, 0.34*eS, 0.14*eS]),
                    c: eState === 5 ? [0.15,0.15,0.17]
-                     : [0.30 + 0.5*(1-coreFrac), 0.24, 0.28] });
+                     : [hC[0] + 0.55*(1-coreFrac), hC[1], hC[2]] });
       for (var ai2 = 0; ai2 < 2; ai2++) {
         var ao = ep + 9 + ai2*7;
         var warn = (eState === 2 || eState === 3);
         var li2 = limbItem(ef, ao, 0.60*eS, 0.07*eS,
-          warn ? [0.95, 0.35, 0.22] : [0.35, 0.33, 0.40]);
+          warn ? [0.95, 0.35, 0.22]
+               : [hC[0]*1.15 + 0.06, hC[1]*1.15 + 0.06, hC[2]*1.15 + 0.06]);
         li2.mat = warn ? 5 : 0;
         items.push(li2);
       }
@@ -941,8 +949,9 @@
                : (eState === 2 || eState === 3) ? [1.0,0.42,0.18]
                : [0.85,0.20,0.16];
         // While you crawl, the victor holds still — but the visor breathes,
-        // slowly, so stillness reads as watching rather than as a hang.
-        if (match === "COLLAPSED") {
+        // slowly, so stillness reads as watching rather than as a hang. It
+        // idles the same way before the fight: alive, waiting.
+        if (match === "COLLAPSED" || match === "READY") {
           var wp = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(lastT * 0.004));
           vc = [0.85 * wp, 0.20 * wp, 0.16 * wp];
         }
