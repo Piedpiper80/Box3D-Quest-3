@@ -554,6 +554,33 @@ guard, punches at the bobbing core's height — so it holds under the
 new rule. A permanent crawl instrument (anchors, hull position, tip
 heights, pad bearing) joined the COLLAPSED report.
 
+#### The second playtest verdict, and the feel rebuild
+
+The first human playtest of the campaign said the FOUNDATIONS were
+wrong: punches floaty, movement rubbery, the opponent legless — "should
+be Thrill of the Fight crossed with the weight of mechanical robots,
+One Must Fall." Three passes landed the same day:
+
+1. **Crisp over mush.** Wrist grip 2000/3000 → 5200/7800 N/m, actuators
+   8000 → 18000, stand 6000/900 → 11000/1350. Lag read as mush, never
+   as mass — weight moved to the impact: every landed hit flinches the
+   enemy's body, big bites stop time a heartbeat and land a 58 Hz sub
+   thump, whiffs cut the air. The fixed-K principle survives (weight
+   still grades); the whole curve moved to responsive. Paid costs:
+   drag gradient compressed ~5×→1.8×, steel hardened 26→32 hp.
+2. **A body.** Pelvis, striding legs with forward-bent knees and feet
+   that turn with it, segmented upper/forearm/fist per arm, a walk bob
+   — and down-thrust jets for the one that never stood on earth. The
+   player's own attachments became GAUNTLETS: wrist guard + knuckle
+   block, the two boxes looked at most in the whole game.
+3. **A boxer.** Split guard covering its face line, in-place sway, a
+   fast barely-telegraphed JAB as the bread-and-butter (hoverer leads
+   sweeps, heavyweight leads overheads), and a pose-only brain call so
+   it WAITS IN GUARD during READY instead of hanging dead-armed.
+
+All three campaign proofs re-choreographed and standing. The next
+verdict belongs to the same headset that forced this one.
+
 **The lap curve, measured.** NG+ tempo compounds on the God:
 kill/undefended-death times run 13.6 s/4.3 s at lap 1, 9.7/5.3 at ×1.15,
 6.9/2.4 at ×1.30, 4.6/2.3 at ×1.45. Faster machines lunge more and
