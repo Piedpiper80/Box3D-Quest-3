@@ -2794,33 +2794,36 @@ static int w_enemy_create_inner(float x, float z, int material)
         ej.dampingRatio = 0.9f;
         s_eElbow[i] = b3CreateSphericalJoint(s_world, &ej);
 
-        // The arm's parts: upper arm, forearm, fist — each its own grid.
-        b3Vec3 upLoc = { -0.10f * sc, -0.10f * sc, 0.07f * sc };
+        // The arm's parts: two slim cells along each segment and a fist a
+        // human-proportioned machine would throw — the first pass wore
+        // half-metre cubes for hands ("way too big"). Two cells also means
+        // a segment DENTS before it dies.
+        b3Vec3 upLoc = { -0.05f * sc, -0.05f * sc, 0.06f * sc };
         s_ePart[PART_L_UPARM + i * 3] =
-            vxBuild(s_eUpArm[i], upLoc, 1, 1, 1, 0.20f * sc, material, 2, ENEMY_CATEGORY);
-        vxMakePart(s_ePart[PART_L_UPARM + i * 3], 22.0f);
-        b3Vec3 foLoc = { -0.09f * sc, -0.09f * sc, 0.06f * sc };
+            vxBuild(s_eUpArm[i], upLoc, 1, 1, 2, 0.10f * sc, material, 2, ENEMY_CATEGORY);
+        vxMakePart(s_ePart[PART_L_UPARM + i * 3], 10.0f);
+        b3Vec3 foLoc = { -0.05f * sc, -0.05f * sc, 0.03f * sc };
         s_ePart[PART_L_FOREARM + i * 3] =
-            vxBuild(s_eArm[i], foLoc, 1, 1, 1, 0.18f * sc, material, 2, ENEMY_CATEGORY);
-        vxMakePart(s_ePart[PART_L_FOREARM + i * 3], 18.0f);
-        b3Vec3 fiLoc = { -0.11f * sc, -0.11f * sc, 0.26f * sc };
+            vxBuild(s_eArm[i], foLoc, 1, 1, 2, 0.10f * sc, material, 2, ENEMY_CATEGORY);
+        vxMakePart(s_ePart[PART_L_FOREARM + i * 3], 9.0f);
+        b3Vec3 fiLoc = { -0.065f * sc, -0.065f * sc, 0.24f * sc };
         s_ePart[PART_L_FIST + i * 3] =
-            vxBuild(s_eArm[i], fiLoc, 1, 1, 1, 0.22f * sc, material, 2, ENEMY_CATEGORY);
-        vxMakePart(s_ePart[PART_L_FIST + i * 3], 14.0f);
+            vxBuild(s_eArm[i], fiLoc, 1, 1, 1, 0.13f * sc, material, 2, ENEMY_CATEGORY);
+        vxMakePart(s_ePart[PART_L_FIST + i * 3], 12.0f);
     }
 
     // Head and pelvis ride the torso; the legs hang below it, sized to
     // exactly fill the gap the stature leaves to the floor — which is why
     // stature must be told BEFORE creation (s_ePendStature).
     {
-        b3Vec3 hdLoc = { -0.12f * sc, 0.34f * sc, -0.12f * sc };
+        b3Vec3 hdLoc = { -0.08f * sc, 0.36f * sc, -0.08f * sc };
         s_ePart[PART_HEAD] =
-            vxBuild(s_eTorso, hdLoc, 1, 1, 1, 0.24f * sc, material, 2, ENEMY_CATEGORY);
-        vxMakePart(s_ePart[PART_HEAD], 26.0f);
-        b3Vec3 pvLoc = { -0.14f * sc, -0.62f * sc, -0.14f * sc };
+            vxBuild(s_eTorso, hdLoc, 1, 1, 1, 0.16f * sc, material, 2, ENEMY_CATEGORY);
+        vxMakePart(s_ePart[PART_HEAD], 20.0f);
+        b3Vec3 pvLoc = { -0.09f * sc, -0.56f * sc, -0.09f * sc };
         s_ePart[PART_PELVIS] =
-            vxBuild(s_eTorso, pvLoc, 1, 1, 1, 0.28f * sc, material, 2, ENEMY_CATEGORY);
-        vxMakePart(s_ePart[PART_PELVIS], 34.0f);
+            vxBuild(s_eTorso, pvLoc, 1, 1, 1, 0.18f * sc, material, 2, ENEMY_CATEGORY);
+        vxMakePart(s_ePart[PART_PELVIS], 26.0f);
 
         // The legs FIT the gap, strictly: a 4 cm hover keeps the feet just
         // off the floor (the stand spring carries the machine; the legs are
@@ -2830,16 +2833,16 @@ static int w_enemy_create_inner(float x, float z, int material)
         // its buried feet at millimetres per second, stalled a metre out
         // of range. Short-statured machines get stubby legs; buried feet
         // get nobody anywhere.
-        float legLen = ENEMY_STAND_Y - 0.62f * sc - 0.10f;
+        float legLen = ENEMY_STAND_Y - 0.56f * sc - 0.10f;
         if (legLen < 0.12f) legLen = 0.12f;
-        float uSz = legLen * 0.40f; if (uSz > 0.30f) uSz = 0.30f;
+        float uSz = legLen * 0.40f; if (uSz > 0.13f * sc) uSz = 0.13f * sc;
         float lSz = uSz;
-        float fSz = legLen * 0.20f; if (fSz > 0.16f) fSz = 0.16f;
+        float fSz = legLen * 0.20f; if (fSz > 0.10f * sc) fSz = 0.10f * sc;
         for (int L = 0; L < 2; L++)
         {
-            const float lx = (L == 0 ? -1.0f : 1.0f) * 0.13f * sc;
+            const float lx = (L == 0 ? -1.0f : 1.0f) * 0.16f * sc;
             const int base = L == 0 ? PART_L_UPLEG : PART_R_UPLEG;
-            float yTop = -0.62f * sc;
+            float yTop = -0.65f * sc;
             b3Vec3 ul = { lx - uSz * 0.5f, yTop - uSz, -uSz * 0.5f };
             s_ePart[base] = vxBuild(s_eTorso, ul, 1, 1, 1, uSz, material, 2, ENEMY_CATEGORY);
             vxMakePart(s_ePart[base], 26.0f);
@@ -3048,7 +3051,11 @@ void w_enemy_update(float px, float py, float pz, float dt)
         const float mAll = mass
             + b3Body_GetMass(s_eUpArm[0]) + b3Body_GetMass(s_eUpArm[1])
             + b3Body_GetMass(s_eArm[0]) + b3Body_GetMass(s_eArm[1]);
-        float fy = mAll * 9.81f + (standY - (float)tp.y) * 5200.0f - tv.y * 900.0f;
+        // Near-critical vertical damping, scaled to the REAL mass: the old
+        // fixed 900 left heavy builds bouncing on their stand spring after
+        // every flinch — "hopping around like an idiot".
+        const float vDamp = 1.9f * __builtin_sqrtf(5200.0f * mAll);
+        float fy = mAll * 9.81f + (standY - (float)tp.y) * 5200.0f - tv.y * vDamp;
         // Knocked down: the stand is out and the machine falls under its own
         // weight, then the spring returns and it hauls itself back up.
         if (s_eDownTimer > 0.0f)
@@ -3410,7 +3417,7 @@ void w_enemy_post(void)
             if (kl > 1e-3f)
             {
                 const float mag = (loss > 6.0f ? 6.0f : loss) * 9.0f;
-                b3Vec3 imp = { kb.x / kl * mag, 2.5f, kb.z / kl * mag };
+                b3Vec3 imp = { kb.x / kl * mag, 0.9f, kb.z / kl * mag };
                 b3Body_ApplyLinearImpulseToCenter(s_eTorso, imp, true);
                 b3Vec3 spin = { kb.z / kl * mag * 0.35f, 0.0f, -kb.x / kl * mag * 0.35f };
                 b3Body_ApplyAngularImpulse(s_eTorso, spin, true);
@@ -3428,7 +3435,7 @@ void w_enemy_post(void)
             s_eState = E_RECOVER;
             s_eTimer = -1.1f;
             s_eDownTimer = 0.9f;
-            eKeel(3.4f);
+            eKeel(4.2f);
         }
         else if (loss >= stag
             && (s_eState == E_APPROACH || s_eState == E_WINDUP || s_eState == E_SWING))
@@ -3439,6 +3446,19 @@ void w_enemy_post(void)
         s_ePrevPlateAlive = alive;
     }
 
+    // The whole robot is destructible and wrecking it ANYWHERE counts —
+    // the chest is one target among fifteen, not the game. Three fifths
+    // of its body cells torn off kills the drives outright.
+    {
+        int pk = 0, pt = 0;
+        for (int i2 = 0; i2 < PART_COUNT; i2++)
+        {
+            const int g2 = s_ePart[i2];
+            if (g2 >= 0 && g2 < VOX_GRIDS && s_vxG[g2].used)
+            { pk += s_vxG[g2].killed; pt += s_vxG[g2].killed + s_vxG[g2].alive; }
+        }
+        if (pt > 0 && pk * 5 >= pt * 3 && s_eCoreHp > 0.0f) s_eCoreHp = 0.0f;
+    }
     if (s_eCoreHp <= 0.0f)
     {
         // The drives cut out. The machine drops, and what is left of its

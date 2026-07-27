@@ -702,7 +702,7 @@
   // the Pages CDN both cache hard — a playtest once got the old game and,
   // fairly, could not tell), and it is printed on the card so which build
   // loaded is never a guess.
-  var BUILD = 14;
+  var BUILD = 15;
   var bTag = document.getElementById("buildTag");
   if (bTag) bTag.textContent = "(build " + BUILD + ")";
   fetch("box3d.wasm?v=" + BUILD)
@@ -1141,15 +1141,16 @@
       for (var rA = 0; rA < rn2; rA++) {
         var roA = rp2 + rA * 12;
         var mcA = MATC[fbA[roA+11] | 0] || MATC[1];
+        // A hurt panel is a DENT: crushed darker and drawn slightly inset
+        // from its neighbours, so damage stays written in the metal
+        // instead of flashing like a warning light. (Playtest ask.)
+        var dHurt = fbA[roA+10] > 0.5;
+        var dIn = dHurt ? 0.88 : 1;
         items.push({ m: trs([fbA[roA], fbA[roA+1], fbA[roA+2]],
                             [fbA[roA+3], fbA[roA+4], fbA[roA+5], fbA[roA+6]],
-                            [fbA[roA+7], fbA[roA+8], fbA[roA+9]]),
-                     c: fbA[roA+10] > 0.5
-                        ? (function () {
-                            // Hurt cells flicker — damaged, not painted.
-                            var fk = 0.75 + 0.25 * Math.sin(lastT * 0.02 + fbA[roA] * 7 + fbA[roA+1] * 13);
-                            return [0.85 * fk, 0.46 * fk, 0.22 * fk];
-                          })()
+                            [fbA[roA+7]*dIn, fbA[roA+8]*dIn, fbA[roA+9]*dIn]),
+                     c: dHurt
+                        ? [mcA[0]*0.48+0.10, mcA[1]*0.44+0.06, mcA[2]*0.40+0.04]
                         : mcA,
                      mat: (fbA[roA+11] | 0) + 1 });
       }
@@ -1198,7 +1199,7 @@
         for (var ai2 = 0; ai2 < 2; ai2++) {
           var ao = ep + 9 + ai2*7;
           var aq = [ef[ao+3], ef[ao+4], ef[ao+5], ef[ao+6]];
-          var fw = rotZ(aq, 0.37 * eS);
+          var fw = rotZ(aq, 0.31 * eS);
           var wp2 = 0.6 + 0.4 * Math.sin(lastT * 0.03);
           items.push({ m: trs([ef[ao] + fw[0], ef[ao+1] + fw[1], ef[ao+2] + fw[2]],
                               aq, 0.05 * eS),
@@ -1255,8 +1256,18 @@
           var wp = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(lastT * 0.004));
           vc = [0.85 * wp, 0.20 * wp, 0.16 * wp];
         }
-        items.push({ m: trs([vx2, vy2, vz2], q, [0.13*eS, 0.025*eS, 0.02*eS]),
-                     c: vc, mat: eState === 5 ? 0 : 5 });
+        // Two eyes, not one slit — "he's got one visor for an eye. It's
+        // bad." Placed across the head's own x-axis so they turn with it.
+        var exx = 1 - 2*(q[1]*q[1] + q[2]*q[2]),
+            exy = 2*(q[0]*q[1] + q[3]*q[2]),
+            exz = 2*(q[0]*q[2] - q[3]*q[1]);
+        for (var eyeI = -1; eyeI <= 1; eyeI += 2) {
+          items.push({ m: trs([vx2 + exx * eyeI * 0.042 * eS,
+                               vy2 + exy * eyeI * 0.042 * eS,
+                               vz2 + exz * eyeI * 0.042 * eS], q,
+                              [0.026*eS, 0.020*eS, 0.015*eS]),
+                       c: vc, mat: eState === 5 ? 0 : 5 });
+        }
       })();
 
       // ---- the wearable state, read as deltas for sound and haptics ----

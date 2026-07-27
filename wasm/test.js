@@ -775,8 +775,12 @@ const wasi = new WASI({ version: "preview1" });
   let lowest = 10;
   for (let s = 0; s < 110; s++) { idleStep(); lowest = Math.min(lowest, est()[1]); }
   for (let s = 0; s < 260; s++) idleStep();
+  // The knockdown KEELS the machine over its rigid legs now (it cannot
+  // sink through them); the body catches itself around a sixth of a metre
+  // down and hauls back up. The threshold matches the keel, not the old
+  // sink-through-the-floor drop.
   check("a big tear knocks it down and it stands back up",
-        lowest < upY - 0.20 && est()[1] > upY - 0.15,
+        lowest < upY - 0.14 && est()[1] > upY - 0.15,
         `stood ${upY.toFixed(2)}, dropped to ${lowest.toFixed(2)}, back at ${est()[1].toFixed(2)}`);
 
   console.log(`\n${pass} passed, ${fail} failed, ${gaps} known gaps`);
