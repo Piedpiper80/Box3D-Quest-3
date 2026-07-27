@@ -1768,7 +1768,7 @@ static int s_vxLastHits = 0;
 // Ring of this step's impacts: where, how hard, which grid — the page
 // reads it to drive real mesh deformation.
 #define VOX_HITEV_MAX 16
-static float s_vxHitEv[VOX_HITEV_MAX * 5];
+static float s_vxHitEv[VOX_HITEV_MAX * 8];   // x,y,z, force, grid, striker vx,vy,vz
 static int s_vxHitEvCount = 0;
 
 typedef struct
@@ -2329,11 +2329,15 @@ void w_vox_post(void)
         s_vxLastHits++;
         if (s_vxHitEvCount < VOX_HITEV_MAX)
         {
-            float* he = &s_vxHitEv[s_vxHitEvCount * 5];
+            float* he = &s_vxHitEv[s_vxHitEvCount * 8];
             he[0] = (float)h->point.x; he[1] = (float)h->point.y;
             he[2] = (float)h->point.z;
             he[3] = h->approachSpeed * mass;
             he[4] = (float)(g - s_vxG);
+            // The striker's velocity: deformation follows the BLOW, so a
+            // hammer-fist on the top of a box craters straight down.
+            b3Vec3 sv = b3Body_GetLinearVelocity(other);
+            he[5] = sv.x; he[6] = sv.y; he[7] = sv.z;
             s_vxHitEvCount++;
         }
         vxDamageAt(g, (float)h->point.x, (float)h->point.y, (float)h->point.z,

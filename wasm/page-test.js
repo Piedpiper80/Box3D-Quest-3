@@ -582,11 +582,22 @@ function poseArenaRise(f, m) {
 function poseBox(f) {
   if (f < TPOSE_UNTIL) return pose(f);
   const c = f % 20, out = c < 8 ? c / 8 : Math.max(0, 1 - (c - 8) / 10);
+  // Phase one drives into the SIDE; phase two hammer-fists the TOP —
+  // dents must land from both angles.
+  if (f < 320)
+    return {
+      head: vec(0, HEAD_Y, 0),
+      controllers: [
+        { pos: vec(-0.22, 1.10, -0.20), q: quat(0, 0, 0, 1) },
+        { pos: vec(0.30 + 0.40 * out, 1.02, 0.02 + 0.28 * out), q: quat(0, 0, 0, 1) },
+      ],
+      trigger: false,
+    };
   return {
     head: vec(0, HEAD_Y, 0),
     controllers: [
       { pos: vec(-0.22, 1.10, -0.20), q: quat(0, 0, 0, 1) },
-      { pos: vec(0.30 + 0.40 * out, 1.02, 0.02 + 0.28 * out), q: quat(0, 0, 0, 1) },
+      { pos: vec(0.75, 1.45 - 0.32 * out, 0.35), q: quat(0, 0, 0, 1) },
     ],
     trigger: false,
   };
@@ -690,7 +701,7 @@ function poseBox(f) {
     // rise; nothing else produces that pair.
     // Sixth run: the deformation testbed. Punch the practice box and the
     // mesh must report real, permanent dents.
-    const r6 = await runPage(page, 500, poseBox);
+    const r6 = await runPage(page, 700, poseBox);
     const pb = r6.report.match(/practice box: (\d+) hits, deepest dent (\d+) mm/);
     check("the practice box takes real dents from punches",
           pb && parseInt(pb[1], 10) > 0 && parseInt(pb[2], 10) > 0,
