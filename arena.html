@@ -60,6 +60,9 @@
       <li><strong>Watch your wrists and your metal.</strong> Left wrist: your plate, then your
           hull in red. Right wrist: your arm class. Arms glowing hot: you're near the redline —
           past it they weaken until they cool. Pace your punches.</li>
+      <li><strong>Plays seated:</strong> the machine fits itself to your head height live, and
+          every gesture works from a chair. Motion-sensitive? Add <code>?calm=1</code> to the
+          address to remove all view shake.</li>
       <li><strong>Tune the feel yourself:</strong> add <code>?grip=1.3</code> or
           <code>?spring=1.25</code> (0.3–3, multipliers) to this page's address before
           entering VR to scale the wrist pull and the arm actuators. The report names
@@ -220,12 +223,13 @@
   // wrist pull / joint actuators scale to match. The report names any
   // active knob. This exists so a headset session can A/B the punch feel
   // in minutes instead of round-tripping every guess through a rebuild.
-  var KNOB_GRIP = 1, KNOB_SPRING = 1;
+  var KNOB_GRIP = 1, KNOB_SPRING = 1, KNOB_CALM = false;
   if (typeof location !== "undefined") {
     var mG = location.search.match(/[?&]grip=([0-9.]+)/);
     var mS = location.search.match(/[?&]spring=([0-9.]+)/);
     if (mG) KNOB_GRIP = Math.min(3, Math.max(0.3, parseFloat(mG[1]) || 1));
     if (mS) KNOB_SPRING = Math.min(3, Math.max(0.3, parseFloat(mS[1]) || 1));
+    KNOB_CALM = /[?&]calm=1/.test(location.search);
   }
 
   function flatStart() {
@@ -742,7 +746,7 @@
       var a2 = shake * 60;
       // Travel sustains its rumble for five seconds, so it runs at half
       // amplitude — comfort is physiology, not preference.
-      var shAmp = match === "TRAVEL" ? 0.5 : 1;
+      var shAmp = KNOB_CALM ? 0 : (match === "TRAVEL" ? 0.5 : 1);
       sh = [Math.sin(a2 * 13.3) * 0.008 * shAmp, Math.cos(a2 * 17.1) * 0.006 * shAmp, 0];
     }
     var shiftM = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0,
