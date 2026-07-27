@@ -486,6 +486,30 @@ function poseArenaCollapse(f) {
   return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));               // rematch
 }
 
+// The fourth fight, played to WIN: an aggressive metronome against the God,
+// used to prove the campaign is actually completable and that the fourth win
+// fires ENDING — the one transition nothing else reaches. High guard on the
+// left, fast punches on the right, driven at the hovering chest height.
+function poseArenaWin(f) {
+  if (f < TPOSE_UNTIL) return pose(f);
+  const mk = (l, r) => ({
+    head: vec(0, HEAD_Y, 0),
+    controllers: [
+      { pos: l, q: quat(0, 0, 0, 1) },
+      { pos: r, q: quat(0, 0, 0, 1) },
+    ],
+    trigger: false,
+  });
+  if (f < 40) return mk(vec(-0.24, 1.15, -0.30), vec(0.24, 1.15, -0.30));
+  if (f < 130) return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));  // start
+  if (f < 3400) {
+    const c = (f - 130) % 28, out = c < 12 ? c / 12 : Math.max(0, 1 - (c - 12) / 12);
+    return mk(vec(-0.10, 1.35, -0.32),                     // high guard, center
+              vec(0.10, 1.30, -0.25 - 0.55 * out));        // fast punches, high
+  }
+  return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));  // claim the sky
+}
+
 (async () => {
   const page = process.argv[2] || "mech.html";
   console.log(`--- ${page} ---`);
@@ -561,6 +585,20 @@ function poseArenaCollapse(f) {
           /chapter 3 of 4/.test(r3.report) && /arms unlocked: 4 of 4/.test(r3.report) &&
           /lap 2/.test(r3.report),
           (r3.report.match(/chapter [^\n]*/) || ["no chapter line"])[0]);
+
+    // Fourth run: the campaign is completable, by proof. Boot at chapter 4
+    // with everything unlocked; the aggressive script kills the God (from
+    // its knees, as it happens — the collapsed win counts), the fourth win
+    // fires ENDING, and begin-again reboots the campaign on the next lap.
+    // This is the only thing that executes the ENDING transition.
+    const r4 = await runPage(page, 6000, poseArenaWin,
+      { "box3d.campaign": JSON.stringify({ c: 3, u: 3, l: 0, v: 3 }),
+        "box3d.armSpan": "1.75" });
+    const endChain = ["FIGHT", "WON", "ENDING", "READY"];
+    let endAt = 0;
+    for (const s of r4.matchSeq) if (s === endChain[endAt]) endAt++;
+    check("the God can be beaten, and the fourth win fires the ending",
+          endAt >= endChain.length, "states seen: " + r4.matchSeq.join(">"));
   }
 
   if (page === "dummy.html") {

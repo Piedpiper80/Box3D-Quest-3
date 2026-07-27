@@ -1234,8 +1234,14 @@
         }
       } else if (match === "COLLAPSED") {
         padTimer -= frameDt;
+        // Found by a harness run that killed the God from its knees and
+        // still lost: the enemy's death only counted in FIGHT. Beating the
+        // machine to death while your own legs are gone is the best win the
+        // game can produce — it counts from here too.
         var msC = E.w_mech_state() >>> 2, fC = new Float32Array(E.memory.buffer);
         var nearPad = Math.hypot(fC[msC] - padPos.x, fC[msC+2] - padPos.z) < 0.75;
+        if (eState === 5) { match = "WON"; endTimer = 0; sting(true); boom(); }
+        else
         if (nearPad) {
           // The pad takes you back: legs, plate, hull. The fight is still out
           // there and it watched you crawl.

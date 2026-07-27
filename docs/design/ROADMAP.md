@@ -541,13 +541,17 @@ depth, honestly labelled.
 Known gaps, named: the beaten enemy freezes while you crawl (read it as the
 victor watching); travel is a rumble and a name, not a place; the pad
 recovery trigger is machine-verified but has not been felt in a headset.
-And one path no harness reaches: the ENDING transition itself needs four
-page-side wins, and the scripted pilot cannot beat the God — it mirrors
-the tested WON→TRAVEL branch line for line, the seeded-boot check proves
-the chapter-4/lap display, and the flat preview has shown every state
-around it, but the exact moment of the fourth win firing ENDING is
-reviewed code, not exercised code. The first human to beat the campaign
-executes it for the first time — which is, at least, thematic.
+The last reviewed-only path fell to a script that went for the win: an
+aggressive metronome (high guard, fast punches at the hovering chest)
+now beats the God in the harness every run, and the check asserts the
+full chain — FIGHT → WON → ENDING → READY, the fourth win firing the
+ending and begin-again booting the next lap. **The campaign is
+completable, by proof, in CI.** The attempt also found a real rule
+missing from the game: the script killed the God from its knees and
+still lost, because the enemy's death only counted during FIGHT. It
+counts from COLLAPSED now — beating the machine to death while your own
+legs are gone is the best win the game can produce, and the harness run
+that discovered it is the permanent proof it works.
 
 **The polish round that followed found the biggest one by thinking like a
 headset:** every number the page prints — heat, your own plate, the
