@@ -702,7 +702,7 @@
   // the Pages CDN both cache hard — a playtest once got the old game and,
   // fairly, could not tell), and it is printed on the card so which build
   // loaded is never a guess.
-  var BUILD = 13;
+  var BUILD = 14;
   var bTag = document.getElementById("buildTag");
   if (bTag) bTag.textContent = "(build " + BUILD + ")";
   fetch("box3d.wasm?v=" + BUILD)
@@ -1011,6 +1011,14 @@
     if (E && built) {
       headY = hp.y;
       E.w_mech_stand(hp.x + O.x, chestY(), hp.z + O.z);
+      // The shoulders turn with you: feed the head's facing so the torso's
+      // yaw spring brings the mounts around as you track the fight.
+      var hq = pose.transform.orientation;
+      if (hq && E.w_mech_face) {
+        var fwx = -2 * (hq.x * hq.z + hq.w * hq.y);
+        var fwz = -(1 - 2 * (hq.x * hq.x + hq.y * hq.y));
+        E.w_mech_face(Math.atan2(fwx, fwz));
+      }
       if (hitStop > 0) { hitStop -= frameDt; acc = 0; }
       var stepped = false;
       while (acc >= STEP) {

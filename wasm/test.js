@@ -629,6 +629,25 @@ const wasi = new WASI({ version: "preview1" });
         hurt < 36 && grid(healG)[0] === 36,
         `was ${hurt}, now ${grid(healG)[0]}`);
 
+  // The shoulders turn with the pilot: a yaw target on the torso brings the
+  // whole mount around. Without this the machine faced its spawn direction
+  // forever and every punch crossed a twisted body (headset verdict).
+  E.w_reset(1, 0);
+  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
+  E.w_mech_face(1.2);
+  for (let s = 0; s < 260; s++) {
+    E.w_mech_stand(0, CHEST, 0);
+    E.w_mech_apply(); E.w_step(1 / 72);
+  }
+  {
+    const ms2 = E.w_mech_state() >>> 2, fm2 = mem();
+    const qx = fm2[ms2+3], qy = fm2[ms2+4], qz = fm2[ms2+5], qw = fm2[ms2+6];
+    const czx = 2 * (qx * qz + qw * qy), czz = 1 - 2 * (qx * qx + qy * qy);
+    const facing = Math.atan2(-czx, -czz);
+    check("the torso turns to face where the pilot faces",
+          Math.abs(facing - 1.2) < 0.2, `facing ${facing.toFixed(2)} vs 1.2`);
+  }
+
   // --- fight variety ---
   // A slab torn off the plate reels the machine: recovery is the punish
   // window, so the stagger must interrupt whatever it was doing.

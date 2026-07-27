@@ -834,6 +834,22 @@ void w_mech_stand(float x, float y, float z)
     s_mTorsoTarget.x = x; s_mTorsoTarget.y = y; s_mTorsoTarget.z = z;
 }
 
+// Which way the machine is trying to FACE. The torso never had a yaw
+// drive — "the machine is still free to turn" — but nothing ever turned
+// it, so when the pilot rotated to track a circling opponent the
+// shoulders stayed behind and every punch crossed a twisted body. The
+// page feeds the head's facing; the same spring family that keeps the
+// machine upright now brings the shoulders around with the pilot.
+// (atan2(dir.x, dir.z) of the chest's world direction, chest = -z.)
+static float s_mFaceYaw = 0.0f;
+static int s_mFaceSet = 0;
+WASM_EXPORT("w_mech_face")
+void w_mech_face(float yaw)
+{
+    s_mFaceYaw = yaw;
+    s_mFaceSet = 1;
+}
+
 WASM_EXPORT("w_mech_hand")
 void w_mech_hand(int i, float x, float y, float z, int active,
                  float qx, float qy, float qz, float qw)
@@ -1497,6 +1513,17 @@ void w_mech_apply(void)
         float tx = ax * k - w.x * c;
         float ty =        - w.y * c;
         float tz = az * k - w.z * c;
+
+        // Shoulders follow the pilot's facing (spring-lagged, so a glance
+        // doesn't yank the hull — a turn brings it around).
+        if (s_mFaceSet)
+        {
+            const float facing = __builtin_atan2f(-m.cz.x, -m.cz.z);
+            float err = s_mFaceYaw - facing;
+            while (err > 3.14159265f) err -= 6.2831853f;
+            while (err < -3.14159265f) err += 6.2831853f;
+            ty += err * k * 0.5f;
+        }
 
         const float cap = s_mUprightMax * mechMass();
         float tsq = tx*tx + ty*ty + tz*tz;
