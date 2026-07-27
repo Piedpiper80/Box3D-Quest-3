@@ -602,6 +602,19 @@ this, and it can still be killed mid-pose, because a machine
 showboating over a live pilot has made a mistake. 68 engine checks and
 57 page checks stand behind all of it.
 
+**The teaching system, named.** Everything the player must know is
+shown in the world, none of it in text: ghost markers float where the
+fists go for every start/rematch gesture and brighten as the hold
+progresses; teal patches pulse on the floor under each unplanted hand
+during the collapse (the ground teaches the grip); the beacon *is* the
+countdown; the wrist gauges are the health bars; heat is the colour of
+the metal; the pose is the attack telegraph (high = overhead, wide =
+sweep) and the visor is its tempo. The dead machine goes limp — drives
+cut on the final loss — because a machine that keeps obeying your hands
+after it dies was never dead. The hovering God bobs and drones. Comfort
+stayed law throughout: travel's sustained rumble runs at half
+amplitude, and every shake is centimetres for fractions of a second.
+
 #### Phase 1 status: all three spikes built, awaiting headset verdicts
 
 | Spike | Page | Machine-verified | Needs from the headset |
