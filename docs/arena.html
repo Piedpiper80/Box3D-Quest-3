@@ -429,22 +429,26 @@
       story: "An old harvester frame, re-armed. It remembers being told to dig.",
       mat: 0, scale: 0.85, core: 170, hover: 0, tempo: 1.15, pillarMat: 0,
       skyC: [0.14,0.115,0.085], skyH: 0.6, skyN: 11, floorC: [0.185,0.175,0.195],
-      hullC: [0.36,0.26,0.20] },
+      hullC: [0.36,0.26,0.20],
+      pillars: [[-2.4,-1.8],[2.0,-2.3],[-1.6,1.2],[2.5,0.9],[-2.6,-0.2]] },
     { name: "WARDEN", place: "Milltown Ring",
       story: "Town watch chassis. Stone-plated. Patient. It has never lost here.",
       mat: 1, scale: 1.0, core: 260, hover: 0, tempo: 1.0, pillarMat: 1,
       skyC: [0.115,0.115,0.13], skyH: 1.0, skyN: 9, floorC: [0.16,0.185,0.235],
-      hullC: [0.28,0.30,0.36] },
+      hullC: [0.28,0.30,0.36],
+      pillars: [[-2.1,-2.1],[2.1,-2.1],[-2.1,1.4],[2.1,1.4]] },
     { name: "JUGGERNAUT", place: "The Foundry",
       story: "Foundry guard, steel-skinned. Bring your heaviest arms.",
       mat: 2, scale: 1.25, core: 340, hover: 0, tempo: 0.85, pillarMat: 1,
       skyC: [0.125,0.10,0.095], skyH: 1.7, skyN: 11, floorC: [0.155,0.16,0.20], ember: 1,
-      hullC: [0.17,0.16,0.17] },
+      hullC: [0.17,0.16,0.17],
+      pillars: [[-2.3,-2.6],[-2.3,-0.8],[-2.3,1.0],[2.3,-2.6],[2.3,-0.8],[2.3,1.0]] },
     { name: "THE RETURNED", place: "The High Dark",
       story: "It does not stand on the earth. The old gods never did.",
       mat: 2, scale: 1.35, core: 430, hover: 1, tempo: 1.25, pillarMat: 2,
       skyC: [0.05,0.055,0.095], skyH: 2.3, skyN: 5, floorC: [0.095,0.11,0.155],
-      hullC: [0.20,0.14,0.26], stars: 1 },
+      hullC: [0.20,0.14,0.26], stars: 1,
+      pillars: [] },
   ];
   var chapter = 0;
   var lap = 0;                       // finish the campaign and go again:
@@ -627,12 +631,13 @@
     enemyGrid = E.w_enemy_create_ex(hx, hz - 3.2, ch2.mat, ch2.scale,
                                     ch2.core, ch2.hover,
                                     ch2.tempo * (1 + lap * 0.15));
-    // Pillars: cover, scenery, wreckage-in-waiting. Their material sets the
-    // look of the place as much as the fight.
-    E.w_vox_create(hx - 2.1, floorY, hz - 2.1, 4, 16, 4, 0.10, ch2.pillarMat);
-    E.w_vox_create(hx + 2.1, floorY, hz - 2.1, 4, 16, 4, 0.10, ch2.pillarMat);
-    E.w_vox_create(hx - 2.1, floorY, hz + 1.4, 4, 16, 4, 0.10, ch2.pillarMat);
-    E.w_vox_create(hx + 2.1, floorY, hz + 1.4, 4, 16, 4, 0.10, ch2.pillarMat);
+    // Pillars: cover, scenery, wreckage-in-waiting. Each chapter lays its
+    // own ground — scattered heaps, the mill square, foundry aisles, and
+    // the High Dark strips the cover entirely: you, the God, the stars.
+    for (var pP = 0; pP < ch2.pillars.length; pP++) {
+      E.w_vox_create(hx + ch2.pillars[pP][0], floorY, hz + ch2.pillars[pP][1],
+                     4, 16, 4, 0.10, ch2.pillarMat);
+    }
     heat = 0; overheated = false;
     // The hull hardens with the campaign: a Juggernaut's club lands ~130
     // momentum in one clean hit, and a one-hit collapse is a coin flip,
