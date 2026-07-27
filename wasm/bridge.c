@@ -2481,6 +2481,7 @@ static int s_eGrid = -1;                  // its armour plate
 static b3Vec3 s_ePlayerPos;               // told by the page each frame
 static int s_ePlayerPlateGrid = -1;
 static float s_eHitPlayerCore = 0.0f;     // momentum landed on the bare player torso
+static float s_eBlockCool = 0.0f;         // a fresh block absorbs the swing's follow-through
 static float s_eLastCoreHit = 0.0f;       // for the page's sound hooks
 static float s_eLastPlayerHit = 0.0f;
 
@@ -2634,6 +2635,7 @@ static int w_enemy_create_inner(float x, float z, int material)
     s_eStrafePhase = 0.0f;
     s_eHoverPhase = 0.0f;
     s_eHitPlayerCore = 0.0f;
+    s_eBlockCool = 0.0f;
     s_eCorner = 0;
     s_eExists = 1;
     return s_eGrid;
@@ -2720,7 +2722,7 @@ void w_enemy_update(float px, float py, float pz, float dt)
         const float dist = __builtin_sqrtf(toP.x*toP.x + toP.z*toP.z);
         float gx = (float)tp.x, gz = (float)tp.z;
         const float wantRange = s_eCorner ? 3.4f
-                              : ENEMY_RANGE + (s_eScale - 1.0f) * 0.35f;
+                              : ENEMY_RANGE + (s_eScale - 1.0f) * 0.15f;
         if (s_eCorner && dist < wantRange - 0.3f && dist > 1e-3f && dt > 0.0f)
         {
             // Cornered off: step back until the count's distance is kept.
@@ -2817,6 +2819,7 @@ void w_enemy_update(float px, float py, float pz, float dt)
     // while the swing never got within half a metre of the player. Measured,
     // not guessed: the probe tracked the tip.
     s_eTimer += dt * s_eTempo;
+    if (s_eBlockCool > 0.0f) s_eBlockCool -= dt;
     b3Vec3 toP = { px - (float)tp.x, py - (float)tp.y, pz - (float)tp.z };
     const float pl = __builtin_sqrtf(toP.x*toP.x + toP.y*toP.y + toP.z*toP.z);
     b3Vec3 pHat = { 1.0f, 0.0f, 0.0f };
@@ -2829,7 +2832,7 @@ void w_enemy_update(float px, float py, float pz, float dt)
             b3Vec3 lat = { pHat.z, 0.0f, -pHat.x };
             eAimGuard(0, tp, pHat, lat);
             eAimGuard(1, tp, pHat, lat);
-            const float reach = ENEMY_RANGE + (s_eScale - 1.0f) * 0.35f;
+            const float reach = ENEMY_RANGE + (s_eScale - 1.0f) * 0.15f;
             const float d2 = toP.x*toP.x + toP.z*toP.z;
             if (!s_eCorner &&
                 d2 < (reach + 0.15f) * (reach + 0.15f) && s_eTimer > 0.8f)
@@ -2949,6 +2952,7 @@ void w_enemy_post(void)
     s_eBlockHit = 0.0f;
     if (s_eState == E_DEAD) return;
 
+    float stepCore = 0.0f, stepCorePeak = 0.0f;
     b3ContactEvents ev = b3World_GetContactEvents(s_world);
     for (int i = 0; i < ev.hitCount; i++)
     {
@@ -2974,7 +2978,9 @@ void w_enemy_post(void)
             }
         }
 
-        // Enemy club into the player's bare torso.
+        // Enemy club into the player's bare torso — COLLECTED, not applied:
+        // whether it counts depends on whether this step also carried a
+        // block, and contact events arrive in no useful order.
         if (s_mExists)
         {
             const int aP = B3_ID_EQUALS(a, s_mTorso), bP = B3_ID_EQUALS(b, s_mTorso);
@@ -2986,8 +2992,8 @@ void w_enemy_post(void)
                     if (B3_ID_EQUALS(other, s_eArm[arm]))
                     {
                         const float hit = h->approachSpeed * b3Body_GetMass(s_eArm[arm]);
-                        s_eHitPlayerCore += hit;
-                        if (hit > s_eLastPlayerHit) s_eLastPlayerHit = hit;
+                        stepCore += hit;
+                        if (hit > stepCorePeak) stepCorePeak = hit;
                     }
                 }
             }
@@ -3006,19 +3012,41 @@ void w_enemy_post(void)
                     {
                         const float hit = h->approachSpeed * b3Body_GetMass(s_eArm[arm]);
                         if (hit > s_eBlockHit) s_eBlockHit = hit;
-                        // A solid parry INTERRUPTS the swing: the club rang
-                        // on an arm, the strike is spent, recovery starts
-                        // now — and recovery is the punish window. Blocking
-                        // earns the counter; that is the boxing contract.
-                        if (hit > 8.0f && s_eState == E_SWING)
+                        // Any real contact with a guarding arm INTERRUPTS
+                        // the swing (the playtest said blocking didn't
+                        // work — at the old threshold, most honest blocks
+                        // didn't count). The club's momentum dies with it:
+                        // the strike visibly stops on your arm, recovery
+                        // starts now, and recovery is the punish window.
+                        // Blocking earns the counter; that is the boxing
+                        // contract.
+                        if (hit > 3.0f && s_eState == E_SWING)
                         {
                             s_eState = E_RECOVER;
                             s_eTimer = 0.0f;
+                            b3Vec3 cv = b3Body_GetLinearVelocity(s_eArm[arm]);
+                            const float cm = b3Body_GetMass(s_eArm[arm]);
+                            b3Vec3 kill = { -cv.x * cm * 0.8f,
+                                            -cv.y * cm * 0.8f,
+                                            -cv.z * cm * 0.8f };
+                            b3Body_ApplyLinearImpulseToCenter(s_eArm[arm], kill, true);
                         }
                     }
                 }
             }
         }
+    }
+
+    // The block ABSORBS the strike: if this step rang on a guarding arm —
+    // or one did within the last third of a second — the same swing's
+    // follow-through onto the torso costs nothing. Before this rule a
+    // club could ring the guard and still drive through it into the hull,
+    // which is why the playtest said blocking didn't really work.
+    if (s_eBlockHit > 0.5f) s_eBlockCool = 0.30f;
+    if (s_eBlockCool <= 0.0f)
+    {
+        s_eHitPlayerCore += stepCore;
+        if (stepCorePeak > s_eLastPlayerHit) s_eLastPlayerHit = stepCorePeak;
     }
 
     // The stagger: a slab torn off the plate in one step reels the machine.

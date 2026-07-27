@@ -701,7 +701,7 @@
   // the Pages CDN both cache hard — a playtest once got the old game and,
   // fairly, could not tell), and it is printed on the card so which build
   // loaded is never a guess.
-  var BUILD = 10;
+  var BUILD = 11;
   var bTag = document.getElementById("buildTag");
   if (bTag) bTag.textContent = "(build " + BUILD + ")";
   fetch("box3d.wasm?v=" + BUILD)
@@ -750,9 +750,12 @@
     // down, the Juggernaut is close to three metres of iron, and the
     // God hovers over all of it. Guarded: a stale cached engine without
     // the export degrades to the old stature, never a fault loop.
+    // The ceiling came down on request: "I don't wanna be looking up the
+    // whole time I'm trying to fight a robot." The top of the ladder now
+    // sits ~25% above your eye line — big machine, level fight.
     var eyeEst = Math.min(2.1, Math.max(1.55,
         Math.max(eyeYMax, (armSpan || 1.75) - 0.12)));
-    var visorY = eyeEst * (0.35 + 1.0 * ch2.scale) + (ch2.hover ? 0.15 : 0);
+    var visorY = eyeEst * (0.55 + 0.55 * ch2.scale) + (ch2.hover ? 0.15 : 0);
     if (E.w_enemy_stature) E.w_enemy_stature(visorY - 0.34 * ch2.scale * EBULK);
     // Pillars: cover, scenery, wreckage-in-waiting. Each chapter lays its
     // own ground — scattered heaps, the mill square, foundry aisles, and
@@ -766,10 +769,11 @@
       E.w_mech_tune(5200 * KNOB_GRIP, 1.0, 7800 * KNOB_GRIP, 14000);
     // The hull hardens with the campaign: each unlocked weight class buys
     // the frame under you, and a one-hit collapse is a coin flip, not a
-    // fight. The whole scale rides EBULK cubed — mech-bulk machines land
-    // EBULK^3 (~3.7x) the momentum per club, so the hull takes 3.7x the
-    // limit and the time-to-collapse stays what it was tuned to be.
-    playerCoreLimit = Math.round((130 + unlockedLevel * 45) * EBULK * EBULK * EBULK);
+    // fight. The scale rides EBULK cubed (mech-bulk machines land ~3.7x
+    // the momentum per club), and on top of that the base DOUBLED after
+    // the playtest went down in three hits — the fight should be lost
+    // over a beating you failed to block, not a combo you never saw.
+    playerCoreLimit = Math.round((260 + unlockedLevel * 90) * EBULK * EBULK * EBULK);
     E.w_mech_joint_spring(18000 * KNOB_SPRING, 1.0);
     E.w_mech_legs(1);
     O.x = 0; O.y = 0; O.z = 0;

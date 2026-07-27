@@ -243,8 +243,10 @@ async function runPage(file, frames, poseAt, extraStore) {
   const matchSeq = [];   // every distinct match-state the report passed through
   let curMatch = "";     // last match-state seen — fed back to the script, so
                          // poses can react to the game instead of to a clock
+  let curEnemy = "";     // last enemy-state seen — so a script can BOX:
+                         // guard the windup, punish the recovery
   for (let f = 0; f < frames; f++) {
-    const p = poseAt(f, curMatch);
+    const p = poseAt(f, curMatch, curEnemy);
     poses.head = p.head;
     poses.controllers.forEach((c, i) => {
       c.pos = p.controllers[i].pos;
@@ -271,13 +273,16 @@ async function runPage(file, frames, poseAt, extraStore) {
       break;
     }
     perFrame.push(drawLog.slice(before));
-    const mm = el("report").textContent.match(/match: (\w+)/);
+    const rpt = el("report").textContent;
+    const mm = rpt.match(/match: (\w+)/);
     if (mm) {
       curMatch = mm[1];
       if (matchSeq[matchSeq.length - 1] !== mm[1]) matchSeq.push(mm[1]);
     }
+    const em = rpt.match(/enemy: (\w+)/);
+    if (em) curEnemy = em[1];
     if (process.env.DBGR && f % 40 === 0)
-      console.log("  f" + f, (el("report").textContent.match(/match: [^\n]*/) || [""])[0]);
+      console.log("  f" + f, (rpt.match(/match: [^\n]*/) || [""])[0]);
   }
 
   return { drawLog, perFrame, errors, matchSeq,
@@ -501,7 +506,7 @@ function poseArenaCollapse(f, m) {
 // metronome while fighting (punches driven at the risen God's core height —
 // stature raised every machine), fists up for every gesture the flow wants,
 // including the rise if a knockdown interrupts the attempt.
-function poseArenaWin(f, m) {
+function poseArenaWin(f, m, e) {
   if (f < TPOSE_UNTIL) return pose(f);
   const mk = (l, r) => ({
     head: vec(0, HEAD_Y, 0),
@@ -513,9 +518,24 @@ function poseArenaWin(f, m) {
   });
   if (f < 40) return mk(vec(-0.24, 1.15, -0.30), vec(0.24, 1.15, -0.30));
   if (m === "FIGHT") {
-    const c = (f - 130) % 24, out = c < 10 ? c / 10 : Math.max(0, 1 - (c - 10) / 14);
-    return mk(vec(-0.06, 1.35, -0.34),                     // centre guard
-              vec(0.10, 1.60, -0.22 - 0.55 * out));        // punches at core height
+    // The boxing contract, played correctly: when the God draws up, BOTH
+    // arms come up and catch the swing (blocks absorb and interrupt now);
+    // the rest of the time, LEAN IN and drill the same spot at core
+    // height — a real player steps into their punches, and the rig
+    // follows the head. This is the defensive game the engine promises,
+    // driven as the proof.
+    if (e === "WINDUP" || e === "SWING")
+      return mk(vec(-0.22, 1.52, -0.38), vec(0.22, 1.52, -0.38));
+    const c = f % 24, out = c < 10 ? c / 10 : Math.max(0, 1 - (c - 10) / 14);
+    const lean = vec(0, HEAD_Y, -0.26);
+    return {
+      head: lean,
+      controllers: [
+        { pos: vec(-0.06, 1.35, -0.56), q: quat(0, 0, 0, 1) },
+        { pos: vec(0.10, 1.60, -0.44 - 0.55 * out), q: quat(0, 0, 0, 1) },
+      ],
+      trigger: false,
+    };
   }
   return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));  // every gesture
 }
@@ -623,7 +643,7 @@ function poseArenaRise(f, m) {
     // win counts, but the provoked victor turned the route into a beating),
     // the final win fires ENDING, and begin-again reboots the campaign on
     // the next lap. This is the only thing that executes ENDING.
-    const r4 = await runPage(page, 4500, poseArenaWin,
+    const r4 = await runPage(page, 7000, poseArenaWin,
       { "box3d.campaign": JSON.stringify({ c: 4, u: 3, l: 0, v: 3 }),
         "box3d.armSpan": "1.75" });
     const endChain = ["FIGHT", "WON", "ENDING", "READY"];
