@@ -490,8 +490,8 @@ function poseArenaCollapse(f) {
   return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));               // rematch
 }
 
-// The fourth fight, played to WIN: an aggressive metronome against the God,
-// used to prove the campaign is actually completable and that the fourth win
+// The final fight, played to WIN: an aggressive metronome against the God,
+// used to prove the campaign is actually completable and that the fifth win
 // fires ENDING — the one transition nothing else reaches. High guard on the
 // left, fast punches on the right, driven at the hovering chest height.
 function poseArenaWin(f) {
@@ -643,18 +643,19 @@ function poseArenaCrawl(f) {
           /lap 2/.test(r3.report),
           (r3.report.match(/chapter [^\n]*/) || ["no chapter line"])[0]);
 
-    // Fourth run: the campaign is completable, by proof. Boot at chapter 4
-    // with everything unlocked; the aggressive script kills the God (from
-    // its knees, as it happens — the collapsed win counts), the fourth win
-    // fires ENDING, and begin-again reboots the campaign on the next lap.
-    // This is the only thing that executes the ENDING transition.
+    // Fourth run: the campaign is completable, by proof. Boot at the final
+    // chapter (index 4) with everything unlocked; the aggressive script
+    // kills the God standing (an earlier draft won from its knees — that
+    // win counts, but the provoked victor turned the route into a beating),
+    // the final win fires ENDING, and begin-again reboots the campaign on
+    // the next lap. This is the only thing that executes ENDING.
     const r4 = await runPage(page, 4500, poseArenaWin,
       { "box3d.campaign": JSON.stringify({ c: 4, u: 3, l: 0, v: 3 }),
         "box3d.armSpan": "1.75" });
     const endChain = ["FIGHT", "WON", "ENDING", "READY"];
     let endAt = 0;
     for (const s of r4.matchSeq) if (s === endChain[endAt]) endAt++;
-    check("the God can be beaten, and the fourth win fires the ending",
+    check("the God can be beaten, and the fifth win fires the ending",
           endAt >= endChain.length, "states seen: " + r4.matchSeq.join(">"));
 
     // Fifth run: the second wind survived, end to end. Take the beating,
