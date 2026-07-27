@@ -2763,10 +2763,14 @@ void w_enemy_update(float px, float py, float pz, float dt)
                 // Two lines of attack, mixed unpredictably but
                 // deterministically (Knuth hash bits — low bits ran eight
                 // identical swings in a row, which is a pattern, not a mix).
-                // The sweep comes around a guard AND the chest plate, so it
-                // stays the rarer line: roughly three swings in eight.
+                // The mix is the machine's personality, derived from traits
+                // it already has: a hoverer angles in with sweeps, a slow
+                // heavyweight lives on the overhead crush, everyone else
+                // keeps the sweep the rarer line.
                 s_eSwingCount++;
-                s_eSwingStyle = (int)(((s_eSwingCount * 2654435761u) >> 7) & 7u) < 3;
+                const int sweepIn8 = s_eHover ? 4 : (s_eTempo < 0.9f ? 2 : 3);
+                s_eSwingStyle =
+                    (int)(((s_eSwingCount * 2654435761u) >> 7) & 7u) < sweepIn8;
             }
             break;
         }
