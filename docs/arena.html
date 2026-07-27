@@ -1190,6 +1190,23 @@
           clang(1.4);                                         // the parry, working
           for (var bH = 0; bH < srcs.length; bH++) haptic(srcs[bH], 0.55, 60);
         }
+        // A parry that BROKE the swing (recover entered from swing with the
+        // block still ringing) announces the opening: two quick rising
+        // notes right behind the clang. Hear it, punch.
+        if (prevEnemy === 3 && eState === 4 && ef[ep+26] > 8 && AC) {
+          for (var pw = 0; pw < 2; pw++) {
+            (function (k5) {
+              var oP = AC.createOscillator(); oP.type = "triangle";
+              oP.frequency.value = k5 ? 1174 : 880;
+              var gP = AC.createGain(); gP.gain.value = 0.0001;
+              var tP = AC.currentTime + 0.05 + k5 * 0.09;
+              gP.gain.setValueAtTime(0.12, tP);
+              gP.gain.exponentialRampToValueAtTime(0.001, tP + 0.12);
+              oP.connect(gP); gP.connect(AC.destination);
+              oP.start(tP); oP.stop(tP + 0.14);
+            })(pw);
+          }
+        }
         if (chunksNow > prevChunks) hitStop = Math.max(hitStop, 0.05);
       }
       // The enemy is heard before it is felt: a servo catch as the club
