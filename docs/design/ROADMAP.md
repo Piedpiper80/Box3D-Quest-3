@@ -600,6 +600,13 @@ sweep-heavy God punishes passivity hardest, which is the finale's job —
 with the second wind and the hardened hull as the player's answer, and
 heat still taxing heavy-arm offense on the other side of the ledger.
 
+**Frame cost, measured where it can be:** the full page pipeline —
+physics, draw-list build, GL calls into the recording harness — runs
+2.2 ms/frame upper bound on server CPU across the arena's whole test
+run (13,500 frames including three cold boots). Against the 13.9 ms
+budget at 72 Hz, even a conservative 5× Quest CPU slowdown fits; the
+untested half is real GPU rasterisation, which only the headset shows.
+
 Attack mix became **personality, derived from traits the machines
 already carry**: a hoverer angles in with sweeps (the God comes around
 you, four in eight), a slow heavyweight lives on the overhead crush
