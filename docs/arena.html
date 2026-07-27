@@ -429,6 +429,7 @@
   var fistTimer = 0, endTimer = 0, frameDt = 1 / 72;
   var travelTimer = 0, rumbleT = 0, travelThump = 0, eStepT = 0;
   var sparks = [], prevEPlate = null, scrapeT = 0;
+  var motes = [], moteT = 0;
   var hitStop = 0;
   // Overheat: swing hard and long and the actuators cook. Heavier arms heat
   // faster. Past the redline they weaken until you let them cool.
@@ -598,6 +599,7 @@
     match = "READY";
     prevStats = null; prevChunks = 0; prevEnemy = null;
     sparks.length = 0; prevEPlate = null;
+    motes.length = 0;
     endTimer = 0;
     built = true;
   }
@@ -1127,6 +1129,23 @@
             } else {
               if (unlockedLevel < DENSITIES.length - 1) unlockedLevel++;
               match = "ENDING"; endTimer = 0;
+              // The long resolve: the win sting's shape, stretched and
+              // climbing further — the campaign's last note.
+              if (AC) {
+                var endNotes = [262, 330, 392, 523, 659, 784];
+                for (var eN = 0; eN < endNotes.length; eN++) {
+                  (function (k3) {
+                    var oE = AC.createOscillator(); oE.type = "triangle";
+                    oE.frequency.value = endNotes[k3];
+                    var gE = AC.createGain(); gE.gain.value = 0.0001;
+                    var tE = AC.currentTime + k3 * 0.22;
+                    gE.gain.setValueAtTime(0.16, tE);
+                    gE.gain.exponentialRampToValueAtTime(0.001, tE + 0.9);
+                    oE.connect(gE); gE.connect(AC.destination);
+                    oE.start(tE); oE.stop(tE + 1.0);
+                  })(eN);
+                }
+              }
             }
           }
         }
@@ -1275,6 +1294,24 @@
                         vx: (Math.random()-0.5)*2.2, vy: 1.2 + Math.random()*1.6,
                         vz: 0.8 + Math.random()*1.4, t: 0.28 + Math.random()*0.14 });
         }
+      }
+      // The ending's air: slow gold motes rising over the wreck while the
+      // ring runs its lap — the sky, being yours.
+      if (match === "ENDING") {
+        moteT -= frameDt;
+        if (moteT <= 0 && motes.length < 14) {
+          motes.push({ x: hpBase.x + (Math.random() - 0.5) * 5, y: floorY + 0.2,
+                       z: hpBase.z + (Math.random() - 0.5) * 5, t: 0 });
+          moteT = 0.4;
+        }
+      }
+      for (var mJ = motes.length - 1; mJ >= 0; mJ--) {
+        var mo = motes[mJ];
+        mo.t += frameDt; mo.y += 0.25 * frameDt;
+        if (mo.t > 6 || match !== "ENDING") { motes.splice(mJ, 1); continue; }
+        var mg = Math.min(1, mo.t) * Math.min(1, (6 - mo.t) / 1.5);
+        items.push({ m: trs([mo.x, mo.y, mo.z], [0,0,0,1], 0.014),
+                     c: [0.95*mg, 0.78*mg, 0.30*mg], mat: 5 });
       }
       prevEPlate = ePlateAlive;
       for (var sJ = sparks.length - 1; sJ >= 0; sJ--) {

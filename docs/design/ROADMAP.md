@@ -590,9 +590,12 @@ because the sweep rounds both the guard and the plate). The tunes kept
 the physics honest: the sweep telegraphs longer and comes three swings
 in eight, and the hull hardens with each unlocked weight class (130 +
 45/level) because a Juggernaut's club lands ~130 momentum in one clean
-hit and a one-hit collapse is a coin flip, not a fight. After tuning:
-13 s / 6.5 s / two-hits / two-hits undefended across the ladder, with
-heat still taxing heavy-arm offense on the other side of the ledger.
+hit and a one-hit collapse is a coin flip, not a fight. After tuning,
+measured against each chapter's real hull limit (single deterministic
+samples, not averages): undefended survival runs 37 s / 5.4 s / 15 s /
+8.7 s across the ladder — a gentle first fight, the Warden as the skill
+gate, the heavyweight slugfest, the finale — with heat still taxing
+heavy-arm offense on the other side of the ledger.
 
 Body language closed the round: the approach **weaves** (a tempo-scaled
 drift across the bearing, so closing reads as circling, not a rail),
