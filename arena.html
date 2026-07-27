@@ -887,11 +887,16 @@
         // stalk needs the brain running. It stays frozen while you crawl,
         // watching — UNLESS you hit it. A harness run found the machine
         // could grind its fists into the frozen victor and kill it risk-free
-        // mid-crawl; provoked, it fights the crawler back.
+        // mid-crawl; provoked, it fights the crawler back. During READY it
+        // gets the pose-only call (dt 0): guard up, feet planted — a fighter
+        // waiting, not a mannequin with dead arms.
         if (match === "FIGHT" || match === "LOST" ||
             (match === "COLLAPSED" && provoked)) {
           var msP = E.w_mech_state() >>> 2, fP0 = new Float32Array(E.memory.buffer);
           E.w_enemy_update(fP0[msP], fP0[msP+1], fP0[msP+2], STEP);
+        } else if (match === "READY") {
+          var msR2 = E.w_mech_state() >>> 2, fR2 = new Float32Array(E.memory.buffer);
+          E.w_enemy_update(fR2[msR2], fR2[msR2+1], fR2[msR2+2], 0);
         }
         E.w_mech_apply();
         E.w_step(STEP);
@@ -1081,7 +1086,10 @@
         }
       } else if (ef[ep+1] > 0.62 * eS) {
         eStride += eSpd * frameDt * 3.2;
-        items.push({ m: trs([ef[ep], ef[ep+1] - 0.42 * eS, ef[ep+2]],
+        // The hull glides on a force; the BOB sells the walk. Drawn parts
+        // ride a stride-synced lift when it moves.
+        var eBob = eSpd > 0.15 ? Math.abs(Math.sin(eStride)) * 0.035 : 0;
+        items.push({ m: trs([ef[ep], ef[ep+1] - 0.42 * eS + eBob, ef[ep+2]],
                             [ef[ep+3], ef[ep+4], ef[ep+5], ef[ep+6]],
                             [0.17 * eS, 0.09 * eS, 0.12 * eS]), c: hC });
         var dirX = eSpd > 0.15 ? eVelX / eSpd : 0;
@@ -1507,6 +1515,15 @@
         for (var lh = 0; lh < srcs.length; lh++)
           haptic(srcs[lh], Math.min(0.7, 0.3 + (prevEPlate - ePlateAlive) * 0.12), 45);
         if (prevEPlate - ePlateAlive >= 2) hitStop = Math.max(hitStop, 0.03);
+        if (prevEPlate - ePlateAlive >= 3 && AC) {
+          // the weight under the clang: a sub thump only big bites earn
+          var oS = AC.createOscillator(); oS.type = "sine"; oS.frequency.value = 58;
+          var gS = AC.createGain(); gS.gain.value = 0.0001;
+          gS.gain.setValueAtTime(0.30, AC.currentTime);
+          gS.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + 0.16);
+          oS.connect(gS); gS.connect(AC.destination);
+          oS.start(); oS.stop(AC.currentTime + 0.18);
+        }
         var burst = Math.min(6, 2 + (prevEPlate - ePlateAlive) * 2);
         for (var sI = 0; sI < burst; sI++) {
           sparks.push({ x: ef[ep] + (Math.random()-0.5)*0.2, y: ef[ep+1] + 0.05,
