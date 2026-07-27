@@ -2469,6 +2469,7 @@ static unsigned s_eSwingCount = 0;
 static float s_ePrevPlateAlive = -1.0f;   // for the stagger: slab loss in one step
 static float s_eBlockHit = 0.0f;          // club momentum landed on a player ARM
 static float s_eStrafePhase = 0.0f;       // the approach weave
+static float s_eHoverPhase = 0.0f;        // the God's vertical breath
 static float s_eCoreHp = 0.0f;
 static float s_eCoreHpMax = 260.0f;
 static int s_eGrid = -1;                  // its armour plate
@@ -2671,7 +2672,15 @@ void w_enemy_update(float px, float py, float pz, float dt)
                 gz += (-toP.x / dist) * weave;
             }
         }
-        float fy = mass * 9.81f + (ENEMY_STAND_Y - (float)tp.y) * 5200.0f - tv.y * 900.0f;
+        // A hoverer breathes vertically — a slow bob, so floating reads as
+        // floating and not as being bolted to an invisible pole.
+        float standY = ENEMY_STAND_Y;
+        if (s_eHover)
+        {
+            s_eHoverPhase += dt;
+            standY += __builtin_sinf(s_eHoverPhase * 0.7f) * 0.07f;
+        }
+        float fy = mass * 9.81f + (standY - (float)tp.y) * 5200.0f - tv.y * 900.0f;
         float fx = (gx - (float)tp.x) * 1400.0f - tv.x * 620.0f;
         float fz = (gz - (float)tp.z) * 1400.0f - tv.z * 620.0f;
         const float cap = 2600.0f;
