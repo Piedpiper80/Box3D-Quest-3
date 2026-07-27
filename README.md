@@ -10,7 +10,7 @@ Catto, creator of Box2D). This repo is the complete home for the project: a
 **The game is [CORE BREAKER](https://piedpiper80.github.io/Box3D-Quest-3/arena.html).**
 Open **<https://piedpiper80.github.io/Box3D-Quest-3/arena.html>** in the Meta
 Quest Browser and tap **Enter VR**. Your arms are the machine's arms. A
-four-chapter campaign: strip the other machine's armour, smash the core
+five-chapter campaign: strip the other machine's armour, smash the core
 underneath, and take the road to the next fight — through heat that cooks
 your actuators, a collapse you can crawl back from, and an ending.
 
@@ -33,7 +33,7 @@ The spike pages that built it are live too:
 boxes).
 
 No headset handy? Add `?flat=1` to the arena URL for a flat in-browser
-preview with a scripted pilot, and `&ch=2` (0–3) to drop straight into a
+preview with a scripted pilot, and `&ch=2` (0–4) to drop straight into a
 later chapter's arena. In VR, `?grip=` and `?spring=` (0.3–3) tune the
 punch feel live, and `?calm=1` removes all view shake.
 

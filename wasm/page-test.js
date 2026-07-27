@@ -639,7 +639,7 @@ function poseArenaCrawl(f) {
       { "box3d.campaign": JSON.stringify({ c: 2, u: 3, l: 1, v: 3 }),
         "box3d.armSpan": "1.75" });
     check("a saved campaign boots where it was left",
-          /chapter 3 of 4/.test(r3.report) && /arms unlocked: 4 of 4/.test(r3.report) &&
+          /chapter 3 of 5/.test(r3.report) && /arms unlocked: 4 of 4/.test(r3.report) &&
           /lap 2/.test(r3.report),
           (r3.report.match(/chapter [^\n]*/) || ["no chapter line"])[0]);
 
@@ -649,7 +649,7 @@ function poseArenaCrawl(f) {
     // fires ENDING, and begin-again reboots the campaign on the next lap.
     // This is the only thing that executes the ENDING transition.
     const r4 = await runPage(page, 4500, poseArenaWin,
-      { "box3d.campaign": JSON.stringify({ c: 3, u: 3, l: 0, v: 3 }),
+      { "box3d.campaign": JSON.stringify({ c: 4, u: 3, l: 0, v: 3 }),
         "box3d.armSpan": "1.75" });
     const endChain = ["FIGHT", "WON", "ENDING", "READY"];
     let endAt = 0;
