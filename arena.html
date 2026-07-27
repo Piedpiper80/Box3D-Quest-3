@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CORE BREAKER — first fight</title>
+<title>CORE BREAKER</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🤖</text></svg>">
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -63,7 +64,7 @@
           <code>?spring=1.25</code> (0.3–3, multipliers) to this page's address before
           entering VR to scale the wrist pull and the arm actuators. The report names
           any active knob — tell me the numbers that feel right.</li>
-      <li>Press <strong>A</strong> between fights to change arm weight. Heavy arms hit far harder,
+      <li>Press <strong>A</strong> (or <strong>X</strong> on the left controller) between fights to change arm weight. Heavy arms hit far harder,
           lumber, and cook fast; light arms dance and sting. Each victory unlocks the next class
           and toughens your hull.</li>
       <li><strong>If your hull gives out, the legs cut — you are not dead.</strong> Grip the
@@ -432,7 +433,7 @@
   // rather than a heavy one. These all move; they just move differently.
   var DENSITIES = [350, 800, 1600, 2800];
   var level = 1;
-  var prevA = false;
+  var prevCycle = { l: false, r: false };
 
   // --- the match ---
   // CALIBRATE is implicit (floor/span). READY waits for fists-up. FIGHT runs
@@ -835,15 +836,17 @@
                       1, q.x, q.y, q.z, q.w);
         E.w_mech_anchor(armIdx, grip ? 1 : 0);
       }
-      // A cycles the arm material.
-      if (gp && gp.buttons && gp.buttons.length > 4 && src.handedness === "right") {
-        var aDown = gp.buttons[4].pressed;
-        if (aDown && !prevA && E && built && match !== "FIGHT") {
+      // A cycles the arm material — and X mirrors it on the left controller,
+      // because a left-handed pilot's thumb lives there.
+      if (gp && gp.buttons && gp.buttons.length > 4) {
+        var cyDown = gp.buttons[4].pressed;
+        var cyKey = src.handedness === "right" ? "r" : "l";
+        if (cyDown && !prevCycle[cyKey] && E && built && match !== "FIGHT") {
           level = (level + 1) % (unlockedLevel + 1);
           saveCampaign();
           built = false;   // material is baked into the bodies, so rebuild
         }
-        prevA = aDown;
+        prevCycle[cyKey] = cyDown;
       }
 
       // Small marker exactly on the controller — the truth your hand knows.
