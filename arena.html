@@ -481,6 +481,8 @@
   var sparks = [], prevEPlate = null, scrapeT = 0;
   var motes = [], moteT = 0, prevPlateFrac = null;
   var provoked = false;              // hit the frozen victor and it wakes
+  var prevEnemyPos = null, eStride = 0;
+  var whooshT = 0, prevArmSpd = 0;
   var hitStop = 0;
   // Overheat: swing hard and long and the actuators cook. Heavier arms heat
   // faster. Past the redline they weaken until you let them cool.
@@ -644,7 +646,7 @@
     // momentum in one clean hit, and a one-hit collapse is a coin flip,
     // not a fight. Each unlocked weight class buys the frame under you.
     playerCoreLimit = 130 + unlockedLevel * 45;
-    E.w_mech_joint_spring(8000, 1.0);
+    E.w_mech_joint_spring(18000, 1.0);
     E.w_mech_legs(1);
     O.x = 0; O.y = 0; O.z = 0;
     secondWind = false;
@@ -1012,14 +1014,89 @@
                           [0.24*eS, 0.34*eS, 0.14*eS]),
                    c: eState === 5 ? [0.15,0.15,0.17]
                      : [hC[0] + 0.55*(1-coreFrac), hC[1], hC[2]] });
+      // Arms drawn as ARMS — upper, forearm, fist — not clubs. One physics
+      // body still drives each, but the segmented read is the difference
+      // between a robot boxer and a man with two logs. (Playtest verdict.)
+      var rotZ = function (q, d) {
+        return [d * 2 * (q[0]*q[2] + q[3]*q[1]),
+                d * 2 * (q[1]*q[2] - q[3]*q[0]),
+                d * (1 - 2 * (q[0]*q[0] + q[1]*q[1]))];
+      };
+      var armLen = 0.60 * eS;
       for (var ai2 = 0; ai2 < 2; ai2++) {
         var ao = ep + 9 + ai2*7;
         var warn = (eState === 2 || eState === 3);
-        var li2 = limbItem(ef, ao, 0.60*eS, 0.07*eS,
-          warn ? [0.95, 0.35, 0.22]
-               : [hC[0]*1.15 + 0.06, hC[1]*1.15 + 0.06, hC[2]*1.15 + 0.06]);
-        li2.mat = warn ? 5 : 0;
-        items.push(li2);
+        var aCol = warn ? [0.95, 0.35, 0.22]
+                 : [hC[0]*1.15 + 0.06, hC[1]*1.15 + 0.06, hC[2]*1.15 + 0.06];
+        var aq = [ef[ao+3], ef[ao+4], ef[ao+5], ef[ao+6]];
+        var seg = function (a01, b01, th, col, mat5) {
+          var mid = rotZ(aq, armLen * (a01 + b01) * 0.5);
+          items.push({ m: trs([ef[ao] + mid[0], ef[ao+1] + mid[1], ef[ao+2] + mid[2]],
+                              aq, [th, th, armLen * (b01 - a01) * 0.5]),
+                       c: col, mat: mat5 ? 5 : 0 });
+        };
+        seg(0.02, 0.44, 0.062 * eS, aCol, warn);
+        seg(0.48, 0.86, 0.054 * eS, aCol, warn);
+        var fw = rotZ(aq, armLen * 0.93);
+        items.push({ m: trs([ef[ao] + fw[0], ef[ao+1] + fw[1], ef[ao+2] + fw[2]],
+                            aq, 0.082 * eS),
+                     c: warn ? [1.0, 0.45, 0.25] : [0.20, 0.21, 0.25], mat: warn ? 5 : 0 });
+      }
+
+      // The BODY under the body: pelvis and legs. The machine walks on a
+      // force, but a fighter without legs reads as unfinished — so the legs
+      // are drawn from what the hull is actually doing: hips ride the
+      // torso, feet stride with its real velocity, knees solve in between.
+      // The hoverer gets down-thrust jets instead; it never stood on earth.
+      var eVelX = 0, eVelZ = 0;
+      if (prevEnemyPos) {
+        eVelX = (ef[ep] - prevEnemyPos[0]) / Math.max(frameDt, 1e-3);
+        eVelZ = (ef[ep+2] - prevEnemyPos[1]) / Math.max(frameDt, 1e-3);
+      }
+      prevEnemyPos = [ef[ep], ef[ep+2]];
+      var eSpd = Math.hypot(eVelX, eVelZ);
+      if (chD.hover) {
+        if (eState !== 5) {
+          for (var jI = -1; jI <= 1; jI += 2) {
+            var jGlow = 0.55 + 0.35 * Math.sin(lastT * 0.02 + jI * 2.1);
+            items.push({ m: trs([ef[ep] + jI * 0.10 * eS, ef[ep+1] - 0.44 * eS, ef[ep+2]],
+                                [ef[ep+3], ef[ep+4], ef[ep+5], ef[ep+6]],
+                                [0.05 * eS, 0.10 * eS, 0.05 * eS]),
+                         c: [0.55 * jGlow, 0.70 * jGlow, 1.0 * jGlow], mat: 5 });
+          }
+        }
+      } else if (ef[ep+1] > 0.62 * eS) {
+        eStride += eSpd * frameDt * 3.2;
+        items.push({ m: trs([ef[ep], ef[ep+1] - 0.42 * eS, ef[ep+2]],
+                            [ef[ep+3], ef[ep+4], ef[ep+5], ef[ep+6]],
+                            [0.17 * eS, 0.09 * eS, 0.12 * eS]), c: hC });
+        var dirX = eSpd > 0.15 ? eVelX / eSpd : 0;
+        var dirZ = eSpd > 0.15 ? eVelZ / eSpd : 0;
+        for (var lI = -1; lI <= 1; lI += 2) {
+          var hipX = ef[ep] + lI * 0.11 * eS, hipZ = ef[ep+2];
+          var hipY = ef[ep+1] - 0.42 * eS;
+          var ph = eStride + (lI > 0 ? Math.PI : 0);
+          var step = eSpd > 0.15 ? Math.sin(ph) * 0.16 : 0;
+          var lift = eSpd > 0.15 ? Math.max(0, Math.cos(ph)) * 0.07 : 0;
+          var footX = hipX + dirX * step, footZ = hipZ + dirZ * step;
+          var footY = floorY + 0.045 * eS + lift;
+          // knee: midpoint pushed toward the facing (+z-ish local) so the
+          // bend reads forward
+          var kneeX = (hipX + footX) / 2 + dirX * 0.03 + (ef[ep] - footX) * -0.0;
+          var kneeY = (hipY + footY) / 2 + 0.04;
+          var kneeZ = (hipZ + footZ) / 2 + dirZ * 0.03;
+          var thL = Math.hypot(kneeX-hipX, kneeY-hipY, kneeZ-hipZ) / 2;
+          var shL = Math.hypot(footX-kneeX, footY-kneeY, footZ-kneeZ) / 2;
+          items.push({ m: trs([(hipX+kneeX)/2, (hipY+kneeY)/2, (hipZ+kneeZ)/2],
+                              [0,0,0,1], [0.055*eS, Math.max(0.05, thL), 0.055*eS]),
+                       c: [hC[0]*0.85, hC[1]*0.85, hC[2]*0.85] });
+          items.push({ m: trs([(kneeX+footX)/2, (kneeY+footY)/2, (kneeZ+footZ)/2],
+                              [0,0,0,1], [0.048*eS, Math.max(0.05, shL), 0.048*eS]),
+                       c: [hC[0]*0.85, hC[1]*0.85, hC[2]*0.85] });
+          items.push({ m: trs([footX, footY, footZ], [0,0,0,1],
+                              [0.075*eS, 0.038*eS, 0.11*eS]),
+                       c: [0.16, 0.17, 0.20] });
+        }
       }
       // Its face: an emissive visor slit that is also a telegraph — it burns
       // brighter in the instant before a swing — and dies with the machine.
@@ -1114,6 +1191,14 @@
         var dTgt = (chD.hover && eState < 5 && match === "FIGHT") ? 0.055 : 0;
         droneGain.gain.value += (dTgt - droneGain.gain.value) * 0.04;
       }
+      // Your own punches cut the air: a whoosh on the fast ones, so a whiff
+      // still FEELS like a swing and not like nothing.
+      whooshT -= frameDt;
+      if (AC && armSpd > 3.4 && prevArmSpd <= 3.4 && whooshT <= 0) {
+        noiseBurst(0.13, 1500, Math.min(0.14, 0.05 + armSpd * 0.015));
+        whooshT = 0.24;
+      }
+      prevArmSpd = armSpd;
       {
         // Heat: work done by the actuators. Heavier arms cook faster; idling
         // cools. Past the redline the actuators derate until they recover.
@@ -1122,10 +1207,10 @@
         var wasOver = overheated;
         if (heat > 0.92) overheated = true;
         if (heat < 0.45) overheated = false;
-        var derate = overheated ? 0.30 : 1.0;
+        var derate = overheated ? 0.22 : 1.0;
         // A lost machine is dead: drives out, arms limp where they fell.
         // (COLLAPSED keeps them — the crawl IS the arms.)
-        E.w_mech_joint_spring(match === "LOST" ? 0 : 8000 * derate, 1.0);
+        E.w_mech_joint_spring(match === "LOST" ? 0 : 18000 * derate, 1.0);
         if (overheated && !wasOver && AC) {
           for (var wq2 = 0; wq2 < 3; wq2++) {
             (function (k2) {
