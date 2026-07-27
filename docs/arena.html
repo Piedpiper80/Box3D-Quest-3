@@ -813,7 +813,9 @@
       while (acc >= STEP) {
         acc -= STEP;
         stepped = true;
-        if (match === "FIGHT") {
+        // The enemy thinks during the fight and after it wins — the triumph
+        // stalk needs the brain running. It stays frozen while you crawl.
+        if (match === "FIGHT" || match === "LOST") {
           var msP = E.w_mech_state() >>> 2, fP0 = new Float32Array(E.memory.buffer);
           E.w_enemy_update(fP0[msP], fP0[msP+1], fP0[msP+2], STEP);
         }
@@ -951,6 +953,7 @@
         var vy2 = ef[ep+1] + vy + q[3]*ty3 + (q[2]*tx3 - q[0]*0);
         var vz2 = ef[ep+2] + vz + (q[0]*ty3 - q[1]*tx3);
         var vc = eState === 5 ? [0.12,0.12,0.14]
+               : eState === 6 ? [1.0,0.30,0.14]
                : (eState === 2 || eState === 3) ? [1.0,0.42,0.18]
                : [0.85,0.20,0.16];
         // While you crawl, the victor holds still — but the visor breathes,
@@ -1079,9 +1082,11 @@
             boom(); shake = 0.2;
           } else {
             // No third chance. The machine dies the way the enemy's does:
-            // the drives cut and it drops where it stands.
+            // the drives cut and it drops where it stands — and the victor
+            // stalks over to raise both clubs above the wreck.
             match = "LOST"; endTimer = 0; sting(false);
             E.w_mech_legs(0);
+            E.w_enemy_triumph();
             boom(); shake = 0.2;
           }
         }
@@ -1133,7 +1138,10 @@
           E.w_player_repair();
           match = "FIGHT";
           sting(true);
-        } else if (padTimer <= 0) { match = "LOST"; endTimer = 0; sting(false); }
+        } else if (padTimer <= 0) {
+          match = "LOST"; endTimer = 0; sting(false);
+          E.w_enemy_triumph();
+        }
       }
 
       // The repair pad: always there, only urgent when you are crawling.
@@ -1254,7 +1262,7 @@
       }
       lines.push("arm material " + (level+1) + " of " + DENSITIES.length +
                  "  (density " + DENSITIES[level] + ")");
-      var NAMES = ["IDLE","APPROACH","WINDUP","SWING","RECOVER","DEAD"];
+      var NAMES = ["IDLE","APPROACH","WINDUP","SWING","RECOVER","DEAD","TRIUMPH"];
       var pg3 = E.w_vox_grid_stats(playerGrid) >>> 2, pf3 = new Float32Array(E.memory.buffer);
       var pAlive2 = pf3[pg3], pTot2 = pf3[pg3 + 2];
       // Your own gauge rides your left wrist — the page's numbers do not
@@ -1283,7 +1291,9 @@
       lines.push("heat: " + Math.round(heat * 100) + "%" +
                  (overheated ? "  OVERHEATED — actuators derated, let them cool" : "") +
                  "   arms unlocked: " + (unlockedLevel + 1) + " of " + DENSITIES.length);
-      lines.push("enemy: " + NAMES[ef ? ef[ep+7] : 0] + "   its plate " +
+      lines.push("enemy: " + NAMES[ef ? ef[ep+7] : 0] +
+                 ((ef && ef[ep+27] > 0.5 && (ef[ep+7] === 2 || ef[ep+7] === 3)) ? " (sweep)" : "") +
+                 "   its plate " +
                  ePlateAlive + "/" + ePlateTotal +
                  "   its core " + Math.round((ef ? ef[ep+8] : 1) * 100) + "%");
       lines.push("you: plate " + pf3[pg3] + "/" + pf3[pg3+2] + "   hull damage " +

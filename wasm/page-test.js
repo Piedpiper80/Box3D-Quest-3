@@ -529,7 +529,7 @@ function poseArenaCollapse(f) {
     check("the fight drew blood on at least one side", !!damage,
           `enemy ${eplate ? eplate[1] + "/" + eplate[2] : "?"}, you ${you ? you[1] + "/" + you[2] : "?"}`);
     check("the enemy machine is drawn and acting",
-          /enemy: (APPROACH|WINDUP|SWING|RECOVER|DEAD)/.test(r.report),
+          /enemy: (APPROACH|WINDUP|SWING|RECOVER|DEAD|TRIUMPH)/.test(r.report),
           (r.report.match(/enemy: \w+/) || ["no enemy line"])[0]);
 
     // Second run: the losing path. Undefended, the fight should end in the

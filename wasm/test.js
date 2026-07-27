@@ -664,6 +664,34 @@ const wasi = new WASI({ version: "preview1" });
   check("the swing varies its line", styles.size >= 2,
         `styles seen: ${[...styles].join(", ") || "none"}`);
 
+  // The approach weaves: on the way in the machine drifts across the line,
+  // so the walk-up circles instead of running a rail. Measured as lateral
+  // deviation from the straight spawn-to-player line (the x axis stays the
+  // cross direction when it spawns dead ahead).
+  E.w_reset(1, 0);
+  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
+  E.w_player_plate(1);
+  E.w_enemy_create(0, -4.5, 1);
+  let weave = 0;
+  for (let s = 0; s < 260; s++) { idleStep(); weave = Math.max(weave, Math.abs(est()[0])); }
+  check("the approach weaves off the straight line", weave > 0.12,
+        `strayed ${weave.toFixed(2)} m`);
+
+  // Triumph: told it has won, it raises both clubs high and holds.
+  E.w_reset(1, 0);
+  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
+  E.w_player_plate(1);
+  E.w_enemy_create(0, -1.2, 1);
+  E.w_enemy_triumph();
+  for (let s = 0; s < 200; s++) idleStep();
+  const tr = est();
+  // The club body sits at the shoulder; what rises is the TIP, 0.60 m down
+  // the club's +Z. Rotate (0,0,0.6) by the arm quat and take the y.
+  const tipY = (o) => tr[o+1] + 1.2 * (tr[o+4]*tr[o+5] - tr[o+6]*tr[o+3]);
+  check("the victor raises both clubs over the wreck",
+        tr[7] === 6 && tipY(9) > tr[1] + 0.35 && tipY(16) > tr[1] + 0.35,
+        `state ${tr[7]}, tips at +${(tipY(9)-tr[1]).toFixed(2)} / +${(tipY(16)-tr[1]).toFixed(2)} vs torso`);
+
   console.log(`\n${pass} passed, ${fail} failed, ${gaps} known gaps`);
   process.exit(fail === 0 ? 0 : 1);
 })().catch((e) => { console.error("HARNESS ERROR:", e); process.exit(2); });

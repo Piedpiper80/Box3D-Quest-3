@@ -2455,7 +2455,8 @@ float* w_dummy_state(void)
 // left of its armour bursts off.
 // ---------------------------------------------------------------------------
 
-typedef enum { E_IDLE = 0, E_APPROACH, E_WINDUP, E_SWING, E_RECOVER, E_DEAD } EnemyState;
+typedef enum { E_IDLE = 0, E_APPROACH, E_WINDUP, E_SWING, E_RECOVER, E_DEAD,
+               E_TRIUMPH } EnemyState;
 
 static b3BodyId s_eTorso;
 static b3BodyId s_eArm[2];
@@ -2467,6 +2468,7 @@ static int s_eSwingStyle = 0;             // 0 overhead, 1 lateral sweep
 static unsigned s_eSwingCount = 0;
 static float s_ePrevPlateAlive = -1.0f;   // for the stagger: slab loss in one step
 static float s_eBlockHit = 0.0f;          // club momentum landed on a player ARM
+static float s_eStrafePhase = 0.0f;       // the approach weave
 static float s_eCoreHp = 0.0f;
 static float s_eCoreHpMax = 260.0f;
 static int s_eGrid = -1;                  // its armour plate
@@ -2648,7 +2650,9 @@ void w_enemy_update(float px, float py, float pz, float dt)
     b3Vec3 tv = b3Body_GetLinearVelocity(s_eTorso);
     const float mass = b3Body_GetMass(s_eTorso);
 
-    // Legs: hold height, close to fighting range, stop there.
+    // Legs: hold height, close to fighting range, stop there. On the way in
+    // it strafes — a slow weave across the line of approach, so the walk-up
+    // reads as circling a fight rather than a train on a rail.
     {
         b3Vec3 toP = { px - (float)tp.x, 0.0f, pz - (float)tp.z };
         const float dist = __builtin_sqrtf(toP.x*toP.x + toP.z*toP.z);
@@ -2659,6 +2663,13 @@ void w_enemy_update(float px, float py, float pz, float dt)
             const float step = dist - wantRange;
             gx += toP.x / dist * step;
             gz += toP.z / dist * step;
+            if (s_eState == E_APPROACH && dist > wantRange + 0.5f && dist > 1e-3f)
+            {
+                s_eStrafePhase += dt * s_eTempo * 1.1f;
+                const float weave = __builtin_sinf(s_eStrafePhase) * 0.55f;
+                gx += (toP.z / dist) * weave;
+                gz += (-toP.x / dist) * weave;
+            }
         }
         float fy = mass * 9.81f + (ENEMY_STAND_Y - (float)tp.y) * 5200.0f - tv.y * 900.0f;
         float fx = (gx - (float)tp.x) * 1400.0f - tv.x * 620.0f;
@@ -2782,6 +2793,21 @@ void w_enemy_update(float px, float py, float pz, float dt)
                                pz + pHat.z * 0.45f + lat.z * across };
             eAimArm(s_eSwingArm, through, 10.0f);
             if (s_eTimer > 0.40f) { s_eState = E_RECOVER; s_eTimer = 0.0f; }
+            break;
+        }
+        case E_TRIUMPH:
+        {
+            // Both clubs high over the wreck. It walks to where you fell
+            // (the seek still closes to range) and holds this until the
+            // world is rebuilt. It can still be killed here — a machine
+            // showboating over a live pilot has made a mistake.
+            b3Vec3 lat = { pHat.z, 0.0f, -pHat.x };
+            b3Vec3 hi0 = { (float)tp.x - lat.x * 0.35f, (float)tp.y + 0.95f,
+                           (float)tp.z - lat.z * 0.35f };
+            b3Vec3 hi1 = { (float)tp.x + lat.x * 0.35f, (float)tp.y + 0.95f,
+                           (float)tp.z + lat.z * 0.35f };
+            eAimArm(0, hi0, 3.0f);
+            eAimArm(1, hi1, 3.0f);
             break;
         }
         case E_RECOVER:
@@ -2924,6 +2950,14 @@ WASM_EXPORT("w_player_repair")
 void w_player_repair(void)
 {
     s_eHitPlayerCore = 0.0f;
+}
+
+// The other machine wins: it stalks to the wreck and raises both clubs.
+// The page calls this when the player's hull gives out for good.
+WASM_EXPORT("w_enemy_triumph")
+void w_enemy_triumph(void)
+{
+    if (s_eExists && s_eState != E_DEAD) { s_eState = E_TRIUMPH; s_eTimer = 0.0f; }
 }
 
 // Direct core damage, for tests and future weapons.
