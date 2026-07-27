@@ -42,13 +42,17 @@ punch feel live, and `?calm=1` removes all view shake.
 Flat-preview captures from the screenshot loop that reviews every visual
 change (the in-headset view is first-person from the cockpit):
 
-| The Scrapfields | The Foundry |
+| The Scrapfields | Milltown |
 | --- | --- |
-| ![Chapter 1 — the rust-hulled SCRAPPER at close quarters](docs/design/shots/ch1-scrapper.png) | ![Chapter 3 — the JUGGERNAUT looming over a collapsed hull between foundry aisles](docs/design/shots/ch3-juggernaut.png) |
+| ![Chapter 1 — the rust-hulled SCRAPPER at close quarters](docs/design/shots/ch1-scrapper.png) | ![Chapter 2 — a gauntlet landing in the WARDEN's face, sparks flying](docs/design/shots/ch2-warden.png) |
+
+| Saltyard Row | The Foundry |
+| --- | --- |
+| ![Chapter 3 — the salt-green DANCER mid-stride in its crowded yard](docs/design/shots/ch3-dancer.png) | ![Chapter 4 — the JUGGERNAUT looming over a collapsed hull between foundry aisles](docs/design/shots/ch4-juggernaut.png) |
 
 | The High Dark | Victory |
 | --- | --- |
-| ![Chapter 4 — the Returned, hovering, steel-plated, arena stripped bare](docs/design/shots/ch4-thereturned.png) | ![The wreck, the green ring, fists raised](docs/design/shots/victory.png) |
+| ![Chapter 5 — the Returned, hovering, steel-plated, arena stripped bare](docs/design/shots/ch5-thereturned.png) | ![The wreck, the green ring, fists raised](docs/design/shots/victory.png) |
 
 All of it is the **real Box3D engine compiled to WebAssembly** (~360 KB,
 scalar, single-threaded) — see [`wasm/`](wasm/) for the C bridge, build
