@@ -600,6 +600,14 @@ sweep-heavy God punishes passivity hardest, which is the finale's job —
 with the second wind and the hardened hull as the player's answer, and
 heat still taxing heavy-arm offense on the other side of the ledger.
 
+**Each chapter lays its own ground.** Scattered heaps, the mill square,
+foundry aisles — and the High Dark strips the cover entirely, because
+the finale is a duel and a bare floor says so. The harness caught the
+first Scrapfields layout immediately (a heap on the enemy's approach
+lane meant the fight never started), which minted the rule: **the
+spawn-to-spawn lane stays clear**, |x| under ~1.2 m between the
+machines' starting marks.
+
 **Frame cost, measured where it can be:** the full page pipeline —
 physics, draw-list build, GL calls into the recording harness — runs
 2.2 ms/frame upper bound on server CPU across the arena's whole test
