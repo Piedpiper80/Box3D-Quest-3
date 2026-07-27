@@ -268,10 +268,19 @@
   }
   // An impact: cave every vertex near the contact point inward along the
   // hit direction, with a raised rim around the crater. Permanent.
-  function deformAt(mesh, wx, wy, wz, force) {
+  function deformAt(mesh, wx, wy, wz, force, svx, svy, svz) {
     var lx = wx - mesh.cx, ly = wy - mesh.cy, lz = wz - mesh.cz;
-    var il = Math.hypot(lx, ly, lz) || 1;
-    var inx = -lx/il, iny = -ly/il, inz = -lz/il;   // inward: toward the heart
+    // The crumple follows the BLOW: cave along the striker's velocity, so
+    // tops and bottoms crater as truly as the sides (toward-centre made
+    // top-face dents degenerate). Centre-seeking only when the impact
+    // direction is too small to trust.
+    var inx, iny, inz;
+    var sl = Math.hypot(svx || 0, svy || 0, svz || 0);
+    if (sl > 0.4) { inx = svx/sl; iny = svy/sl; inz = svz/sl; }
+    else {
+      var il = Math.hypot(lx, ly, lz) || 1;
+      inx = -lx/il; iny = -ly/il; inz = -lz/il;
+    }
     var depth = Math.min(0.02 + force * 0.0006, 0.028);
     var R = mesh.half * 1.1;
     var maxPush = mesh.half * 0.55;
@@ -827,7 +836,7 @@
   // the Pages CDN both cache hard — a playtest once got the old game and,
   // fairly, could not tell), and it is printed on the card so which build
   // loaded is never a guess.
-  var BUILD = 17;
+  var BUILD = 18;
   var bTag = document.getElementById("buildTag");
   if (bTag) bTag.textContent = "(build " + BUILD + ")";
   fetch("box3d.wasm?v=" + BUILD)
@@ -1415,9 +1424,10 @@
         if (nHits > 0) {
           var hb = E.w_vox_hit_events() >>> 2, hf = new Float32Array(E.memory.buffer);
           for (var hE = 0; hE < nHits; hE++) {
-            var ho = hb + hE * 5;
+            var ho = hb + hE * 8;
             if ((hf[ho+4] | 0) !== practiceGrid) continue;
-            deformAt(defBox, hf[ho], hf[ho+1], hf[ho+2], hf[ho+3]);
+            deformAt(defBox, hf[ho], hf[ho+1], hf[ho+2], hf[ho+3],
+                     hf[ho+5], hf[ho+6], hf[ho+7]);
             clang(Math.min(2, 0.6 + hf[ho+3] * 0.02));
           }
         }
