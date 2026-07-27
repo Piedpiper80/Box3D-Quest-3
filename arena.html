@@ -63,8 +63,9 @@
           ground (grip button) where the teal patches pulse and haul yourself to the beacon
           before its column drains. Reach it and you stand back up whole. Once per fight.</li>
       <li>Four chapters, four machines, four places. Beat the thing that does not stand on the
-          earth and the sky is yours. Every sound is synthesised from the physics — nothing is
-          a recording.</li>
+          earth and the sky is yours — and if you go again, the machines remember you: every
+          lap they come faster. Every sound is synthesised from the physics — nothing is a
+          recording.</li>
     </ul>
   </div>
 
@@ -435,6 +436,8 @@
       hullC: [0.20,0.14,0.26], stars: 1 },
   ];
   var chapter = 0;
+  var lap = 0;                       // finish the campaign and go again:
+                                     // the machines remember you, faster
   var unlockedLevel = 1;             // arm weights unlock as the campaign goes
   var match = "READY";
   var fistTimer = 0, endTimer = 0, frameDt = 1 / 72;
@@ -590,7 +593,8 @@
     playerGrid = E.w_player_plate(1);   // stone plate; your edge is skill
     E.w_vox_hide(playerGrid, 1);        // simulated, damageable, NOT in your face
     enemyGrid = E.w_enemy_create_ex(hx, hz - 3.2, ch2.mat, ch2.scale,
-                                    ch2.core, ch2.hover, ch2.tempo);
+                                    ch2.core, ch2.hover,
+                                    ch2.tempo * (1 + lap * 0.15));
     // Pillars: cover, scenery, wreckage-in-waiting. Their material sets the
     // look of the place as much as the fight.
     E.w_vox_create(hx - 2.1, floorY, hz - 2.1, 4, 16, 4, 0.10, ch2.pillarMat);
@@ -1183,7 +1187,10 @@
       } else if (match === "ENDING") {
         endTimer += frameDt;
         fistTimer = (fistsUp && endTimer > 3.0) ? fistTimer + frameDt : 0;
-        if (fistTimer > 0.9) { chapter = 0; built = false; fistTimer = 0; }
+        if (fistTimer > 0.9) {
+          chapter = 0; lap = Math.min(lap + 1, 3);
+          built = false; fistTimer = 0;
+        }
       } else if (match === "COLLAPSED") {
         padTimer -= frameDt;
         var msC = E.w_mech_state() >>> 2, fC = new Float32Array(E.memory.buffer);
@@ -1425,7 +1432,8 @@
       }
       var chNow = CAMPAIGN[Math.min(chapter, CAMPAIGN.length - 1)];
       lines.push("chapter " + (Math.min(chapter, CAMPAIGN.length - 1) + 1) + " of " +
-                 CAMPAIGN.length + ": " + chNow.name + " — " + chNow.place);
+                 CAMPAIGN.length + ": " + chNow.name + " — " + chNow.place +
+                 (lap ? "   (lap " + (lap + 1) + " — they remember you)" : ""));
       if (match === "READY") lines.push("  \"" + chNow.story + "\"");
       lines.push("match: " + match + (match === "READY" ? "  — RAISE BOTH FISTS TO FIGHT" :
                  match === "WON" ? "  — fists up to travel on" :
