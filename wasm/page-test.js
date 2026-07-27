@@ -503,11 +503,45 @@ function poseArenaWin(f) {
   if (f < 40) return mk(vec(-0.24, 1.15, -0.30), vec(0.24, 1.15, -0.30));
   if (f < 130) return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));  // start
   if (f < 3400) {
-    const c = (f - 130) % 28, out = c < 12 ? c / 12 : Math.max(0, 1 - (c - 12) / 12);
-    return mk(vec(-0.10, 1.35, -0.32),                     // high guard, center
-              vec(0.10, 1.30, -0.25 - 0.55 * out));        // fast punches, high
+    const c = (f - 130) % 24, out = c < 10 ? c / 10 : Math.max(0, 1 - (c - 10) / 14);
+    return mk(vec(-0.06, 1.28, -0.34),                     // centre guard
+              vec(0.10, 1.42, -0.22 - 0.55 * out));        // punches at core height
   }
   return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));  // claim the sky
+}
+
+// The second wind, end to end: get beaten down, then knuckle-haul the dead
+// machine sideways to the repair pad and stand back up healed. Strokes run
+// along +x because that is where the pad is; the enemy freezes while you
+// crawl, so the crawl itself is the whole problem.
+function poseArenaCrawl(f) {
+  if (f < TPOSE_UNTIL) return pose(f);
+  const mk = (l, r, grip) => ({
+    head: vec(0, HEAD_Y, 0),
+    controllers: [
+      { pos: l, q: quat(0, 0, 0, 1) },
+      { pos: r, q: quat(0, 0, 0, 1) },
+    ],
+    trigger: false, grip: !!grip,
+  });
+  if (f < 40) return mk(vec(-0.24, 1.15, -0.30), vec(0.24, 1.15, -0.30));
+  if (f < 130) return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));  // start
+  // Phase A: take the beating with hands wide and DOWN, no grip — the hull
+  // stays near the spawn (a gripping stroke mid-fight anchors the moment a
+  // knock dips a fist to the floor, and hauls the standing machine away).
+  if (f < 2400) return mk(vec(-0.55, 0.80, -0.05), vec(0.55, 0.80, -0.05));
+  // Phase B: arms high and wide, no grip — frees them from under the hull.
+  if (f < 2520) return mk(vec(-0.6, 1.5, -0.05), vec(0.6, 1.5, -0.05));
+  // Phase C: side strokes toward the pad, slight forward bias.
+  const PULL = 24, SWING = 24, CYCLE = PULL + SWING;
+  const c = (f - 2520) % CYCLE;
+  if (c < PULL) {
+    const t = c / PULL, x = 0.50 - 0.70 * t;
+    return mk(vec(x - 0.48, 1.06, 0.12 + 0.16 * t), vec(x, 1.06, 0.12 + 0.16 * t), true);
+  }
+  const t = (c - PULL) / SWING, y = 1.06 + 0.30 * Math.sin(t * Math.PI);
+  const x = -0.20 + 0.70 * t;
+  return mk(vec(x - 0.48, y, 0.12), vec(x, y, 0.12), false);
 }
 
 (async () => {
@@ -599,6 +633,13 @@ function poseArenaWin(f) {
     for (const s of r4.matchSeq) if (s === endChain[endAt]) endAt++;
     check("the God can be beaten, and the fourth win fires the ending",
           endAt >= endChain.length, "states seen: " + r4.matchSeq.join(">"));
+
+    if (process.env.DBG5) {
+      const r5 = await runPage(page, 6500, poseArenaCrawl);
+      console.log("DBG5 states: " + r5.matchSeq.join(">"));
+      console.log("DBG5 final: " +
+        (r5.report.match(/match: [^\n]*|you: [^\n]*|drag[^\n]*/g) || []).join("  |  "));
+    }
   }
 
   if (page === "dummy.html") {

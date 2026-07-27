@@ -480,6 +480,7 @@
   var travelTimer = 0, rumbleT = 0, travelThump = 0, eStepT = 0;
   var sparks = [], prevEPlate = null, scrapeT = 0;
   var motes = [], moteT = 0, prevPlateFrac = null;
+  var provoked = false;              // hit the frozen victor and it wakes
   var hitStop = 0;
   // Overheat: swing hard and long and the actuators cook. Heavier arms heat
   // faster. Past the redline they weaken until you let them cool.
@@ -649,6 +650,7 @@
     secondWind = false;
     padPos = { x: hx + 2.6, z: hz + 0.6 };
     match = "READY";
+    provoked = false;
     prevStats = null; prevChunks = 0; prevEnemy = null;
     sparks.length = 0; prevEPlate = null;
     motes.length = 0; prevPlateFrac = null;
@@ -880,8 +882,12 @@
         acc -= STEP;
         stepped = true;
         // The enemy thinks during the fight and after it wins — the triumph
-        // stalk needs the brain running. It stays frozen while you crawl.
-        if (match === "FIGHT" || match === "LOST") {
+        // stalk needs the brain running. It stays frozen while you crawl,
+        // watching — UNLESS you hit it. A harness run found the machine
+        // could grind its fists into the frozen victor and kill it risk-free
+        // mid-crawl; provoked, it fights the crawler back.
+        if (match === "FIGHT" || match === "LOST" ||
+            (match === "COLLAPSED" && provoked)) {
           var msP = E.w_mech_state() >>> 2, fP0 = new Float32Array(E.memory.buffer);
           E.w_enemy_update(fP0[msP], fP0[msP+1], fP0[msP+2], STEP);
         }
@@ -1054,6 +1060,7 @@
         if (ef[ep+23] > 1) {                                  // you hit its core
           thud(2.5);
           hitStop = Math.min(0.09, 0.03 + ef[ep+23] * 0.001); // the hit lands, time flinches
+          if (match === "COLLAPSED") provoked = true;         // it noticed
         }
         if (ef[ep+24] > 1) {                                  // it hit your hull
           thud(3); shake = 0.16;
@@ -1160,7 +1167,7 @@
           if (!secondWind) {
             // The legs cut out. One chance: drag yourself to the pad.
             secondWind = true;
-            match = "COLLAPSED"; padTimer = 25;
+            match = "COLLAPSED"; padTimer = 25; provoked = false;
             E.w_mech_legs(0);
             boom(); shake = 0.2;
           } else {
@@ -1500,6 +1507,17 @@
       lines.push("heat: " + Math.round(heat * 100) + "%" +
                  (overheated ? "  OVERHEATED — actuators derated, let them cool" : "") +
                  "   arms unlocked: " + (unlockedLevel + 1) + " of " + DENSITIES.length);
+      if (match === "COLLAPSED") {
+        var dsR = E.w_mech_drag_state() >>> 2;
+        var msR = E.w_mech_state() >>> 2;
+        var fR = new Float32Array(E.memory.buffer);
+        lines.push("crawl: anchors " + (fR[dsR] > 0.5 ? "L" : "-") +
+                   (fR[dsR+1] > 0.5 ? "R" : "-") +
+                   "  hull x " + fR[msR].toFixed(2) + " y " + fR[msR+1].toFixed(2) +
+                   " z " + fR[msR+2].toFixed(2) +
+                   "  tips y " + fR[msR+22].toFixed(2) + "/" + fR[msR+43].toFixed(2) +
+                   "  pad x " + padPos.x.toFixed(2) + " z " + padPos.z.toFixed(2));
+      }
       lines.push("enemy: " + NAMES[ef ? ef[ep+7] : 0] +
                  ((ef && ef[ep+27] > 0.5 && (ef[ep+7] === 2 || ef[ep+7] === 3)) ? " (sweep)" : "") +
                  "   its plate " +
