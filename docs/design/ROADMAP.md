@@ -590,12 +590,21 @@ because the sweep rounds both the guard and the plate). The tunes kept
 the physics honest: the sweep telegraphs longer and comes three swings
 in eight, and the hull hardens with each unlocked weight class (130 +
 45/level) because a Juggernaut's club lands ~130 momentum in one clean
-hit and a one-hit collapse is a coin flip, not a fight. After tuning,
-measured against each chapter's real hull limit (single deterministic
-samples, not averages): undefended survival runs 37 s / 5.4 s / 15 s /
-8.7 s across the ladder — a gentle first fight, the Warden as the skill
-gate, the heavyweight slugfest, the finale — with heat still taxing
-heavy-arm offense on the other side of the ledger.
+hit and a one-hit collapse is a coin flip, not a fight. After tuning
+and the personality biases, measured against each chapter's real hull
+limit (single deterministic samples, not averages): undefended survival
+runs 19.9 s / 11.0 s / 21.3 s / 4.3 s across the ladder — teach, test,
+endure, survive. The overhead-heavy Juggernaut is survivable-but-long
+(its slow-crush fantasy: the plate takes what you can see coming); the
+sweep-heavy God punishes passivity hardest, which is the finale's job —
+with the second wind and the hardened hull as the player's answer, and
+heat still taxing heavy-arm offense on the other side of the ledger.
+
+Attack mix became **personality, derived from traits the machines
+already carry**: a hoverer angles in with sweeps (the God comes around
+you, four in eight), a slow heavyweight lives on the overhead crush
+(two in eight), everyone else keeps the sweep rarer. No new
+parameters — hover and tempo were already per-chapter.
 
 Body language closed the round: the approach **weaves** (a tempo-scaled
 drift across the bearing, so closing reads as circling, not a rail),
