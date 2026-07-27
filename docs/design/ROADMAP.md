@@ -609,6 +609,11 @@ showboating over a live pilot has made a mistake. 68 engine checks and
 intact and every machine 15% faster per lap (capped three deep) — "they
 remember you." The four-act structure holds; completion now opens a
 harder mirror of itself. This is Phase 6's replay ladder in first form.
+Completed laps stand as gold posts on the ring, and **the campaign
+persists across sessions** — chapter, unlocked classes, current class
+and laps save at every milestone, with a Reset campaign button beside
+the calibration resets. The flat preview never touches the save, so
+the screenshot loop stays deterministic.
 
 **What only a headset can verify now** — the punch list for the next
 playtest, in the order the game presents them:
