@@ -596,12 +596,13 @@ instead of round-tripping every guess through a rebuild. The next
 verdict belongs to the same headset that forced this one — ideally
 with the numbers that felt right attached.
 
-**The lap curve, measured.** NG+ tempo compounds on the God:
-kill/undefended-death times run 13.6 s/4.3 s at lap 1, 9.7/5.3 at ×1.15,
-6.9/2.4 at ×1.30, 4.6/2.3 at ×1.45. Faster machines lunge more and
-expose their cores more — so the attacker's deficit *narrows* with each
-lap (−9.3 s → −2.3 s) and laps produce knife-edge sprints, not
-unwinnable walls. No tuning needed; the shape is what NG+ should be.
+**The lap curve, measured.** NG+ tempo compounds on the God. With the
+corrected probe (the density fix below), every lap is a knife-edge
+sprint: kill/undefended-death times run 1.9 s/2.0 s at lap 1, 2.5/2.0
+at ×1.15, 2.5/1.9 at ×1.30, 1.9/2.6 at ×1.45. The middle laps tilt
+the sprint against the attacker; at the top the God lunges so hard it
+exposes its own core again. No tuning needed; the shape is what NG+
+should be — laps sharpen the same fight, they never wall it off.
 
 **The proof trilogy closed.** The crawl script finally reached the pad
 with a dogleg — haul +z away from the watching foe first (any fist that
@@ -680,16 +681,22 @@ because the sweep rounds both the guard and the plate). The tunes kept
 the physics honest: the sweep telegraphs longer and comes three swings
 in eight, and the hull hardens with each unlocked weight class (130 +
 45/level) because a Juggernaut's club lands ~130 momentum in one clean
-hit and a one-hit collapse is a coin flip, not a fight. Post-feel-
-rebuild (crisp arms, jabs, hardened steel), the whole ladder runs at
-sprint pace — metronome kill times 4.7/3.6/2.1/4.1 s, undefended
-survival 23.9/8.1/4.0/2.1 s (single deterministic samples). The probe
-overstates sustained offense: it has no heat (which taxes heavy arms
-hard in the real game) and no human imprecision. The shape holds —
-gentle opener, the ladder tightening to the God — and the pacing now
-sits where the playtest verdict pointed: fight-speed trades, weight at
-the impact, with the second wind and the hardened hull as the player's
-answer. The next headset verdict tunes from here.
+hit and a one-hit collapse is a coin flip, not a fight. The probe then
+needed its own correction: it had been swinging a 7800-density arm — a
+class the game doesn't have (the page's ladder tops out at 2800) — and
+the honest table showed **lighter arms out-damaging heavier ones** at
+these spring rates, because what the spring can accelerate matters
+more than what the fist weighs. Post-feel-rebuild and with the roster
+at five, the measured ladder reads teach, test, duel, endure, survive:
+metronome kill times 4.2/3.1/7.6/3.1/1.9 s, undefended survival
+11.6/8.1/57.8/6.7/2.0 s (single deterministic samples). The probe
+still overstates sustained offense: it has no heat (which taxes heavy
+arms hard in the real game) and no human imprecision. The shape holds
+— gentle opener, a long technical duel at the middle, the ladder
+tightening to the God — and the pacing sits where the playtest verdict
+pointed: fight-speed trades, weight at the impact, with the second
+wind and the hardened hull as the player's answer. The next headset
+verdict tunes from here.
 
 **Each chapter lays its own ground.** Scattered heaps, the mill square,
 foundry aisles — and the High Dark strips the cover entirely, because
@@ -730,6 +737,20 @@ and laps save at every milestone, with a Reset campaign button beside
 the calibration resets. The flat preview never touches the save, so
 the screenshot loop stays deterministic.
 
+**The fifth machine.** THE DANCER (Saltyard Row, chapter 3) grew the
+roster from four to five. A small salt-green sparring frame at tempo
+1.35 — "built to spar the champions; it has never been allowed to
+win" — and it is **pure data**: one CAMPAIGN entry riding traits the
+machines already carry (small scale → hard to hit, high tempo →
+jab-led mix, six posts crowding the yard), zero new engine code,
+which is what a trait-derived roster was for. The corrected probe
+handed it its role unprompted — hardest machine on the ladder to
+kill (7.6 s) and nearly harmless undefended (57.8 s) — a technical
+duel sitting between the mill's test and the foundry's endurance, so
+the campaign breathes instead of only escalating. Chapter numbering,
+the completability proof's seeds, the balance table and all the
+four-chapter copy followed the roster in the same commit.
+
 **What only a headset can verify now** — the punch list for the next
 playtest, in the order the game presents them:
 
@@ -744,11 +765,12 @@ playtest, in the order the game presents them:
    wind readable in the panic, and did standing back up feel earned?
 9. The travel: does the streaming skyline + road-thump read as going
    somewhere? Is the half-amplitude rumble comfortable?
-10. Chapters 2–4: does each machine feel like a different OPPONENT, not
-    a bigger number? Does the God's hover + drone + stars land?
+10. Chapters 2–5: does each machine feel like a different OPPONENT, not
+    a bigger number? Does the Dancer make you actually box — jab,
+    parry, punish? Does the God's hover + drone + stars land?
 11. The triumph: did losing to a machine that stands over you make you
     want the rematch?
-12. The ending: gold ring, motes, the long resolve — worth four fights?
+12. The ending: gold ring, motes, the long resolve — worth five fights?
 
 **The teaching system, named.** Everything the player must know is
 shown in the world, none of it in text: ghost markers float where the
