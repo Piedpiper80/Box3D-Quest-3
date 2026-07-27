@@ -269,6 +269,10 @@ async function runPage(file, frames, poseAt, extraStore) {
     perFrame.push(drawLog.slice(before));
     const mm = el("report").textContent.match(/match: (\w+)/);
     if (mm && matchSeq[matchSeq.length - 1] !== mm[1]) matchSeq.push(mm[1]);
+    if (process.env.DBGF && f % 150 === 0) {
+      const cl = el("report").textContent.match(/crawl: [^\n]*/);
+      if (cl) console.log("  f" + f, cl[0]);
+    }
   }
 
   return { drawLog, perFrame, errors, matchSeq,
@@ -529,17 +533,23 @@ function poseArenaCrawl(f) {
   // Phase A: take the beating with hands wide and DOWN, no grip — the hull
   // stays near the spawn (a gripping stroke mid-fight anchors the moment a
   // knock dips a fist to the floor, and hauls the standing machine away).
-  if (f < 2400) return mk(vec(-0.55, 0.80, -0.05), vec(0.55, 0.80, -0.05));
+  if (f < 1450) return mk(vec(-0.55, 0.80, -0.05), vec(0.55, 0.80, -0.05));
   // Phase B: arms high and wide, no grip — frees them from under the hull.
-  if (f < 2520) return mk(vec(-0.6, 1.5, -0.05), vec(0.6, 1.5, -0.05));
+  // (The jab-led machine finishes the beating in half the old time, so
+  // every phase sits earlier than it used to.)
+  if (f < 1570) return mk(vec(-0.6, 1.5, -0.05), vec(0.6, 1.5, -0.05));
   // Phase C: a dogleg. The foe stands 0.55 m off the direct line and any
   // fist that grazes it provokes a beating, so haul +z away from it first,
   // then +x along the clear lane to the pad. Plant far in the direction of
   // travel, pull through to the other side; the hull follows the anchors.
   const PULL = 24, SWING = 24, CYCLE = PULL + SWING;
-  const C1_END = 2520 + 6 * CYCLE;
+  const C1_END = 1570 + 3 * CYCLE;
+  const C2_END = C1_END + 4 * CYCLE;
+  // The crisp-grip arms haul ~0.7 m a cycle, so the route is short and then
+  // it STOPS — hands neutral, the hull coasts the last stretch to the pad.
+  if (f >= C2_END) return mk(vec(-0.24, 1.15, -0.30), vec(0.24, 1.15, -0.30));
   if (f < C1_END) {
-    const c1 = (f - 2520) % CYCLE;
+    const c1 = (f - 1570) % CYCLE;
     if (c1 < PULL) {
       const t = c1 / PULL, z = 0.45 - 0.60 * t;
       return mk(vec(-0.24, 1.06, z), vec(0.24, 1.06, z), true);

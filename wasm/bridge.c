@@ -529,7 +529,7 @@ static float s_mJointHertz = 4.0f;
 // A real actuator has a torque, not a frequency. Holding stiffness fixed and
 // solving k = I*w^2 for each joint's own inertia gives a heavy limb a lower
 // natural frequency for free — which is exactly what being heavy means.
-static float s_mActStiffness = 8000.0f;
+static float s_mActStiffness = 18000.0f;
 // The elbow's spring pushes back on the upper arm, so the shoulder has to be
 // the stiffer of the two or the pair settles on a compromise pose that is
 // neither of their targets.
@@ -574,9 +574,9 @@ static int s_mHandActive[MECH_ARMS] = {0, 0};
 // cannot hold it, so it staggers. It is not a cheat to keep the torso upright,
 // it is the legs having finite strength.
 static b3Vec3 s_mTorsoTarget;
-static float s_mTorsoK = 6000.0f;
-static float s_mTorsoC = 900.0f;
-static float s_mTorsoMaxF = 9000.0f;
+static float s_mTorsoK = 11000.0f;
+static float s_mTorsoC = 1350.0f;
+static float s_mTorsoMaxF = 14000.0f;
 
 static float s_mUpperLen, s_mForeLen, s_mToolHalf;
 
@@ -851,8 +851,12 @@ void w_mech_hand(int i, float x, float y, float z, int active,
 // Loose enough that the arm is dragged rather than commanded, damped enough
 // that it does not flail. Beyond this, feel is not something measurement here
 // can settle — it needs a person in the headset.
-static float s_mPullK = 2000.0f;
-static float s_mPullMax = 3000.0f;
+// Playtest verdict: the old 2000/3000 read as mush, not mass. Weight is
+// sold at impact now (flinch, knockback, hit-stop), not by input lag —
+// the K stays FIXED across arm masses so weight still grades, but the
+// baseline is crisp enough that a punch goes where you threw it.
+static float s_mPullK = 5200.0f;
+static float s_mPullMax = 7800.0f;
 
 // Damping is given as a ratio, not a coefficient.
 //
@@ -1698,7 +1702,7 @@ typedef struct
 static const VoxMaterial VOX_MATS[] = {
     { 400.0f, 4.0f, 0.0f, 1.0f },
     { 1600.0f, 9.0f, 1.0f, 2.0f },
-    { 7800.0f, 26.0f, 2.0f, 4.0f },
+    { 7800.0f, 32.0f, 2.0f, 4.0f },
 };
 #define VOX_MAT_COUNT 3
 
@@ -2643,6 +2647,18 @@ static void eAimArm(int i, b3Vec3 worldTarget, float hertz)
     b3SphericalJoint_SetSpringHertz(s_eShoulder[i], hertz);
 }
 
+// The boxing guard: each fist held up and forward of its own shoulder,
+// covering the face line. This is the silhouette that says FIGHTER, and
+// it is also why punching through to the core takes an opening.
+static void eAimGuard(int arm, b3Pos tp, b3Vec3 pHat, b3Vec3 lat)
+{
+    const float side = arm ? 1.0f : -1.0f;
+    b3Vec3 g = { (float)tp.x + pHat.x * 0.26f + lat.x * side * 0.15f,
+                 (float)tp.y + 0.30f,
+                 (float)tp.z + pHat.z * 0.26f + lat.z * side * 0.15f };
+    eAimArm(arm, g, 3.0f);
+}
+
 // Once per frame, before w_step. dt at 72 Hz.
 WASM_EXPORT("w_enemy_update")
 void w_enemy_update(float px, float py, float pz, float dt)
@@ -2675,6 +2691,15 @@ void w_enemy_update(float px, float py, float pz, float dt)
                 gx += (toP.z / dist) * weave;
                 gz += (-toP.x / dist) * weave;
             }
+        }
+        else if (s_eState == E_APPROACH && dist > 1e-3f)
+        {
+            // In range, waiting to strike: it boxes in place — a lateral
+            // sway, so the dwell reads as rhythm instead of statue.
+            s_eStrafePhase += dt * s_eTempo * 2.6f;
+            const float sway = __builtin_sinf(s_eStrafePhase) * 0.15f;
+            gx += (toP.z / dist) * sway;
+            gz += (-toP.x / dist) * sway;
         }
         // A hoverer breathes vertically — a slow bob, so floating reads as
         // floating and not as being bolted to an invisible pole.
@@ -2752,35 +2777,34 @@ void w_enemy_update(float px, float py, float pz, float dt)
     {
         case E_APPROACH:
         {
-            eAimArm(0, guard, 2.5f);
-            eAimArm(1, guard, 2.5f);
+            b3Vec3 lat = { pHat.z, 0.0f, -pHat.x };
+            eAimGuard(0, tp, pHat, lat);
+            eAimGuard(1, tp, pHat, lat);
             const float reach = ENEMY_RANGE + (s_eScale - 1.0f) * 0.35f;
             const float d2 = toP.x*toP.x + toP.z*toP.z;
             if (d2 < (reach + 0.15f) * (reach + 0.15f) && s_eTimer > 0.8f)
             {
                 s_eState = E_WINDUP; s_eTimer = 0.0f;
                 s_eSwingArm = 1 - s_eSwingArm;
-                // Two lines of attack, mixed unpredictably but
-                // deterministically (Knuth hash bits — low bits ran eight
-                // identical swings in a row, which is a pattern, not a mix).
-                // The mix is the machine's personality, derived from traits
-                // it already has: a hoverer angles in with sweeps, a slow
-                // heavyweight lives on the overhead crush, everyone else
-                // keeps the sweep the rarer line.
+                // Three lines of attack, mixed by the machine's own traits
+                // (deterministic Knuth hash — low bits repeat in runs). The
+                // JAB is the boxing bread-and-butter: fast, straight,
+                // short-telegraphed. A hoverer leads with sweeps, a slow
+                // heavyweight with the overhead crush, everyone else jabs.
                 s_eSwingCount++;
-                const int sweepIn8 = s_eHover ? 4 : (s_eTempo < 0.9f ? 2 : 3);
-                s_eSwingStyle =
-                    (int)(((s_eSwingCount * 2654435761u) >> 7) & 7u) < sweepIn8;
+                const unsigned h8 = (s_eSwingCount * 2654435761u >> 7) & 7u;
+                if (s_eHover)             s_eSwingStyle = h8 < 4 ? 1 : (h8 < 6 ? 2 : 0);
+                else if (s_eTempo < 0.9f) s_eSwingStyle = h8 < 4 ? 0 : (h8 < 6 ? 2 : 1);
+                else                      s_eSwingStyle = h8 < 4 ? 2 : (h8 < 6 ? 0 : 1);
             }
             break;
         }
         case E_WINDUP:
         {
             // The telegraph IS the tell: overhead draws high behind the
-            // shoulder, the sweep draws wide to the side. Both sit well
-            // inside the cone — the wide draw is lateral+up mixed, not pure
-            // lateral, because the cone edge is where the first club spent
-            // its life chattering.
+            // shoulder, the sweep draws wide to the side, the jab pulls
+            // straight back to the shoulder — short and sharp, like the
+            // punch it becomes. All sit well inside the cone.
             b3Vec3 lat = { pHat.z, 0.0f, -pHat.x };
             const float side = s_eSwingArm ? -1.0f : 1.0f;
             b3Vec3 up;
@@ -2790,16 +2814,24 @@ void w_enemy_update(float px, float py, float pz, float dt)
                 up.y = (float)tp.y + 0.80f;
                 up.z = (float)tp.z - pHat.z * 0.35f;
             }
-            else
+            else if (s_eSwingStyle == 1)
             {
                 up.x = (float)tp.x + lat.x * side * 0.45f - pHat.x * 0.15f;
                 up.y = (float)tp.y + 0.55f;
                 up.z = (float)tp.z + lat.z * side * 0.45f - pHat.z * 0.15f;
             }
-            eAimArm(s_eSwingArm, up, 5.0f);
-            eAimArm(1 - s_eSwingArm, guard, 2.5f);
-            // The sweep is the harder hit to answer, so it telegraphs longer.
-            if (s_eTimer > (s_eSwingStyle ? 0.62f : 0.45f))
+            else
+            {
+                up.x = (float)tp.x - pHat.x * 0.18f + lat.x * side * 0.16f;
+                up.y = (float)tp.y + 0.32f;
+                up.z = (float)tp.z - pHat.z * 0.18f + lat.z * side * 0.16f;
+            }
+            eAimArm(s_eSwingArm, up, s_eSwingStyle == 2 ? 8.0f : 5.0f);
+            eAimGuard(1 - s_eSwingArm, tp, pHat, lat);
+            // The sweep is the harder hit to answer, so it telegraphs
+            // longest; the jab barely telegraphs at all — that is its point.
+            if (s_eTimer > (s_eSwingStyle == 1 ? 0.62f
+                          : s_eSwingStyle == 2 ? 0.22f : 0.45f))
             { s_eState = E_SWING; s_eTimer = 0.0f; }
             break;
         }
@@ -2808,15 +2840,18 @@ void w_enemy_update(float px, float py, float pz, float dt)
             // Driven THROUGH the chest, not at it: the target sits past the
             // player so the club's equilibrium is inside them and contact is
             // guaranteed rather than grazed. The sweep crosses to the far
-            // side of the body on the way through.
+            // side of the body; the jab goes straight and fast and ends
+            // sooner.
             b3Vec3 lat = { pHat.z, 0.0f, -pHat.x };
             const float side = s_eSwingArm ? -1.0f : 1.0f;
-            const float across = s_eSwingStyle ? -side * 0.30f : 0.0f;
-            b3Vec3 through = { px + pHat.x * 0.45f + lat.x * across,
+            const float across = s_eSwingStyle == 1 ? -side * 0.30f : 0.0f;
+            const float depth = s_eSwingStyle == 2 ? 0.30f : 0.45f;
+            b3Vec3 through = { px + pHat.x * depth + lat.x * across,
                                py - 0.05f,
-                               pz + pHat.z * 0.45f + lat.z * across };
-            eAimArm(s_eSwingArm, through, 10.0f);
-            if (s_eTimer > 0.40f) { s_eState = E_RECOVER; s_eTimer = 0.0f; }
+                               pz + pHat.z * depth + lat.z * across };
+            eAimArm(s_eSwingArm, through, s_eSwingStyle == 2 ? 12.0f : 10.0f);
+            if (s_eTimer > (s_eSwingStyle == 2 ? 0.28f : 0.40f))
+            { s_eState = E_RECOVER; s_eTimer = 0.0f; }
             break;
         }
         case E_TRIUMPH:
@@ -2930,11 +2965,28 @@ void w_enemy_post(void)
     // The stagger: a slab torn off the plate in one step reels the machine.
     // Nibbles (a cell or two) do not — only a real tear interrupts it. A
     // BIG tear is a knockdown: the stand cuts out and the machine drops,
-    // then hauls itself back to height as the reel ends.
+    // then hauls itself back to height as the reel ends. And EVERY landed
+    // hit flinches the body — a machine that soaks punches without moving
+    // reads as a wall, not an opponent. Weight lives at the impact.
     if (s_eGrid >= 0 && s_vxG[s_eGrid].used)
     {
         const float alive = (float)s_vxG[s_eGrid].alive;
         const float loss = s_ePrevPlateAlive >= 0.0f ? s_ePrevPlateAlive - alive : 0.0f;
+        if (loss >= 1.0f && s_eState != E_DEAD)
+        {
+            b3Pos ep2 = b3Body_GetPosition(s_eTorso);
+            b3Vec3 kb = { (float)ep2.x - s_ePlayerPos.x, 0.0f,
+                          (float)ep2.z - s_ePlayerPos.z };
+            const float kl = __builtin_sqrtf(kb.x*kb.x + kb.z*kb.z);
+            if (kl > 1e-3f)
+            {
+                const float mag = (loss > 6.0f ? 6.0f : loss) * 9.0f;
+                b3Vec3 imp = { kb.x / kl * mag, 2.5f, kb.z / kl * mag };
+                b3Body_ApplyLinearImpulseToCenter(s_eTorso, imp, true);
+                b3Vec3 spin = { kb.z / kl * mag * 0.35f, 0.0f, -kb.x / kl * mag * 0.35f };
+                b3Body_ApplyAngularImpulse(s_eTorso, spin, true);
+            }
+        }
         if (loss >= 4.0f
             && (s_eState == E_APPROACH || s_eState == E_WINDUP || s_eState == E_SWING))
         {

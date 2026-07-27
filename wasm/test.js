@@ -366,7 +366,11 @@ const wasi = new WASI({ version: "preview1" });
   check("four heaves drag the machine over a metre", hMed.dist > 1.0, `${hMed.dist.toFixed(2)} m`);
   check("it stays flat while dragging", hMed.tilt < 15, `tilt ${hMed.tilt.toFixed(0)} deg`);
   const hLight = heave(350, 4), hHeavy = heave(2800, 4);
-  check("a heavy machine is much harder to drag", hLight.dist > hHeavy.dist * 2,
+  // The crisp-punch grip (playtest verdict: lag reads as mush, not mass)
+  // hauls heavy machines better too, so the drag gradient compressed from
+  // ~5x to ~1.8x. Weight still grades — the fixed-K spring guarantees it —
+  // but the steepness moved to where it belongs: the punches.
+  check("a heavy machine is still harder to drag", hLight.dist > hHeavy.dist * 1.4,
         `light ${hLight.dist.toFixed(2)} m, heavy ${hHeavy.dist.toFixed(2)} m`);
 
   // Squeezing in mid-air grabs nothing.
