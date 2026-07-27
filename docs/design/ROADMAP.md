@@ -541,6 +541,13 @@ depth, honestly labelled.
 Known gaps, named: the beaten enemy freezes while you crawl (read it as the
 victor watching); travel is a rumble and a name, not a place; the pad
 recovery trigger is machine-verified but has not been felt in a headset.
+And one path no harness reaches: the ENDING transition itself needs four
+page-side wins, and the scripted pilot cannot beat the God — it mirrors
+the tested WON→TRAVEL branch line for line, the seeded-boot check proves
+the chapter-4/lap display, and the flat preview has shown every state
+around it, but the exact moment of the fourth win firing ENDING is
+reviewed code, not exercised code. The first human to beat the campaign
+executes it for the first time — which is, at least, thematic.
 
 **The polish round that followed found the biggest one by thinking like a
 headset:** every number the page prints — heat, your own plate, the
