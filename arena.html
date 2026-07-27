@@ -32,7 +32,7 @@
 <body>
 <div class="wrap">
   <h1>CORE BREAKER</h1>
-  <p class="sub">Five fights. Another machine wants your core. Strip its armour, smash what's underneath — before it does the same to you.</p>
+  <p class="sub">Five fights. Another machine wants your core. Strip its armour, smash what's underneath — before it does the same to you. <span id="buildTag"></span></p>
 
   <div class="card">
     <button id="enter" disabled>Checking headset…</button>
@@ -687,7 +687,15 @@
     fd_close: function(){return 0;}, fd_fdstat_get: function(){return 0;}, fd_seek: function(){return 0;}
   };
 
-  fetch("box3d.wasm")
+  // BUILD is bumped on every engine deploy. It version-tags the wasm fetch so
+  // a cached page can never run a mismatched engine (the Quest browser and
+  // the Pages CDN both cache hard — a playtest once got the old game and,
+  // fairly, could not tell), and it is printed on the card so which build
+  // loaded is never a guess.
+  var BUILD = 9;
+  var bTag = document.getElementById("buildTag");
+  if (bTag) bTag.textContent = "(build " + BUILD + ")";
+  fetch("box3d.wasm?v=" + BUILD)
     .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.arrayBuffer(); })
     .then(function (b) { return WebAssembly.instantiate(b, { wasi_snapshot_preview1: wasi }); })
     .then(function (res) {
@@ -724,10 +732,13 @@
     // head height seen, or the arm-span rule of thumb before that) the
     // ladder lands on the body: the Dancer at your chin, the Warden eye
     // to eye, the Juggernaut overhead, the God floating above all of it.
-    var eyeEst = Math.min(2.1, Math.max(1.35,
+    // The floor of the estimate errs TALL — a machine slightly too big is
+    // drama, one too small is a toy. Guarded: a stale cached engine
+    // without the export degrades to the old stature, never a fault loop.
+    var eyeEst = Math.min(2.1, Math.max(1.55,
         Math.max(eyeYMax, (armSpan || 1.75) - 0.12)));
     var visorY = eyeEst * (0.35 + 0.65 * ch2.scale) + (ch2.hover ? 0.12 : 0);
-    E.w_enemy_stature(visorY - 0.34 * ch2.scale);
+    if (E.w_enemy_stature) E.w_enemy_stature(visorY - 0.34 * ch2.scale);
     // Pillars: cover, scenery, wreckage-in-waiting. Each chapter lays its
     // own ground — scattered heaps, the mill square, foundry aisles, and
     // the High Dark strips the cover entirely: you, the God, the stars.
@@ -1461,7 +1472,7 @@
             secondWind = true;
             match = "COLLAPSED"; padTimer = 10; lastCount = 11;
             E.w_mech_legs(0);
-            E.w_enemy_corner(1);
+            if (E.w_enemy_corner) E.w_enemy_corner(1);
             boom(); shake = 0.2;
           } else {
             // No third chance. The machine dies the way the enemy's does:
@@ -1551,12 +1562,12 @@
             E.w_mech_legs(1);
             E.w_vox_heal(playerGrid);
             E.w_player_repair();
-            E.w_enemy_corner(0);
+            if (E.w_enemy_corner) E.w_enemy_corner(0);
             match = "FIGHT";
             sting(true);
           } else if (padTimer <= 0) {
             match = "LOST"; endTimer = 0; sting(false);
-            E.w_enemy_corner(0);
+            if (E.w_enemy_corner) E.w_enemy_corner(0);
             E.w_enemy_triumph();
           }
         }
@@ -1787,6 +1798,7 @@
       var pg3 = E.w_vox_grid_stats(playerGrid) >>> 2, pf3 = new Float32Array(E.memory.buffer);
       var pAlive2 = pf3[pg3], pTot2 = pf3[pg3 + 2];
       var chNow = CAMPAIGN[Math.min(chapter, CAMPAIGN.length - 1)];
+      lines.push("build " + BUILD + " — if this number is old, force-refresh the page");
       lines.push("chapter " + (Math.min(chapter, CAMPAIGN.length - 1) + 1) + " of " +
                  CAMPAIGN.length + ": " + chNow.name + " — " + chNow.place +
                  (lap ? "   (lap " + (lap + 1) + " — they remember you)" : ""));
