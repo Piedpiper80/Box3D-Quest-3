@@ -1386,6 +1386,10 @@
       // plate as cells die, gone in a third of a second. Its death burst
       // showers them, for free, from the same delta.
       if (prevEPlate !== null && ePlateAlive < prevEPlate && sparks.length < 36) {
+        // Your landed hit kicks back through the controller — short and
+        // sharp, scaled by how many cells just died under the fist.
+        for (var lh = 0; lh < srcs.length; lh++)
+          haptic(srcs[lh], Math.min(0.7, 0.3 + (prevEPlate - ePlateAlive) * 0.12), 45);
         var burst = Math.min(6, 2 + (prevEPlate - ePlateAlive) * 2);
         for (var sI = 0; sI < burst; sI++) {
           sparks.push({ x: ef[ep] + (Math.random()-0.5)*0.2, y: ef[ep+1] + 0.05,
