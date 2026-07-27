@@ -481,7 +481,7 @@
   var sparks = [], prevEPlate = null, scrapeT = 0;
   var motes = [], moteT = 0, prevPlateFrac = null;
   var provoked = false;              // hit the frozen victor and it wakes
-  var prevEnemyPos = null, eStride = 0;
+  var prevEnemyPos = null, eStride = 0, lastStepN = 0;
   var whooshT = 0, prevArmSpd = 0;
   var hitStop = 0;
   // Overheat: swing hard and long and the actuators cook. Heavier arms heat
@@ -1185,11 +1185,13 @@
         }
         var chS = CAMPAIGN[Math.min(chapter, CAMPAIGN.length - 1)];
         if (eState === 1 && !chS.hover) {
-          eStepT -= frameDt;
-          if (eStepT <= 0) {
+          // a step sounds when a drawn foot PLANTS — the stride phase
+          // crossing each half-turn — so the sound is the walk you see
+          var stepNow = Math.floor(eStride / Math.PI);
+          if (stepNow !== lastStepN) {
+            lastStepN = stepNow;
             var dS = Math.hypot(ef[ep] - (hp.x + O.x), ef[ep+2] - (hp.z + O.z));
             thud(Math.max(0, 1.5 - dS * 0.35));
-            eStepT = 0.54 / chS.tempo;
           }
         }
       }
@@ -1208,6 +1210,7 @@
       window.__lastTool = [fH[msH+21], fH[msH+22], fH[msH+23]];
       if (AC && humGain) {
         var target = Math.min(0.06, armSpd * 0.012);
+        if (hitStop > 0) target *= 0.25;   // the freeze is quiet too
         humGain.gain.value += (target - humGain.gain.value) * 0.2;
         humFilt.frequency.value = 120 + Math.min(900, armSpd * 260) + heat * 500;
       }
