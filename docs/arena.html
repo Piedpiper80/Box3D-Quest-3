@@ -421,7 +421,7 @@
       story: "It does not stand on the earth. The old gods never did.",
       mat: 2, scale: 1.35, core: 430, hover: 1, tempo: 1.25, pillarMat: 2,
       skyC: [0.05,0.055,0.095], skyH: 2.3, skyN: 5, floorC: [0.095,0.11,0.155],
-      hullC: [0.20,0.14,0.26] },
+      hullC: [0.20,0.14,0.26], stars: 1 },
   ];
   var chapter = 0;
   var unlockedLevel = 1;             // arm weights unlock as the campaign goes
@@ -1274,6 +1274,20 @@
             items.push({ m: trs([kx, floorY + kh * 2 + 0.25, kz], [0,0,0,1],
                                 [0.22, 0.22, 0.22]),
                          c: [0.95 * eGlow, 0.38 * eGlow, 0.10 * eGlow], mat: 5 });
+          }
+        }
+        // The High Dark has a sky: a fixed scatter of stars, faintly
+        // twinkling, so the last fight happens under something.
+        if (chD.stars) {
+          for (var stI = 0; stI < 26; stI++) {
+            var sh1 = Math.sin(stI * 12.9898) * 43758.5453; sh1 -= Math.floor(sh1);
+            var sh2 = Math.sin(stI * 78.2330) * 12543.2100; sh2 -= Math.floor(sh2);
+            var sh3 = Math.sin(stI * 39.4250) * 26437.8700; sh3 -= Math.floor(sh3);
+            var sAng = sh1 * Math.PI * 2, sRad = 10 + sh2 * 8, sHgt = 5 + sh3 * 7;
+            var tw = 0.5 + 0.5 * Math.sin(lastT * 0.001 + stI * 3.7);
+            items.push({ m: trs([hpBase.x + Math.cos(sAng) * sRad, floorY + sHgt,
+                                 hpBase.z + Math.sin(sAng) * sRad], [0,0,0,1], 0.05),
+                         c: [0.60*tw + 0.15, 0.65*tw + 0.15, 0.85*tw + 0.18], mat: 5 });
           }
         }
       }
