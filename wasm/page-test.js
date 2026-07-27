@@ -214,7 +214,9 @@ async function runPage(file, frames, poseAt, extraStore) {
         ok: true,
         status: 200,
         arrayBuffer: async () => {
-          const b = readFileSync(path.join(DOCS, url));
+          // Serve like the CDN does: the query string is a cache-buster
+          // (box3d.wasm?v=N), not part of the file's name.
+          const b = readFileSync(path.join(DOCS, url.split("?")[0]));
           return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
         },
       }),
