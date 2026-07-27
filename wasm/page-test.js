@@ -544,7 +544,7 @@ function poseArenaCrawl(f) {
   // travel, pull through to the other side; the hull follows the anchors.
   const PULL = 24, SWING = 24, CYCLE = PULL + SWING;
   const C1_END = 1570 + 3 * CYCLE;
-  const C2_END = C1_END + 4 * CYCLE;
+  const C2_END = C1_END + 5 * CYCLE;
   // The crisp-grip arms haul ~0.7 m a cycle, so the route is short and then
   // it STOPS — hands neutral, the hull coasts the last stretch to the pad.
   if (f >= C2_END) return mk(vec(-0.24, 1.15, -0.30), vec(0.24, 1.15, -0.30));

@@ -2671,6 +2671,11 @@ void w_enemy_update(float px, float py, float pz, float dt)
     b3Vec3 tv = b3Body_GetLinearVelocity(s_eTorso);
     const float mass = b3Body_GetMass(s_eTorso);
 
+    // dt == 0 is the POSE-ONLY call: the page uses it during READY so the
+    // machine waits in its guard instead of with dead hanging arms — first
+    // impressions — without walking, swinging, or advancing any timer.
+
+    // (skipped in the pose-only call)
     // Legs: hold height, close to fighting range, stop there. On the way in
     // it strafes — a slow weave across the line of approach, so the walk-up
     // reads as circling a fight rather than a train on a rail.
@@ -2679,7 +2684,7 @@ void w_enemy_update(float px, float py, float pz, float dt)
         const float dist = __builtin_sqrtf(toP.x*toP.x + toP.z*toP.z);
         float gx = (float)tp.x, gz = (float)tp.z;
         const float wantRange = ENEMY_RANGE + (s_eScale - 1.0f) * 0.35f;
-        if (dist > wantRange)
+        if (dist > wantRange && dt > 0.0f)
         {
             const float step = dist - wantRange;
             gx += toP.x / dist * step;
@@ -2692,7 +2697,7 @@ void w_enemy_update(float px, float py, float pz, float dt)
                 gz += (-toP.x / dist) * weave;
             }
         }
-        else if (s_eState == E_APPROACH && dist > 1e-3f)
+        else if (s_eState == E_APPROACH && dist > 1e-3f && dt > 0.0f)
         {
             // In range, waiting to strike: it boxes in place — a lateral
             // sway, so the dwell reads as rhythm instead of statue.
