@@ -551,7 +551,7 @@ const wasi = new WASI({ version: "preview1" });
   E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 1600, 4, 3, 1.5707, SHOULDER_HALF);
   const pPlate = E.w_player_plate(1);   // stone, matched with the enemy
   const ePlate = E.w_enemy_create(0, -3.0, 1);
-  const est = () => { const p = E.w_enemy_state() >>> 2; return mem().slice(p, p + 26); };
+  const est = () => { const p = E.w_enemy_state() >>> 2; return mem().slice(p, p + 28); };
   const grid = (g) => { const p = E.w_vox_grid_stats(g) >>> 2; return mem().slice(p, p + 3); };
   const fstep = (hx, hz) => {
     E.w_mech_hand(0, -0.22, 1.15, -0.25, 1, 0, 0, 0, 1);
@@ -624,6 +624,45 @@ const wasi = new WASI({ version: "preview1" });
   check("the repair pad's heal refills a wrecked plate",
         hurt < 36 && grid(healG)[0] === 36,
         `was ${hurt}, now ${grid(healG)[0]}`);
+
+  // --- fight variety ---
+  // A slab torn off the plate reels the machine: recovery is the punish
+  // window, so the stagger must interrupt whatever it was doing.
+  E.w_reset(1, 0);
+  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
+  E.w_player_plate(1);
+  E.w_enemy_create(0, -3.0, 1);
+  const idleStep = () => {
+    E.w_mech_hand(0, -0.55, 0.85, -0.05, 1, 0, 0, 0, 1);
+    E.w_mech_hand(1, 0.55, 0.85, -0.05, 1, 0, 0, 0, 1);
+    E.w_mech_stand(0, CHEST, 0);
+    E.w_enemy_update(0, CHEST, 0, 1 / 72);
+    E.w_mech_apply(); E.w_step(1 / 72); E.w_vox_post(); E.w_enemy_post();
+  };
+  for (let s = 0; s < 200; s++) idleStep();
+  const preStagger = est();
+  E.w_vox_blast(preStagger[0], preStagger[1], preStagger[2] + 0.18, 300);
+  for (let s = 0; s < 5; s++) idleStep();
+  check("a slab torn off staggers it into recover",
+        preStagger[7] !== 4 && est()[7] === 4,
+        `was state ${preStagger[7]}, now ${est()[7]}`);
+
+  // Two lines of attack: over the top and around the side, mixed. Watch the
+  // style field across swing entries — a machine with one swing is a metronome.
+  E.w_reset(1, 0);
+  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
+  E.w_player_plate(1);
+  E.w_enemy_create(0, -1.2, 1);   // spawned already in range: it just swings
+  const styles = new Set();
+  let lastES = -1;
+  for (let s = 0; s < 2800; s++) {
+    idleStep();
+    const stE = est();
+    if (stE[7] === 3 && lastES !== 3) styles.add(stE[27]);
+    lastES = stE[7];
+  }
+  check("the swing varies its line", styles.size >= 2,
+        `styles seen: ${[...styles].join(", ") || "none"}`);
 
   console.log(`\n${pass} passed, ${fail} failed, ${gaps} known gaps`);
   process.exit(fail === 0 ? 0 : 1);

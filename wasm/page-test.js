@@ -534,7 +534,7 @@ function poseArenaCollapse(f) {
 
     // Second run: the losing path. Undefended, the fight should end in the
     // collapse -> pad timeout -> loss -> rematch chain, in that order.
-    const r2 = await runPage(page, 9000, poseArenaCollapse);
+    const r2 = await runPage(page, 10400, poseArenaCollapse);
     check("collapse run: no exception escaped", r2.errors.length === 0, r2.errors[0] || "");
     const seq = r2.matchSeq.join(">");
     const chain = ["READY", "FIGHT", "COLLAPSED", "LOST", "READY"];

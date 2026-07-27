@@ -2463,6 +2463,10 @@ static b3JointId s_eShoulder[2];
 static EnemyState s_eState = E_IDLE;
 static float s_eTimer = 0.0f;
 static int s_eSwingArm = 0;
+static int s_eSwingStyle = 0;             // 0 overhead, 1 lateral sweep
+static unsigned s_eSwingCount = 0;
+static float s_ePrevPlateAlive = -1.0f;   // for the stagger: slab loss in one step
+static float s_eBlockHit = 0.0f;          // club momentum landed on a player ARM
 static float s_eCoreHp = 0.0f;
 static float s_eCoreHpMax = 260.0f;
 static int s_eGrid = -1;                  // its armour plate
@@ -2581,6 +2585,10 @@ static int w_enemy_create_inner(float x, float z, int material)
     s_eState = E_APPROACH;
     s_eTimer = 0.0f;
     s_eSwingArm = 0;
+    s_eSwingStyle = 0;
+    s_eSwingCount = 0;
+    s_ePrevPlateAlive = -1.0f;
+    s_eBlockHit = 0.0f;
     s_eHitPlayerCore = 0.0f;
     s_eExists = 1;
     return s_eGrid;
@@ -2721,16 +2729,37 @@ void w_enemy_update(float px, float py, float pz, float dt)
             {
                 s_eState = E_WINDUP; s_eTimer = 0.0f;
                 s_eSwingArm = 1 - s_eSwingArm;
+                // Two lines of attack, mixed unpredictably but
+                // deterministically. Bit 7 of the Knuth hash: bit 3 turned
+                // out to run eight identical swings in a row, which is a
+                // pattern, not a mix.
+                s_eSwingCount++;
+                s_eSwingStyle = (int)((s_eSwingCount * 2654435761u) >> 7) & 1;
             }
             break;
         }
         case E_WINDUP:
         {
-            // The telegraph: drawn up and pulled back, ~55 degrees off the
-            // cone axis — clearly readable, comfortably inside the limit.
-            b3Vec3 up = { (float)tp.x - pHat.x * 0.35f,
-                          (float)tp.y + 0.80f,
-                          (float)tp.z - pHat.z * 0.35f };
+            // The telegraph IS the tell: overhead draws high behind the
+            // shoulder, the sweep draws wide to the side. Both sit well
+            // inside the cone — the wide draw is lateral+up mixed, not pure
+            // lateral, because the cone edge is where the first club spent
+            // its life chattering.
+            b3Vec3 lat = { pHat.z, 0.0f, -pHat.x };
+            const float side = s_eSwingArm ? -1.0f : 1.0f;
+            b3Vec3 up;
+            if (s_eSwingStyle == 0)
+            {
+                up.x = (float)tp.x - pHat.x * 0.35f;
+                up.y = (float)tp.y + 0.80f;
+                up.z = (float)tp.z - pHat.z * 0.35f;
+            }
+            else
+            {
+                up.x = (float)tp.x + lat.x * side * 0.45f - pHat.x * 0.15f;
+                up.y = (float)tp.y + 0.55f;
+                up.z = (float)tp.z + lat.z * side * 0.45f - pHat.z * 0.15f;
+            }
             eAimArm(s_eSwingArm, up, 5.0f);
             eAimArm(1 - s_eSwingArm, guard, 2.5f);
             if (s_eTimer > 0.45f) { s_eState = E_SWING; s_eTimer = 0.0f; }
@@ -2738,20 +2767,33 @@ void w_enemy_update(float px, float py, float pz, float dt)
         }
         case E_SWING:
         {
-            // Driven THROUGH the chest, not at it: the target sits 0.35 m past
-            // the player, so the club's equilibrium is inside them and contact
-            // is guaranteed rather than grazed.
-            b3Vec3 through = { px + pHat.x * 0.45f,
+            // Driven THROUGH the chest, not at it: the target sits past the
+            // player so the club's equilibrium is inside them and contact is
+            // guaranteed rather than grazed. The sweep crosses to the far
+            // side of the body on the way through.
+            b3Vec3 lat = { pHat.z, 0.0f, -pHat.x };
+            const float side = s_eSwingArm ? -1.0f : 1.0f;
+            const float across = s_eSwingStyle ? -side * 0.30f : 0.0f;
+            b3Vec3 through = { px + pHat.x * 0.45f + lat.x * across,
                                py - 0.05f,
-                               pz + pHat.z * 0.45f };
+                               pz + pHat.z * 0.45f + lat.z * across };
             eAimArm(s_eSwingArm, through, 10.0f);
             if (s_eTimer > 0.40f) { s_eState = E_RECOVER; s_eTimer = 0.0f; }
             break;
         }
         case E_RECOVER:
         {
-            eAimArm(0, guard, 2.0f);
-            eAimArm(1, guard, 2.0f);
+            // Reeling, arms dropped wide and low — NOT guarding. Guarding
+            // here parked the clubs across its own core and the machine
+            // became unkillable by accident; recovery is meant to be the
+            // window you punish, so the core stays open while it reels.
+            b3Vec3 lat = { pHat.z, 0.0f, -pHat.x };
+            b3Vec3 lo0 = { (float)tp.x - lat.x * 0.55f, (float)tp.y - 0.35f,
+                           (float)tp.z - lat.z * 0.55f };
+            b3Vec3 lo1 = { (float)tp.x + lat.x * 0.55f, (float)tp.y - 0.35f,
+                           (float)tp.z + lat.z * 0.55f };
+            eAimArm(0, lo0, 2.0f);
+            eAimArm(1, lo1, 2.0f);
             if (s_eTimer > 0.55f) { s_eState = E_APPROACH; s_eTimer = 0.4f; }
             break;
         }
@@ -2766,6 +2808,7 @@ void w_enemy_post(void)
     if (!s_eExists) return;
     s_eLastCoreHit = 0.0f;
     s_eLastPlayerHit = 0.0f;
+    s_eBlockHit = 0.0f;
     if (s_eState == E_DEAD) return;
 
     b3ContactEvents ev = b3World_GetContactEvents(s_world);
@@ -2810,7 +2853,39 @@ void w_enemy_post(void)
                     }
                 }
             }
+
+            // Enemy club onto a player ARM: a block. Costs the player
+            // nothing — it is the parry working, and the page makes it ring.
+            for (int arm = 0; arm < 2; arm++)
+            {
+                const int aC = B3_ID_EQUALS(a, s_eArm[arm]), bC = B3_ID_EQUALS(b, s_eArm[arm]);
+                if (!aC && !bC) continue;
+                b3BodyId other = aC ? b : a;
+                for (int pa = 0; pa < MECH_ARMS; pa++)
+                {
+                    if (B3_ID_EQUALS(other, s_mUpper[pa]) || B3_ID_EQUALS(other, s_mFore[pa])
+                        || B3_ID_EQUALS(other, s_mTool[pa]))
+                    {
+                        const float hit = h->approachSpeed * b3Body_GetMass(s_eArm[arm]);
+                        if (hit > s_eBlockHit) s_eBlockHit = hit;
+                    }
+                }
+            }
         }
+    }
+
+    // The stagger: a slab torn off the plate in one step reels the machine.
+    // Nibbles (a cell or two) do not — only a real tear interrupts it.
+    if (s_eGrid >= 0 && s_vxG[s_eGrid].used)
+    {
+        const float alive = (float)s_vxG[s_eGrid].alive;
+        if (s_ePrevPlateAlive >= 0.0f && s_ePrevPlateAlive - alive >= 4.0f
+            && (s_eState == E_APPROACH || s_eState == E_WINDUP || s_eState == E_SWING))
+        {
+            s_eState = E_RECOVER;
+            s_eTimer = -0.35f;      // reels longer than a routine recover
+        }
+        s_ePrevPlateAlive = alive;
     }
 
     if (s_eCoreHp <= 0.0f)
@@ -2839,7 +2914,8 @@ void w_enemy_post(void)
 }
 
 // [x,y,z,qx,qy,qz,qw, state, coreFrac, armL(7), armR(7), lastCoreHit,
-//  lastPlayerHit, playerCoreDamage] — everything the page draws and sounds.
+//  lastPlayerHit, playerCoreDamage, blockHit, swingStyle] — everything the
+//  page draws and sounds.
 // The repair pad wipes the hull damage the enemy has scored on the player.
 WASM_EXPORT("w_player_repair")
 void w_player_repair(void)
@@ -2857,7 +2933,7 @@ void w_enemy_damage_core(float amount)
 WASM_EXPORT("w_enemy_state")
 float* w_enemy_state(void)
 {
-    static float out[26];
+    static float out[28];
     if (!s_eExists) return out;
     b3Pos p = b3Body_GetPosition(s_eTorso);
     b3Quat q = b3Body_GetRotation(s_eTorso);
@@ -2876,6 +2952,8 @@ float* w_enemy_state(void)
     out[23] = s_eLastCoreHit;
     out[24] = s_eLastPlayerHit;
     out[25] = s_eHitPlayerCore;
+    out[26] = s_eBlockHit;
+    out[27] = (float)s_eSwingStyle;
     return out;
 }
 
