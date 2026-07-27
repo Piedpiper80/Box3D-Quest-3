@@ -32,6 +32,10 @@ The spike pages that built it are live too:
 [`index.html`](https://piedpiper80.github.io/Box3D-Quest-3/) (tumbling
 boxes).
 
+No headset handy? Add `?flat=1` to the arena URL for a flat in-browser
+preview with a scripted pilot, and `&ch=2` (0–3) to drop straight into a
+later chapter's arena.
+
 All of it is the **real Box3D engine compiled to WebAssembly** (~360 KB,
 scalar, single-threaded) — see [`wasm/`](wasm/) for the C bridge, build
 command, and the headless test harnesses that drive every page in CI.

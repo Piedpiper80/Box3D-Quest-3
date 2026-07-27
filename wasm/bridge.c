@@ -2470,6 +2470,7 @@ static float s_ePrevPlateAlive = -1.0f;   // for the stagger: slab loss in one s
 static float s_eBlockHit = 0.0f;          // club momentum landed on a player ARM
 static float s_eStrafePhase = 0.0f;       // the approach weave
 static float s_eHoverPhase = 0.0f;        // the God's vertical breath
+static float s_eDownTimer = 0.0f;         // knockdown: stand cut, then the rise
 static float s_eCoreHp = 0.0f;
 static float s_eCoreHpMax = 260.0f;
 static int s_eGrid = -1;                  // its armour plate
@@ -2592,6 +2593,9 @@ static int w_enemy_create_inner(float x, float z, int material)
     s_eSwingCount = 0;
     s_ePrevPlateAlive = -1.0f;
     s_eBlockHit = 0.0f;
+    s_eDownTimer = 0.0f;
+    s_eStrafePhase = 0.0f;
+    s_eHoverPhase = 0.0f;
     s_eHitPlayerCore = 0.0f;
     s_eExists = 1;
     return s_eGrid;
@@ -2681,6 +2685,13 @@ void w_enemy_update(float px, float py, float pz, float dt)
             standY += __builtin_sinf(s_eHoverPhase * 0.7f) * 0.07f;
         }
         float fy = mass * 9.81f + (standY - (float)tp.y) * 5200.0f - tv.y * 900.0f;
+        // Knocked down: the stand is out and the machine falls under its own
+        // weight, then the spring returns and it hauls itself back up.
+        if (s_eDownTimer > 0.0f)
+        {
+            s_eDownTimer -= dt;
+            fy = -tv.y * 250.0f;   // damping only: it drops, it does not bounce
+        }
         float fx = (gx - (float)tp.x) * 1400.0f - tv.x * 620.0f;
         float fz = (gz - (float)tp.z) * 1400.0f - tv.z * 620.0f;
         const float cap = 2600.0f;
@@ -2913,15 +2924,19 @@ void w_enemy_post(void)
     }
 
     // The stagger: a slab torn off the plate in one step reels the machine.
-    // Nibbles (a cell or two) do not — only a real tear interrupts it.
+    // Nibbles (a cell or two) do not — only a real tear interrupts it. A
+    // BIG tear is a knockdown: the stand cuts out and the machine drops,
+    // then hauls itself back to height as the reel ends.
     if (s_eGrid >= 0 && s_vxG[s_eGrid].used)
     {
         const float alive = (float)s_vxG[s_eGrid].alive;
-        if (s_ePrevPlateAlive >= 0.0f && s_ePrevPlateAlive - alive >= 4.0f
+        const float loss = s_ePrevPlateAlive >= 0.0f ? s_ePrevPlateAlive - alive : 0.0f;
+        if (loss >= 4.0f
             && (s_eState == E_APPROACH || s_eState == E_WINDUP || s_eState == E_SWING))
         {
             s_eState = E_RECOVER;
-            s_eTimer = -0.35f;      // reels longer than a routine recover
+            s_eTimer = loss >= 8.0f ? -1.1f : -0.35f;
+            if (loss >= 8.0f) s_eDownTimer = 0.9f;
         }
         s_ePrevPlateAlive = alive;
     }

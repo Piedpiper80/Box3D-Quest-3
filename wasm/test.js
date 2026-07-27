@@ -692,6 +692,23 @@ const wasi = new WASI({ version: "preview1" });
         tr[7] === 6 && tipY(9) > tr[1] + 0.35 && tipY(16) > tr[1] + 0.35,
         `state ${tr[7]}, tips at +${(tipY(9)-tr[1]).toFixed(2)} / +${(tipY(16)-tr[1]).toFixed(2)} vs torso`);
 
+  // A BIG tear is a knockdown: the stand cuts out, the machine drops under
+  // its own weight, and then it hauls itself back up to height.
+  E.w_reset(1, 0);
+  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
+  E.w_player_plate(1);
+  E.w_enemy_create(0, -3.0, 1);
+  for (let s = 0; s < 200; s++) idleStep();
+  const upY = est()[1];
+  const kd = est();
+  E.w_vox_blast(kd[0], kd[1], kd[2] + 0.18, 400);
+  let lowest = 10;
+  for (let s = 0; s < 110; s++) { idleStep(); lowest = Math.min(lowest, est()[1]); }
+  for (let s = 0; s < 260; s++) idleStep();
+  check("a big tear knocks it down and it stands back up",
+        lowest < upY - 0.20 && est()[1] > upY - 0.15,
+        `stood ${upY.toFixed(2)}, dropped to ${lowest.toFixed(2)}, back at ${est()[1].toFixed(2)}`);
+
   console.log(`\n${pass} passed, ${fail} failed, ${gaps} known gaps`);
   process.exit(fail === 0 ? 0 : 1);
 })().catch((e) => { console.error("HARNESS ERROR:", e); process.exit(2); });
