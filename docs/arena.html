@@ -1195,7 +1195,12 @@
       // The enemy is heard before it is felt: a servo catch as the club
       // draws up, air as it comes down, and its tread while it closes.
       if (prevEnemy !== null && stepped && AC) {
-        if (prevEnemy !== 2 && eState === 2) noiseBurst(0.09, 2200, 0.09);
+        if (prevEnemy !== 2 && eState === 2) {
+          var wSt = ef[ep+27] | 0;
+          if (wSt === 2) noiseBurst(0.05, 3400, 0.11);        // jab: a tick
+          else if (wSt === 1) noiseBurst(0.16, 1200, 0.12);   // sweep: a drag
+          else noiseBurst(0.10, 2000, 0.10);                  // overhead: a knock
+        }
         if (prevEnemy !== 3 && eState === 3) noiseBurst(0.24, 760, 0.20);
         // RECOVER entered from anything but its own swing is the stagger —
         // a slab just came off it. It groans like stressed metal.
@@ -1257,6 +1262,19 @@
         // A lost machine is dead: drives out, arms limp where they fell.
         // (COLLAPSED keeps them — the crawl IS the arms.)
         E.w_mech_joint_spring(match === "LOST" ? 0 : 18000 * KNOB_SPRING * derate, 1.0);
+        if (overheated && !wasOver) {
+          // vent: steam off both arms — the derate explains itself
+          for (var vA = 0; vA < 2; vA++) {
+            var vO = ms + (3 + vA*3)*7;
+            for (var vs2 = 0; vs2 < 5 && sparks.length < 36; vs2++) {
+              sparks.push({ x: fa[vO] + (Math.random()-0.5)*0.08,
+                            y: fa[vO+1] + 0.03, z: fa[vO+2] + (Math.random()-0.5)*0.08,
+                            vx: (Math.random()-0.5)*0.5, vy: 0.9 + Math.random()*0.6,
+                            vz: (Math.random()-0.5)*0.5, t: 0.55 + Math.random()*0.25,
+                            st: 1 });
+            }
+          }
+        }
         if (overheated && !wasOver && AC) {
           for (var wq2 = 0; wq2 < 3; wq2++) {
             (function (k2) {
@@ -1585,8 +1603,10 @@
         sp2.vy -= 9.8 * frameDt;
         sp2.x += sp2.vx * frameDt; sp2.y += sp2.vy * frameDt; sp2.z += sp2.vz * frameDt;
         var sg2 = Math.min(1, sp2.t / 0.18);
-        items.push({ m: trs([sp2.x, sp2.y, sp2.z], [0,0,0,1], 0.016),
-                     c: [Math.min(1, 1.0*sg2 + 0.2), 0.55*sg2, 0.12*sg2], mat: 5 });
+        items.push({ m: trs([sp2.x, sp2.y, sp2.z], [0,0,0,1], sp2.st ? 0.024 : 0.016),
+                     c: sp2.st ? [0.55*sg2 + 0.15, 0.57*sg2 + 0.15, 0.60*sg2 + 0.16]
+                               : [Math.min(1, 1.0*sg2 + 0.2), 0.55*sg2, 0.12*sg2],
+                     mat: sp2.st ? 0 : 5 });
       }
       for (var pI = 0; pI < 8; pI++) {
         var lit = (plateFrac > 0.06) ? (pI / 8 < plateFrac) : (pI / 8 < coreFrac);

@@ -696,6 +696,26 @@ const wasi = new WASI({ version: "preview1" });
         tr[7] === 6 && tipY(9) > tr[1] + 0.35 && tipY(16) > tr[1] + 0.35,
         `state ${tr[7]}, tips at +${(tipY(9)-tr[1]).toFixed(2)} / +${(tipY(16)-tr[1]).toFixed(2)} vs torso`);
 
+  // A solid parry interrupts the swing: catch the club on your arms and
+  // recovery — the punish window — starts that same step. Blocking earns
+  // the counter; that is the boxing contract.
+  E.w_reset(1, 0);
+  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 1600, 4, 3, 1.5707, SHOULDER_HALF);
+  E.w_player_plate(1);
+  E.w_enemy_create(0, -1.2, 1);
+  let parried = false, blockEvents = 0;
+  for (let s2 = 0; s2 < 2800 && !parried; s2++) {
+    E.w_mech_hand(0, -0.12, 1.22, -0.34, 1, 0, 0, 0, 1);
+    E.w_mech_hand(1, 0.12, 1.22, -0.34, 1, 0, 0, 0, 1);
+    E.w_mech_stand(0, CHEST, 0);
+    E.w_enemy_update(0, CHEST, 0, 1 / 72);
+    E.w_mech_apply(); E.w_step(1 / 72); E.w_vox_post(); E.w_enemy_post();
+    const stP = est();
+    if (stP[26] > 8) { blockEvents++; if (stP[7] === 4) parried = true; }
+  }
+  check("a solid parry interrupts the swing into recovery",
+        parried, `block events ${blockEvents}, interrupted ${parried}`);
+
   // A BIG tear is a knockdown: the stand cuts out, the machine drops under
   // its own weight, and then it hauls itself back up to height.
   E.w_reset(1, 0);

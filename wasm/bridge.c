@@ -2961,6 +2961,15 @@ void w_enemy_post(void)
                     {
                         const float hit = h->approachSpeed * b3Body_GetMass(s_eArm[arm]);
                         if (hit > s_eBlockHit) s_eBlockHit = hit;
+                        // A solid parry INTERRUPTS the swing: the club rang
+                        // on an arm, the strike is spent, recovery starts
+                        // now — and recovery is the punish window. Blocking
+                        // earns the counter; that is the boxing contract.
+                        if (hit > 8.0f && s_eState == E_SWING)
+                        {
+                            s_eState = E_RECOVER;
+                            s_eTimer = 0.0f;
+                        }
                     }
                 }
             }
