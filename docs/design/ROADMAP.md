@@ -605,6 +605,26 @@ this, and it can still be killed mid-pose, because a machine
 showboating over a live pilot has made a mistake. 68 engine checks and
 57 page checks stand behind all of it.
 
+**What only a headset can verify now** — the punch list for the next
+playtest, in the order the game presents them:
+
+1. The fists-up ghosts: did you understand the gesture without reading?
+2. The weave: does the walk-up feel like being hunted?
+3. The sweep: can you tell it from the overhead in time to answer it?
+4. The parry: does catching a club on your arm feel GOOD?
+5. The stagger and the knockdown: do you notice the window and use it?
+6. The kill-window notes: did the fight audibly change key?
+7. Heat: did the glowing arms warn you before the redline caught you?
+8. The collapse: teal patches → grip → haul → beacon — was the second
+   wind readable in the panic, and did standing back up feel earned?
+9. The travel: does the streaming skyline + road-thump read as going
+   somewhere? Is the half-amplitude rumble comfortable?
+10. Chapters 2–4: does each machine feel like a different OPPONENT, not
+    a bigger number? Does the God's hover + drone + stars land?
+11. The triumph: did losing to a machine that stands over you make you
+    want the rematch?
+12. The ending: gold ring, motes, the long resolve — worth four fights?
+
 **The teaching system, named.** Everything the player must know is
 shown in the world, none of it in text: ghost markers float where the
 fists go for every start/rematch gesture and brighten as the hold
