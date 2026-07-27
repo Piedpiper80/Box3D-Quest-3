@@ -701,7 +701,7 @@
   // the Pages CDN both cache hard — a playtest once got the old game and,
   // fairly, could not tell), and it is printed on the card so which build
   // loaded is never a guess.
-  var BUILD = 11;
+  var BUILD = 12;
   var bTag = document.getElementById("buildTag");
   if (bTag) bTag.textContent = "(build " + BUILD + ")";
   fetch("box3d.wasm?v=" + BUILD)
@@ -732,10 +732,9 @@
     var ch2 = CAMPAIGN[chapter];
     playerGrid = E.w_player_plate(1);   // stone plate; your edge is skill
     E.w_vox_hide(playerGrid, 1);        // simulated, damageable, NOT in your face
-    enemyGrid = E.w_enemy_create_ex(hx, hz - 3.2, ch2.mat, ch2.scale * EBULK,
-                                    ch2.core, ch2.hover,
-                                    ch2.tempo * (1 + lap * 0.15));
-    // Sized against the pilot, not against a constant. The engine default
+    // Sized against the pilot, not against a constant — and told BEFORE
+    // creation, because the legs are built to fill exactly the gap the
+    // stature leaves to the floor. The engine default
     // stands every torso around waist height — the playtest read that as
     // fighting something half your size. From your real eye line (best
     // head height seen, or the arm-span rule of thumb before that) the
@@ -757,6 +756,9 @@
         Math.max(eyeYMax, (armSpan || 1.75) - 0.12)));
     var visorY = eyeEst * (0.55 + 0.55 * ch2.scale) + (ch2.hover ? 0.15 : 0);
     if (E.w_enemy_stature) E.w_enemy_stature(visorY - 0.34 * ch2.scale * EBULK);
+    enemyGrid = E.w_enemy_create_ex(hx, hz - 3.2, ch2.mat, ch2.scale * EBULK,
+                                    ch2.core, ch2.hover,
+                                    ch2.tempo * (1 + lap * 0.15));
     // Pillars: cover, scenery, wreckage-in-waiting. Each chapter lays its
     // own ground — scattered heaps, the mill square, foundry aisles, and
     // the High Dark strips the cover entirely: you, the God, the stars.
@@ -1171,33 +1173,28 @@
                           [0.24*eS, 0.34*eS, 0.14*eS]),
                    c: eState === 5 ? [0.15,0.15,0.17]
                      : [hC[0] + 0.55*(1-coreFrac), hC[1], hC[2]] });
-      // Arms drawn as ARMS — upper, forearm, fist — not clubs. One physics
-      // body still drives each, but the segmented read is the difference
-      // between a robot boxer and a man with two logs. (Playtest verdict.)
+      // The body is REAL now — head, pelvis, two-segment arms with fists,
+      // legs — fourteen individually smashable vox parts riding physics
+      // bodies, drawn by the same run renderer as every wall and plate.
+      // What the page still owns: the telegraph. During windup and swing an
+      // ember rides the striking fist, so the warn colour survived the move
+      // from painted arms to real ones.
       var rotZ = function (q, d) {
         return [d * 2 * (q[0]*q[2] + q[3]*q[1]),
                 d * 2 * (q[1]*q[2] - q[3]*q[0]),
                 d * (1 - 2 * (q[0]*q[0] + q[1]*q[1]))];
       };
-      var armLen = 0.60 * eS;
-      for (var ai2 = 0; ai2 < 2; ai2++) {
-        var ao = ep + 9 + ai2*7;
-        var warn = (eState === 2 || eState === 3);
-        var aCol = warn ? [0.95, 0.35, 0.22]
-                 : [hC[0]*1.15 + 0.06, hC[1]*1.15 + 0.06, hC[2]*1.15 + 0.06];
-        var aq = [ef[ao+3], ef[ao+4], ef[ao+5], ef[ao+6]];
-        var seg = function (a01, b01, th, col, mat5) {
-          var mid = rotZ(aq, armLen * (a01 + b01) * 0.5);
-          items.push({ m: trs([ef[ao] + mid[0], ef[ao+1] + mid[1], ef[ao+2] + mid[2]],
-                              aq, [th, th, armLen * (b01 - a01) * 0.5]),
-                       c: col, mat: mat5 ? 5 : 0 });
-        };
-        seg(0.02, 0.44, 0.062 * eS, aCol, warn);
-        seg(0.48, 0.86, 0.054 * eS, aCol, warn);
-        var fw = rotZ(aq, armLen * 0.93);
-        items.push({ m: trs([ef[ao] + fw[0], ef[ao+1] + fw[1], ef[ao+2] + fw[2]],
-                            aq, 0.082 * eS),
-                     c: warn ? [1.0, 0.45, 0.25] : [0.20, 0.21, 0.25], mat: warn ? 5 : 0 });
+      if (eState === 2 || eState === 3) {
+        var swA = ef[ep+27] >= 0 ? 0 : 0;   // arm index not exported; mark BOTH fists
+        for (var ai2 = 0; ai2 < 2; ai2++) {
+          var ao = ep + 9 + ai2*7;
+          var aq = [ef[ao+3], ef[ao+4], ef[ao+5], ef[ao+6]];
+          var fw = rotZ(aq, 0.37 * eS);
+          var wp2 = 0.6 + 0.4 * Math.sin(lastT * 0.03);
+          items.push({ m: trs([ef[ao] + fw[0], ef[ao+1] + fw[1], ef[ao+2] + fw[2]],
+                              aq, 0.05 * eS),
+                       c: [1.0 * wp2, 0.42 * wp2, 0.20 * wp2], mat: 5 });
+        }
       }
 
       // The BODY under the body: pelvis and legs. The machine walks on a
@@ -1222,49 +1219,19 @@
                          c: [0.55 * jGlow, 0.70 * jGlow, 1.0 * jGlow], mat: 5 });
           }
         }
-      } else if (ef[ep+1] > 0.62 * eS) {
+      } else {
+        // The legs are physics parts now, drawn by the run renderer; what
+        // remains here is the stride CLOCK — its phase paces the footstep
+        // sounds to the machine's real ground speed.
         eStride += eSpd * frameDt * 3.2;
-        // The hull glides on a force; the BOB sells the walk. Drawn parts
-        // ride a stride-synced lift when it moves.
-        var eBob = eSpd > 0.15 ? Math.abs(Math.sin(eStride)) * 0.035 : 0;
-        items.push({ m: trs([ef[ep], ef[ep+1] - 0.42 * eS + eBob, ef[ep+2]],
-                            [ef[ep+3], ef[ep+4], ef[ep+5], ef[ep+6]],
-                            [0.17 * eS, 0.09 * eS, 0.12 * eS]), c: hC });
-        var dirX = eSpd > 0.15 ? eVelX / eSpd : 0;
-        var dirZ = eSpd > 0.15 ? eVelZ / eSpd : 0;
-        var face = rotZ([ef[ep+3], ef[ep+4], ef[ep+5], ef[ep+6]], 1);
-        for (var lI = -1; lI <= 1; lI += 2) {
-          var hipX = ef[ep] + lI * 0.11 * eS, hipZ = ef[ep+2];
-          var hipY = ef[ep+1] - 0.42 * eS;
-          var ph = eStride + (lI > 0 ? Math.PI : 0);
-          var step = eSpd > 0.15 ? Math.sin(ph) * 0.16 : 0;
-          var lift = eSpd > 0.15 ? Math.max(0, Math.cos(ph)) * 0.07 : 0;
-          var footX = hipX + dirX * step, footZ = hipZ + dirZ * step;
-          var footY = floorY + 0.045 * eS + lift;
-          // knee: pushed toward the machine's FACING so the bend reads
-          // forward even at a standstill — straight legs read as stilts
-          var kneeX = (hipX + footX) / 2 + face[0] * 0.10 * eS + dirX * 0.03;
-          var kneeY = (hipY + footY) / 2 + 0.05;
-          var kneeZ = (hipZ + footZ) / 2 + face[2] * 0.10 * eS + dirZ * 0.03;
-          var thL = Math.hypot(kneeX-hipX, kneeY-hipY, kneeZ-hipZ) / 2;
-          var shL = Math.hypot(footX-kneeX, footY-kneeY, footZ-kneeZ) / 2;
-          items.push({ m: trs([(hipX+kneeX)/2, (hipY+kneeY)/2, (hipZ+kneeZ)/2],
-                              [0,0,0,1], [0.055*eS, Math.max(0.05, thL), 0.055*eS]),
-                       c: [hC[0]*0.85, hC[1]*0.85, hC[2]*0.85] });
-          items.push({ m: trs([(kneeX+footX)/2, (kneeY+footY)/2, (kneeZ+footZ)/2],
-                              [0,0,0,1], [0.048*eS, Math.max(0.05, shL), 0.048*eS]),
-                       c: [hC[0]*0.85, hC[1]*0.85, hC[2]*0.85] });
-          items.push({ m: trs([footX, footY, footZ],
-                              [ef[ep+3], ef[ep+4], ef[ep+5], ef[ep+6]],
-                              [0.075*eS, 0.038*eS, 0.11*eS]),
-                       c: [0.16, 0.17, 0.20] });
-        }
       }
-      // Its face: an emissive visor slit that is also a telegraph — it burns
-      // brighter in the instant before a swing — and dies with the machine.
-      (function () {
+      // Its face: an emissive visor slit on the HEAD PART that is also a
+      // telegraph — it burns brighter in the instant before a swing, dies
+      // with the machine, and goes dark for good when the head is smashed
+      // off (the engine exports head-alive at [28]).
+      if (ef[ep+28] > 0.5) (function () {
         var q = [ef[ep+3], ef[ep+4], ef[ep+5], ef[ep+6]];
-        var vz = 0.15 * eS, vy = 0.20 * eS;
+        var vz = 0.13 * eS, vy = 0.46 * eS;
         var tx3 = 2*(q[1]*vz), ty3 = 2*(-q[0]*vz);
         var vx2 = ef[ep] + q[3]*tx3 + (q[1]*0 - q[2]*ty3);
         var vy2 = ef[ep+1] + vy + q[3]*ty3 + (q[2]*tx3 - q[0]*0);

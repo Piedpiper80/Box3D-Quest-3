@@ -644,6 +644,9 @@ const wasi = new WASI({ version: "preview1" });
     E.w_mech_apply(); E.w_step(1 / 72); E.w_vox_post(); E.w_enemy_post();
   };
   for (let s = 0; s < 200; s++) idleStep();
+  // With live parries the machine is often mid-recover; sample the tear
+  // from a state the stagger can visibly interrupt.
+  for (let s = 0; s < 400 && est()[7] === 4; s++) idleStep();
   const preStagger = est();
   E.w_vox_blast(preStagger[0], preStagger[1], preStagger[2] + 0.18, 300);
   for (let s = 0; s < 5; s++) idleStep();
@@ -662,7 +665,10 @@ const wasi = new WASI({ version: "preview1" });
   for (let s = 0; s < 2800; s++) {
     idleStep();
     const stE = est();
-    if (stE[7] === 3 && lastES !== 3) styles.add(stE[27]);
+    // Styles are read at WINDUP entry: with real blocking, a swing that
+    // meets a parked guard can be parried the same step it launches, so
+    // state 3 is not reliably observable — the telegraph is.
+    if (stE[7] === 2 && lastES !== 2) styles.add(stE[27]);
     lastES = stE[7];
   }
   check("the swing varies its line", styles.size >= 2,

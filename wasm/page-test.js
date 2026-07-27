@@ -281,8 +281,11 @@ async function runPage(file, frames, poseAt, extraStore) {
     }
     const em = rpt.match(/enemy: (\w+)/);
     if (em) curEnemy = em[1];
-    if (process.env.DBGR && f % 40 === 0)
-      console.log("  f" + f, (rpt.match(/match: [^\n]*/) || [""])[0]);
+    if (process.env.DBGR && f % 200 === 0)
+      console.log("  f" + f, (rpt.match(/match: \w+/) || [""])[0],
+                  (rpt.match(/its plate [^ ]+/) || [""])[0],
+                  (rpt.match(/its core \d+%/) || [""])[0],
+                  (rpt.match(/hull damage \d+/) || [""])[0]);
   }
 
   return { drawLog, perFrame, errors, matchSeq,
@@ -497,7 +500,9 @@ function poseArenaCollapse(f, m) {
   if (f < 40) return mk(vec(-0.24, 1.15, -0.30), vec(0.24, 1.15, -0.30));
   if (m === "READY" || m === "LOST")
     return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));  // start / rematch
-  return mk(vec(-0.55, 0.80, -0.05), vec(0.55, 0.80, -0.05));    // take it, stay down
+  // Hands at the sides, BEHIND the hull line: with blocks that absorb,
+  // wide parked arms were an accidental guard and "undefended" wasn't.
+  return mk(vec(-0.28, 0.80, 0.18), vec(0.28, 0.80, 0.18));      // take it, stay down
 }
 
 // The final fight, played to WIN: an aggressive metronome against the God,
@@ -506,16 +511,33 @@ function poseArenaCollapse(f, m) {
 // metronome while fighting (punches driven at the risen God's core height —
 // stature raised every machine), fists up for every gesture the flow wants,
 // including the rise if a knockdown interrupts the attempt.
+const winHands = { L: null, R: null };
 function poseArenaWin(f, m, e) {
   if (f < TPOSE_UNTIL) return pose(f);
-  const mk = (l, r) => ({
-    head: vec(0, HEAD_Y, 0),
-    controllers: [
-      { pos: l, q: quat(0, 0, 0, 1) },
-      { pos: r, q: quat(0, 0, 0, 1) },
-    ],
-    trigger: false,
-  });
+  // Hands move at HUMAN speed: the guard/drill switch used to teleport the
+  // targets, the arm springs flung the real arm bodies metres through the
+  // enemy, and the flight killed its leg parts from across the arena. A
+  // person's hands cannot do that; neither can the proof's.
+  const lerpTo = (cur, tgt) => {
+    if (!cur) return tgt;
+    const d = [tgt.x - cur.x, tgt.y - cur.y, tgt.z - cur.z];
+    const len = Math.hypot(d[0], d[1], d[2]), MAX = 0.07;
+    if (len <= MAX) return tgt;
+    return vec(cur.x + d[0] / len * MAX, cur.y + d[1] / len * MAX,
+               cur.z + d[2] / len * MAX);
+  };
+  const mk = (l, r) => {
+    winHands.L = lerpTo(winHands.L, l);
+    winHands.R = lerpTo(winHands.R, r);
+    return {
+      head: vec(0, HEAD_Y, 0),
+      controllers: [
+        { pos: winHands.L, q: quat(0, 0, 0, 1) },
+        { pos: winHands.R, q: quat(0, 0, 0, 1) },
+      ],
+      trigger: false,
+    };
+  };
   if (f < 40) return mk(vec(-0.24, 1.15, -0.30), vec(0.24, 1.15, -0.30));
   if (m === "FIGHT") {
     // The boxing contract, played correctly: when the God draws up, BOTH
@@ -527,15 +549,9 @@ function poseArenaWin(f, m, e) {
     if (e === "WINDUP" || e === "SWING")
       return mk(vec(-0.22, 1.52, -0.38), vec(0.22, 1.52, -0.38));
     const c = f % 24, out = c < 10 ? c / 10 : Math.max(0, 1 - (c - 10) / 14);
-    const lean = vec(0, HEAD_Y, -0.26);
-    return {
-      head: lean,
-      controllers: [
-        { pos: vec(-0.06, 1.35, -0.56), q: quat(0, 0, 0, 1) },
-        { pos: vec(0.10, 1.60, -0.44 - 0.55 * out), q: quat(0, 0, 0, 1) },
-      ],
-      trigger: false,
-    };
+    const drill = mk(vec(-0.06, 1.35, -0.56), vec(0.10, 1.60, -0.44 - 0.55 * out));
+    drill.head = vec(0, HEAD_Y, -0.26);   // lean into the punches
+    return drill;
   }
   return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));  // every gesture
 }
@@ -557,7 +573,7 @@ function poseArenaRise(f, m) {
   if (f < 40) return mk(vec(-0.24, 1.15, -0.30), vec(0.24, 1.15, -0.30));
   if (m === "READY" || m === "COLLAPSED")
     return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));  // start / RISE
-  return mk(vec(-0.55, 0.80, -0.05), vec(0.55, 0.80, -0.05));    // take the beating
+  return mk(vec(-0.28, 0.80, 0.18), vec(0.28, 0.80, 0.18));      // take the beating
 }
 
 (async () => {

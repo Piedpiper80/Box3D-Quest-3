@@ -1683,7 +1683,11 @@ float* w_mech_lengths(void)
 // plate — no per-object tuning, just the table.
 // ---------------------------------------------------------------------------
 
-#define VOX_GRIDS 8
+// 24: pillars (up to 6) + two chest plates + the enemy's FOURTEEN body-part
+// grids — head, pelvis, and per side upper arm, forearm, fist, upper leg,
+// lower leg, foot. Per-part damage IS the vox system: each part is a small
+// grid, so hits, hp, debris, hurt-tinting and the renderer all come free.
+#define VOX_GRIDS 24
 #define VOX_MAX 4096
 #define VOX_ROWS_MAX 512
 #define VOX_RUNS_PER_ROW 16
@@ -1723,6 +1727,10 @@ typedef struct
     int alive;
     int killed;
     int hidden;                    // simulated but not handed to the renderer
+    int armOnly;                   // only player-arm impacts damage it (body
+                                   // parts must not break on walls or floors)
+    float partDens;                // >0 overrides material density: limb parts
+                                   // must be liftable by their own joints
 } VoxGrid;
 static VoxGrid s_vxG[VOX_GRIDS];
 static int s_vxLastHits = 0;
@@ -1808,6 +1816,27 @@ static b3Vec3 vxCellLocal(const VoxGrid* g, int x, int y, int z)
     return v;
 }
 
+// Squared distance from a world point to the grid's box, in body-local
+// space — how the router decides WHICH grid on a body an impact belongs to.
+static float vxLocalDist2(const VoxGrid* g, float wx, float wy, float wz)
+{
+    const b3Transform t = vxPose(g);
+    b3Vec3 w = { wx - t.p.x, wy - t.p.y, wz - t.p.z };
+    const b3Vec3 lp = b3InvRotateVector(t.q, w);
+    float d2 = 0.0f;
+    const float lo[3] = { g->local.x, g->local.y, g->local.z };
+    const float p[3] = { lp.x, lp.y, lp.z };
+    for (int a = 0; a < 3; a++)
+    {
+        const float hi = lo[a] + g->n[a] * g->size;
+        float d = 0.0f;
+        if (p[a] < lo[a]) d = lo[a] - p[a];
+        else if (p[a] > hi) d = p[a] - hi;
+        d2 += d * d;
+    }
+    return d2;
+}
+
 static int vxIdx(const VoxGrid* g, int x, int y, int z)
 {
     return x + g->n[0] * (y + g->n[1] * z);
@@ -1832,6 +1861,7 @@ static void vxMeshRow(VoxGrid* g, int y, int z)
     b3ShapeDef sd = b3DefaultShapeDef();
     sd.baseMaterial.friction = 0.7f;
     sd.enableHitEvents = true;
+    if (g->partDens > 0.0f) sd.density = g->partDens;
     if (g->category)
     {
         // Armour belongs to a team: its own machine's fists and clubs pass
@@ -1889,6 +1919,8 @@ static int vxBuild(b3BodyId body, b3Vec3 local, int nx, int ny, int nz,
     g->anchorAxis = anchorAxis;
     g->category = category;
     g->hidden = 0;
+    g->armOnly = 0;
+    g->partDens = 0.0f;
     g->local = local;
     g->body = body;
     g->alive = nx * ny * nz;
@@ -1905,6 +1937,23 @@ static int vxBuild(b3BodyId body, b3Vec3 local, int nx, int ny, int nz,
     // Anything slower than a shove should not chip a wall.
     b3World_SetHitEventThreshold(s_world, 1.0f);
     return (int)(g - s_vxG);
+}
+
+// A body PART is a grid with its own toughness AND its own density: hp
+// scales so a fist is not a wall; density drops to something a shoulder
+// spring can actually lift (a steel-density fist cell weighed 83 kg and
+// every arm hung dead); and only a player arm can break it.
+static void vxMakePart(int grid, float hpMul)
+{
+    if (grid < 0 || grid >= VOX_GRIDS || !s_vxG[grid].used) return;
+    VoxGrid* g = &s_vxG[grid];
+    const int total = g->n[0] * g->n[1] * g->n[2];
+    for (int i = 0; i < total; i++) g->hp[i] *= hpMul;
+    g->armOnly = 1;
+    g->partDens = 220.0f;
+    for (int z = 0; z < g->n[2]; z++)
+        for (int y = 0; y < g->n[1]; y++)
+            vxMeshRow(g, y, z);        // remesh so the new density takes
 }
 
 // A wall: a grid standing on the ground on its own static body.
@@ -2172,15 +2221,51 @@ void w_vox_post(void)
         b3BodyId bodyA = b3Shape_GetBody(h->shapeIdA);
         b3BodyId bodyB = b3Shape_GetBody(h->shapeIdB);
 
+        // A body can carry SEVERAL grids now (the enemy torso wears its
+        // head, pelvis and legs). First-match routing sent a head hit into
+        // the chest plate — and vxDamageAt clamps into bounds, so it even
+        // "landed". Pick the grid whose box actually contains the impact,
+        // nearest wins, and skip part grids for anything but a player arm.
         VoxGrid* g = 0;
         b3BodyId other;
+        float bestD = 1e30f;
         for (int k = 0; k < VOX_GRIDS; k++)
         {
             if (!s_vxG[k].used) continue;
-            if (B3_ID_EQUALS(bodyA, s_vxG[k].body)) { g = &s_vxG[k]; other = bodyB; break; }
-            if (B3_ID_EQUALS(bodyB, s_vxG[k].body)) { g = &s_vxG[k]; other = bodyA; break; }
+            b3BodyId oth;
+            if (B3_ID_EQUALS(bodyA, s_vxG[k].body)) oth = bodyB;
+            else if (B3_ID_EQUALS(bodyB, s_vxG[k].body)) oth = bodyA;
+            else continue;
+            if (s_vxG[k].armOnly)
+            {
+                int fromArm = 0;
+                if (s_mExists)
+                    for (int a = 0; a < MECH_ARMS; a++)
+                        if (B3_ID_EQUALS(oth, s_mTool[a]) || B3_ID_EQUALS(oth, s_mFore[a])
+                            || B3_ID_EQUALS(oth, s_mUpper[a])) fromArm = 1;
+                if (!fromArm) continue;
+                // The STRIKER is the faster body, and a strike is FAST.
+                // Without both gates the machine was disarmed by its own
+                // offence (its swings landing on a resting guard broke its
+                // fists) and by the guard itself (the player's stiff arm
+                // springs yank back after every shove, and the yank read
+                // as a punch). Your deliberate punch breaks its parts;
+                // everything else is just two machines touching.
+                b3Vec3 vo = b3Body_GetLinearVelocity(oth);
+                b3Vec3 vg = b3Body_GetLinearVelocity(s_vxG[k].body);
+                const float so = vo.x*vo.x + vo.y*vo.y + vo.z*vo.z;
+                const float sg = vg.x*vg.x + vg.y*vg.y + vg.z*vg.z;
+                if (h->approachSpeed < 1.8f) continue;
+                if (so < sg * 1.3f + 0.25f) continue;
+            }
+            const float d2 = vxLocalDist2(&s_vxG[k], (float)h->point.x,
+                                          (float)h->point.y, (float)h->point.z);
+            if (d2 < bestD) { bestD = d2; g = &s_vxG[k]; other = oth; }
         }
         if (!g) continue;
+        // Beyond a cell and a half from the chosen grid's box, the impact
+        // belongs to a bare hull shape, not to any armour.
+        if (bestD > (1.5f * g->size) * (1.5f * g->size)) continue;
 
         float mass = b3Body_GetMass(other);
         if (mass <= 0.0f) continue;
@@ -2463,8 +2548,35 @@ typedef enum { E_IDLE = 0, E_APPROACH, E_WINDUP, E_SWING, E_RECOVER, E_DEAD,
                E_TRIUMPH } EnemyState;
 
 static b3BodyId s_eTorso;
-static b3BodyId s_eArm[2];
+static b3BodyId s_eArm[2];                // the FOREARM bodies — the striking limbs
+static b3BodyId s_eUpArm[2];              // upper arms, shoulder to elbow
 static b3JointId s_eShoulder[2];
+static b3JointId s_eElbow[2];
+
+// The fourteen smashable parts, each a one-cell vox grid. Order is load-
+// bearing: arms index as PART_L_* + side*3.
+enum {
+    PART_HEAD = 0, PART_PELVIS = 1,
+    PART_L_UPLEG = 2, PART_L_LOLEG = 3, PART_L_FOOT = 4,
+    PART_R_UPLEG = 5, PART_R_LOLEG = 6, PART_R_FOOT = 7,
+    PART_L_UPARM = 8, PART_L_FOREARM = 9, PART_L_FIST = 10,
+    PART_R_UPARM = 11, PART_R_FOREARM = 12, PART_R_FIST = 13,
+    PART_COUNT = 14
+};
+static int s_ePart[PART_COUNT];
+static float s_ePendStature = 0.0f;       // stature told before creation
+
+static int ePartDead(int p)
+{
+    const int g = s_ePart[p];
+    return g >= 0 && g < VOX_GRIDS && s_vxG[g].used && s_vxG[g].alive == 0;
+}
+// An arm fights only while all three of its parts hold.
+static int eArmDead(int side)
+{
+    return ePartDead(PART_L_UPARM + side * 3) || ePartDead(PART_L_FOREARM + side * 3)
+        || ePartDead(PART_L_FIST + side * 3);
+}
 static EnemyState s_eState = E_IDLE;
 static float s_eTimer = 0.0f;
 static int s_eSwingArm = 0;
@@ -2510,6 +2622,9 @@ int w_enemy_create_ex(float x, float z, int material, float scale,
     s_eHover = hover ? 1 : 0;
     s_eCoreHpMax = coreHp > 20.0f ? coreHp : 260.0f;
     s_eStandY = s_eHover ? 1.45f : 1.15f * (0.7f + 0.3f * s_eScale);
+    // A stature told before creation wins over the default — the legs are
+    // built to fill exactly the gap it leaves to the floor.
+    if (s_ePendStature > 0.0f) { s_eStandY = s_ePendStature; s_ePendStature = 0.0f; }
     return w_enemy_create_inner(x, z, material);
 }
 
@@ -2529,7 +2644,9 @@ int w_enemy_create(float x, float z, int material)
 WASM_EXPORT("w_enemy_stature")
 void w_enemy_stature(float standY)
 {
-    if (standY > 0.6f && standY < 3.0f) s_eStandY = standY;
+    if (standY <= 0.6f || standY >= 3.0f) return;
+    if (s_eExists) s_eStandY = standY;
+    else s_ePendStature = standY;    // applied by the next create
 }
 
 // The neutral corner. While the player's machine is down and counting, a
@@ -2553,6 +2670,7 @@ void w_enemy_corner(int on)
 
 static int w_enemy_create_inner(float x, float z, int material)
 {
+    for (int i = 0; i < PART_COUNT; i++) s_ePart[i] = -1;
     b3BodyDef td = b3DefaultBodyDef();
     td.type = b3_dynamicBody;
     td.position.x = x; td.position.y = ENEMY_STAND_Y; td.position.z = z;
@@ -2570,45 +2688,43 @@ static int w_enemy_create_inner(float x, float z, int material)
     b3BoxHull thull = b3MakeBoxHull(0.24f * sc, 0.34f * sc, 0.14f * sc);
     b3CreateHullShape(s_eTorso, &tsd, &thull.base);
 
-    // Club arms: single rigid limbs on spherical joints with spring drives.
-    // Not the player's two-bone rig — an opponent reads through its swings,
-    // not its elbows, and clubs keep the whole machine cheap.
+    // HUMANOID arms: two segments a side — upper arm from the shoulder,
+    // forearm carrying the fist — on spherical joints with spring drives.
+    // The clubs are gone; the playtest asked for a machine with parts, and
+    // every part here is a small vox grid you can individually smash.
+    // Both segments extend along their body's +z (the cone axes agree with
+    // the shapes — the hard-won lesson from the club era).
     for (int i = 0; i < 2; i++)
     {
         const float side = i == 0 ? -1.0f : 1.0f;
-        b3BodyDef ad = b3DefaultBodyDef();
-        ad.type = b3_dynamicBody;
-        ad.position.x = x + side * 0.32f * sc;
-        ad.position.y = ENEMY_STAND_Y + 0.10f * sc;
-        ad.position.z = z;
-        ad.angularDamping = 1.0f;
-        s_eArm[i] = b3CreateBody(s_world, &ad);
+        const float shX = side * 0.36f * sc, shY = 0.16f * sc;
 
-        b3ShapeDef asd = b3DefaultShapeDef();
-        asd.density = 1100.0f;
-        asd.baseMaterial.friction = 0.5f;
-        asd.enableHitEvents = true;
-        asd.filter.categoryBits = ENEMY_CATEGORY;
-        asd.filter.maskBits = ~ENEMY_CATEGORY;
-        b3BoxHull ahull = b3MakeBoxHull(0.07f * sc, 0.07f * sc, 0.30f * sc);
-        b3Transform aoff = b3Transform_identity;
-        // The club extends along its body's +z. The cone limit constrains the
-        // club's +z to stay near the torso's +z (the facing direction), so the
-        // shape must extend along +z or the limit and the shape fight: hung
-        // along -z, pointing the club at the player put its +z at 180 degrees
-        // from the cone axis — maximally outside — and the spring spent every
-        // frame pinned sideways against the limit. That was the 56 m/s of
-        // chatter and every swing whiffing half a metre short.
-        aoff.p.z = 0.30f * sc;
+        b3BodyDef ud = b3DefaultBodyDef();
+        ud.type = b3_dynamicBody;
+        ud.position.x = x + shX;
+        ud.position.y = ENEMY_STAND_Y + shY;
+        ud.position.z = z + 0.17f * sc;
+        ud.angularDamping = 1.2f;
+        s_eUpArm[i] = b3CreateBody(s_world, &ud);
+
+        b3ShapeDef usd = b3DefaultShapeDef();
+        usd.density = 900.0f;
+        usd.baseMaterial.friction = 0.5f;
+        usd.enableHitEvents = true;
+        usd.filter.categoryBits = ENEMY_CATEGORY;
+        usd.filter.maskBits = ~ENEMY_CATEGORY;
+        b3BoxHull uhull = b3MakeBoxHull(0.06f * sc, 0.06f * sc, 0.17f * sc);
+        b3Transform uoff = b3Transform_identity;
+        uoff.p.z = 0.17f * sc;
         b3Vec3 one = { 1.0f, 1.0f, 1.0f };
-        b3CreateTransformedHullShape(s_eArm[i], &asd, &ahull.base, aoff, one);
+        b3CreateTransformedHullShape(s_eUpArm[i], &usd, &uhull.base, uoff, one);
 
         b3SphericalJointDef sj = b3DefaultSphericalJointDef();
         sj.base.bodyIdA = s_eTorso;
-        sj.base.bodyIdB = s_eArm[i];
+        sj.base.bodyIdB = s_eUpArm[i];
         sj.base.localFrameA = b3Transform_identity;
-        sj.base.localFrameA.p.x = side * 0.32f * sc;
-        sj.base.localFrameA.p.y = 0.10f * sc;
+        sj.base.localFrameA.p.x = shX;
+        sj.base.localFrameA.p.y = shY;
         sj.base.localFrameB = b3Transform_identity;
         sj.base.collideConnected = false;
         sj.enableConeLimit = true;
@@ -2617,6 +2733,96 @@ static int w_enemy_create_inner(float x, float z, int material)
         sj.hertz = 3.0f;
         sj.dampingRatio = 0.8f;
         s_eShoulder[i] = b3CreateSphericalJoint(s_world, &sj);
+
+        b3BodyDef fd = b3DefaultBodyDef();
+        fd.type = b3_dynamicBody;
+        fd.position.x = x + shX;
+        fd.position.y = ENEMY_STAND_Y + shY;
+        fd.position.z = z + 0.34f * sc + 0.15f * sc;
+        fd.angularDamping = 1.0f;
+        s_eArm[i] = b3CreateBody(s_world, &fd);   // s_eArm stays the STRIKING limb
+
+        b3ShapeDef fsd = b3DefaultShapeDef();
+        fsd.density = 1100.0f;
+        fsd.baseMaterial.friction = 0.5f;
+        fsd.enableHitEvents = true;
+        fsd.filter.categoryBits = ENEMY_CATEGORY;
+        fsd.filter.maskBits = ~ENEMY_CATEGORY;
+        b3BoxHull fhull = b3MakeBoxHull(0.055f * sc, 0.055f * sc, 0.15f * sc);
+        b3Transform foff = b3Transform_identity;
+        foff.p.z = 0.15f * sc;
+        b3CreateTransformedHullShape(s_eArm[i], &fsd, &fhull.base, foff, one);
+
+        b3SphericalJointDef ej = b3DefaultSphericalJointDef();
+        ej.base.bodyIdA = s_eUpArm[i];
+        ej.base.bodyIdB = s_eArm[i];
+        ej.base.localFrameA = b3Transform_identity;
+        ej.base.localFrameA.p.z = 0.34f * sc;
+        ej.base.localFrameB = b3Transform_identity;
+        ej.base.collideConnected = false;
+        ej.enableConeLimit = true;
+        ej.coneAngle = 1.5f;
+        ej.enableSpring = true;
+        ej.hertz = 4.0f;
+        ej.dampingRatio = 0.9f;
+        s_eElbow[i] = b3CreateSphericalJoint(s_world, &ej);
+
+        // The arm's parts: upper arm, forearm, fist — each its own grid.
+        b3Vec3 upLoc = { -0.10f * sc, -0.10f * sc, 0.07f * sc };
+        s_ePart[PART_L_UPARM + i * 3] =
+            vxBuild(s_eUpArm[i], upLoc, 1, 1, 1, 0.20f * sc, material, 2, ENEMY_CATEGORY);
+        vxMakePart(s_ePart[PART_L_UPARM + i * 3], 22.0f);
+        b3Vec3 foLoc = { -0.09f * sc, -0.09f * sc, 0.06f * sc };
+        s_ePart[PART_L_FOREARM + i * 3] =
+            vxBuild(s_eArm[i], foLoc, 1, 1, 1, 0.18f * sc, material, 2, ENEMY_CATEGORY);
+        vxMakePart(s_ePart[PART_L_FOREARM + i * 3], 18.0f);
+        b3Vec3 fiLoc = { -0.11f * sc, -0.11f * sc, 0.26f * sc };
+        s_ePart[PART_L_FIST + i * 3] =
+            vxBuild(s_eArm[i], fiLoc, 1, 1, 1, 0.22f * sc, material, 2, ENEMY_CATEGORY);
+        vxMakePart(s_ePart[PART_L_FIST + i * 3], 14.0f);
+    }
+
+    // Head and pelvis ride the torso; the legs hang below it, sized to
+    // exactly fill the gap the stature leaves to the floor — which is why
+    // stature must be told BEFORE creation (s_ePendStature).
+    {
+        b3Vec3 hdLoc = { -0.12f * sc, 0.34f * sc, -0.12f * sc };
+        s_ePart[PART_HEAD] =
+            vxBuild(s_eTorso, hdLoc, 1, 1, 1, 0.24f * sc, material, 2, ENEMY_CATEGORY);
+        vxMakePart(s_ePart[PART_HEAD], 26.0f);
+        b3Vec3 pvLoc = { -0.14f * sc, -0.62f * sc, -0.14f * sc };
+        s_ePart[PART_PELVIS] =
+            vxBuild(s_eTorso, pvLoc, 1, 1, 1, 0.28f * sc, material, 2, ENEMY_CATEGORY);
+        vxMakePart(s_ePart[PART_PELVIS], 34.0f);
+
+        // The legs FIT the gap, strictly: a 4 cm hover keeps the feet just
+        // off the floor (the stand spring carries the machine; the legs are
+        // targets and silhouette; 10 cm absorbs the torso sag the
+        // hanging arm chains add). No absolute minimum sizes — minimum
+        // clamps once built legs LONGER than the gap and the God dragged
+        // its buried feet at millimetres per second, stalled a metre out
+        // of range. Short-statured machines get stubby legs; buried feet
+        // get nobody anywhere.
+        float legLen = ENEMY_STAND_Y - 0.62f * sc - 0.10f;
+        if (legLen < 0.12f) legLen = 0.12f;
+        float uSz = legLen * 0.40f; if (uSz > 0.30f) uSz = 0.30f;
+        float lSz = uSz;
+        float fSz = legLen * 0.20f; if (fSz > 0.16f) fSz = 0.16f;
+        for (int L = 0; L < 2; L++)
+        {
+            const float lx = (L == 0 ? -1.0f : 1.0f) * 0.13f * sc;
+            const int base = L == 0 ? PART_L_UPLEG : PART_R_UPLEG;
+            float yTop = -0.62f * sc;
+            b3Vec3 ul = { lx - uSz * 0.5f, yTop - uSz, -uSz * 0.5f };
+            s_ePart[base] = vxBuild(s_eTorso, ul, 1, 1, 1, uSz, material, 2, ENEMY_CATEGORY);
+            vxMakePart(s_ePart[base], 26.0f);
+            b3Vec3 ll = { lx - lSz * 0.5f, yTop - uSz - lSz, -lSz * 0.5f };
+            s_ePart[base + 1] = vxBuild(s_eTorso, ll, 1, 1, 1, lSz, material, 2, ENEMY_CATEGORY);
+            vxMakePart(s_ePart[base + 1], 26.0f);
+            b3Vec3 fl = { lx - fSz * 0.5f, yTop - uSz - lSz - fSz, -fSz * 0.5f + 0.05f };
+            s_ePart[base + 2] = vxBuild(s_eTorso, fl, 1, 1, 1, fSz, material, 2, ENEMY_CATEGORY);
+            vxMakePart(s_ePart[base + 2], 20.0f);
+        }
     }
 
     // Its armour: a plate over the chest, facing the player side (+z).
@@ -2662,7 +2868,7 @@ static void eAimArm(int i, b3Vec3 worldTarget, float hertz)
     const float side = i == 0 ? -1.0f : 1.0f;
     // The joint anchors scale with the machine; the aim origin must match
     // or every swing on a scaled machine starts from a phantom shoulder.
-    b3Vec3 shoulderLocal = { side * 0.32f * s_eScale, 0.10f * s_eScale, 0.0f };
+    b3Vec3 shoulderLocal = { side * 0.36f * s_eScale, 0.16f * s_eScale, 0.0f };
     b3Vec3 sw = b3RotateVector(tt.q, shoulderLocal);
     sw.x += (float)tt.p.x; sw.y += (float)tt.p.y; sw.z += (float)tt.p.z;
 
@@ -2685,16 +2891,64 @@ static void eAimArm(int i, b3Vec3 worldTarget, float hertz)
     b3SphericalJoint_SetSpringHertz(s_eShoulder[i], hertz);
 }
 
+// The elbow: drive the forearm's rest rotation relative to the upper arm.
+// Negative bends lift the fist (the boxing curl); zero is a straight drive.
+static void eBend(int i, float bend, float hertz)
+{
+    b3Quat q = { { __builtin_sinf(bend * 0.5f), 0.0f, 0.0f }, __builtin_cosf(bend * 0.5f) };
+    b3SphericalJoint_SetTargetRotation(s_eElbow[i], q);
+    b3SphericalJoint_SetSpringHertz(s_eElbow[i], hertz);
+}
+
+// Tip the machine over. The legs are rigid props, so neither death nor a
+// knockdown can SINK it — it has to fall, and it falls away from the blow.
+// The one-shot impulse is not enough on its own: the shoulder cone limits
+// act as hard pendulum stabilizers and right the body again, so the axis
+// is remembered and a sustained topple torque leans on it for the whole
+// down window (applied in the update while s_eDownTimer runs).
+static b3Vec3 s_eKeelAxis = { 1.0f, 0.0f, 0.0f };
+static void eKeel(float rate)
+{
+    b3Pos tp2 = b3Body_GetPosition(s_eTorso);
+    b3Vec3 away = { (float)tp2.x - s_ePlayerPos.x, 0.0f, (float)tp2.z - s_ePlayerPos.z };
+    const float al = __builtin_sqrtf(away.x*away.x + away.z*away.z);
+    if (al < 1e-3f) { away.x = 0.0f; away.z = 1.0f; }
+    else { away.x /= al; away.z /= al; }
+    const float m = b3Body_GetMass(s_eTorso);
+    b3Vec3 axis = { -away.z, 0.0f, away.x };
+    s_eKeelAxis = axis;
+    b3Vec3 aimp = { axis.x * m * 0.5f * rate, 0.0f, axis.z * m * 0.5f * rate };
+    b3Body_SetAngularDamping(s_eTorso, 0.4f);
+    b3Body_ApplyAngularImpulse(s_eTorso, aimp, true);
+}
+
+// A dead arm hangs. The springs stay on, weak, aimed at the floor — limp
+// reads as broken, and a broken arm never swings again.
+static void eLimp(int i)
+{
+    b3WorldTransform tt = b3Body_GetTransform(s_eTorso);
+    const float side = i == 0 ? -1.0f : 1.0f;
+    b3Vec3 dLoc = { side * 0.40f * s_eScale, -1.0f, 0.0f };
+    b3Vec3 dw = b3RotateVector(tt.q, dLoc);
+    b3Vec3 tgt = { (float)tt.p.x + dw.x, (float)tt.p.y + dw.y, (float)tt.p.z + dw.z };
+    eAimArm(i, tgt, 0.8f);
+    eBend(i, -0.15f, 0.8f);
+}
+
 // The boxing guard: each fist held up and forward of its own shoulder,
 // covering the face line. This is the silhouette that says FIGHTER, and
 // it is also why punching through to the core takes an opening.
 static void eAimGuard(int arm, b3Pos tp, b3Vec3 pHat, b3Vec3 lat)
 {
     const float side = arm ? 1.0f : -1.0f;
-    b3Vec3 g = { (float)tp.x + pHat.x * 0.26f + lat.x * side * 0.15f,
-                 (float)tp.y + 0.30f,
-                 (float)tp.z + pHat.z * 0.26f + lat.z * side * 0.15f };
-    eAimArm(arm, g, 3.0f);
+    // Two-segment guard: the UPPER arm aims level-forward (the elbow line),
+    // and the forearm curls up from there to put the fist over the face —
+    // the boxer's silhouette, from the geometry instead of one aim point.
+    b3Vec3 g = { (float)tp.x + pHat.x * 0.30f + lat.x * side * 0.15f,
+                 (float)tp.y + 0.02f,
+                 (float)tp.z + pHat.z * 0.30f + lat.z * side * 0.15f };
+    eAimArm(arm, g, 12.0f);
+    eBend(arm, -0.85f, 22.0f);
 }
 
 // Once per frame, before w_step. dt at 72 Hz.
@@ -2760,17 +3014,37 @@ void w_enemy_update(float px, float py, float pz, float dt)
             s_eHoverPhase += dt;
             standY += __builtin_sinf(s_eHoverPhase * 0.7f) * 0.07f;
         }
-        float fy = mass * 9.81f + (standY - (float)tp.y) * 5200.0f - tv.y * 900.0f;
+        // The stand carries the WHOLE machine: the arm chains hang off the
+        // shoulders and their weight routes into the torso through the
+        // joints — compensating torso mass alone sagged the heavy builds
+        // 10 cm, right onto their own feet.
+        const float mAll = mass
+            + b3Body_GetMass(s_eUpArm[0]) + b3Body_GetMass(s_eUpArm[1])
+            + b3Body_GetMass(s_eArm[0]) + b3Body_GetMass(s_eArm[1]);
+        float fy = mAll * 9.81f + (standY - (float)tp.y) * 5200.0f - tv.y * 900.0f;
         // Knocked down: the stand is out and the machine falls under its own
         // weight, then the spring returns and it hauls itself back up.
         if (s_eDownTimer > 0.0f)
         {
             s_eDownTimer -= dt;
             fy = -tv.y * 250.0f;   // damping only: it drops, it does not bounce
+            // Reel over; steadiness comes back with the stand.
+            if (s_eDownTimer <= 0.0f) b3Body_SetAngularDamping(s_eTorso, 4.0f);
         }
-        float fx = (gx - (float)tp.x) * 1400.0f - tv.x * 620.0f;
-        float fz = (gz - (float)tp.z) * 1400.0f - tv.z * 620.0f;
-        const float cap = 2600.0f;
+        // Smashed legs are lost drive: every dead leg part slows the chase,
+        // a dead pelvis halves it — cripple the machine's wheels and it
+        // must fight where it stands.
+        float legSlow = ePartDead(PART_PELVIS) ? 0.55f : 1.0f;
+        {
+            int deadLegs = 0;
+            for (int lp2 = PART_L_UPLEG; lp2 <= PART_R_FOOT; lp2++)
+                if (ePartDead(lp2)) deadLegs++;
+            legSlow *= 1.0f - 0.11f * (float)deadLegs;
+            if (legSlow < 0.28f) legSlow = 0.28f;
+        }
+        float fx = ((gx - (float)tp.x) * 1400.0f - tv.x * 620.0f) * legSlow;
+        float fz = ((gz - (float)tp.z) * 1400.0f - tv.z * 620.0f) * legSlow;
+        const float cap = 2600.0f * legSlow;
         const float hsq = fx*fx + fz*fz;
         if (hsq > cap * cap) { const float k = cap / __builtin_sqrtf(hsq); fx *= k; fz *= k; }
         b3Vec3 f = { fx, fy, fz };
@@ -2778,6 +3052,10 @@ void w_enemy_update(float px, float py, float pz, float dt)
     }
 
     // Stay upright, and turn to face the player (so the armour faces the fight).
+    // Not while knocked down: the legs are rigid props now, so a downed
+    // machine cannot sink — it KEELS instead. The righting torque cuts out
+    // for the count and hauls it back upright when the reel ends.
+    if (s_eDownTimer <= 0.0f)
     {
         b3Quat q = b3Body_GetRotation(s_eTorso);
         b3Matrix3 m = b3MakeMatrixFromQuat(q);
@@ -2818,27 +3096,55 @@ void w_enemy_update(float px, float py, float pz, float dt)
     // edge — and the spring chattered against the limit at 55 m/s of tip speed
     // while the swing never got within half a metre of the player. Measured,
     // not guessed: the probe tracked the tip.
-    s_eTimer += dt * s_eTempo;
+    // A smashed head is smashed sensors: everything it decides comes slower.
+    s_eTimer += dt * s_eTempo * (ePartDead(PART_HEAD) ? 0.65f : 1.0f);
     if (s_eBlockCool > 0.0f) s_eBlockCool -= dt;
+    const int armD0 = eArmDead(0), armD1 = eArmDead(1);
     b3Vec3 toP = { px - (float)tp.x, py - (float)tp.y, pz - (float)tp.z };
     const float pl = __builtin_sqrtf(toP.x*toP.x + toP.y*toP.y + toP.z*toP.z);
     b3Vec3 pHat = { 1.0f, 0.0f, 0.0f };
     if (pl > 1e-3f) { pHat.x = toP.x / pl; pHat.y = toP.y / pl; pHat.z = toP.z / pl; }
     b3Vec3 guard = { px, py + 0.10f, pz };
-    switch (s_eState)
+    // Broken arms hang, always, whatever the state — and if the swinging
+    // arm is broken mid-strike, the strike is over.
+    if (armD0) eLimp(0);
+    if (armD1) eLimp(1);
+    if ((s_eState == E_WINDUP || s_eState == E_SWING) &&
+        (s_eSwingArm ? armD1 : armD0))
+    { s_eState = E_RECOVER; s_eTimer = 0.0f; }
+    // Knocked down, everything is limp: the state aims re-stiffen the arm
+    // springs every frame, and two stiff spring-anchored arms gyro-hold
+    // the torso so well the machine could not fall over. Floppy arms are
+    // what lets a knockdown BE a knockdown.
+    if (s_eDownTimer > 0.0f)
+    {
+        eLimp(0);
+        eLimp(1);
+        // The sustained topple: lean on the remembered keel axis until the
+        // count ends. The cone limits cannot out-arm-wrestle this.
+        b3Vec3 keelT = { s_eKeelAxis.x * mass * 10.0f, 0.0f,
+                         s_eKeelAxis.z * mass * 10.0f };
+        b3Body_ApplyTorque(s_eTorso, keelT, true);
+    }
+    else switch (s_eState)
     {
         case E_APPROACH:
         {
             b3Vec3 lat = { pHat.z, 0.0f, -pHat.x };
-            eAimGuard(0, tp, pHat, lat);
-            eAimGuard(1, tp, pHat, lat);
+            if (!armD0) eAimGuard(0, tp, pHat, lat);
+            if (!armD1) eAimGuard(1, tp, pHat, lat);
             const float reach = ENEMY_RANGE + (s_eScale - 1.0f) * 0.15f;
             const float d2 = toP.x*toP.x + toP.z*toP.z;
-            if (!s_eCorner &&
-                d2 < (reach + 0.15f) * (reach + 0.15f) && s_eTimer > 0.8f)
+            // The strike gate is WIDER than the walk's stopping distance:
+            // pressing against a guard (or debris, or a wall) can stall the
+            // approach a hand's width short, and a machine that stops there
+            // must still fight, not stand in punch range forever deciding.
+            if (!s_eCorner && !(armD0 && armD1) &&
+                d2 < (reach + 0.30f) * (reach + 0.30f) && s_eTimer > 0.8f)
             {
                 s_eState = E_WINDUP; s_eTimer = 0.0f;
                 s_eSwingArm = 1 - s_eSwingArm;
+                if (s_eSwingArm ? armD1 : armD0) s_eSwingArm = 1 - s_eSwingArm;
                 // Three lines of attack, mixed by the machine's own traits
                 // (deterministic Knuth hash — low bits repeat in runs). The
                 // JAB is the boxing bread-and-butter: fast, straight,
@@ -2880,7 +3186,9 @@ void w_enemy_update(float px, float py, float pz, float dt)
                 up.z = (float)tp.z - pHat.z * 0.18f + lat.z * side * 0.16f;
             }
             eAimArm(s_eSwingArm, up, s_eSwingStyle == 2 ? 8.0f : 5.0f);
-            eAimGuard(1 - s_eSwingArm, tp, pHat, lat);
+            eBend(s_eSwingArm, -0.6f, 8.0f);
+            if (!(s_eSwingArm ? armD0 : armD1))
+                eAimGuard(1 - s_eSwingArm, tp, pHat, lat);
             // The sweep is the harder hit to answer, so it telegraphs
             // longest; the jab barely telegraphs at all — that is its point.
             if (s_eTimer > (s_eSwingStyle == 1 ? 0.62f
@@ -2903,6 +3211,7 @@ void w_enemy_update(float px, float py, float pz, float dt)
                                py - 0.05f,
                                pz + pHat.z * depth + lat.z * across };
             eAimArm(s_eSwingArm, through, s_eSwingStyle == 2 ? 12.0f : 10.0f);
+            eBend(s_eSwingArm, 0.0f, 10.0f);   // the arm straightens into the drive
             if (s_eTimer > (s_eSwingStyle == 2 ? 0.28f : 0.40f))
             { s_eState = E_RECOVER; s_eTimer = 0.0f; }
             break;
@@ -2918,8 +3227,8 @@ void w_enemy_update(float px, float py, float pz, float dt)
                            (float)tp.z - lat.z * 0.35f };
             b3Vec3 hi1 = { (float)tp.x + lat.x * 0.35f, (float)tp.y + 0.95f,
                            (float)tp.z + lat.z * 0.35f };
-            eAimArm(0, hi0, 3.0f);
-            eAimArm(1, hi1, 3.0f);
+            if (!armD0) { eAimArm(0, hi0, 9.0f); eBend(0, -0.2f, 8.0f); }
+            if (!armD1) { eAimArm(1, hi1, 9.0f); eBend(1, -0.2f, 8.0f); }
             break;
         }
         case E_RECOVER:
@@ -2933,8 +3242,8 @@ void w_enemy_update(float px, float py, float pz, float dt)
                            (float)tp.z - lat.z * 0.55f };
             b3Vec3 lo1 = { (float)tp.x + lat.x * 0.55f, (float)tp.y - 0.35f,
                            (float)tp.z + lat.z * 0.55f };
-            eAimArm(0, lo0, 2.0f);
-            eAimArm(1, lo1, 2.0f);
+            if (!armD0) { eAimArm(0, lo0, 7.0f); eBend(0, -0.3f, 6.0f); }
+            if (!armD1) { eAimArm(1, lo1, 7.0f); eBend(1, -0.3f, 6.0f); }
             if (s_eTimer > 0.55f) { s_eState = E_APPROACH; s_eTimer = 0.4f; }
             break;
         }
@@ -2989,7 +3298,8 @@ void w_enemy_post(void)
                 b3BodyId other = aP ? b : a;
                 for (int arm = 0; arm < 2; arm++)
                 {
-                    if (B3_ID_EQUALS(other, s_eArm[arm]))
+                    if (B3_ID_EQUALS(other, s_eArm[arm]) ||
+                        B3_ID_EQUALS(other, s_eUpArm[arm]))
                     {
                         const float hit = h->approachSpeed * b3Body_GetMass(s_eArm[arm]);
                         stepCore += hit;
@@ -3011,16 +3321,21 @@ void w_enemy_post(void)
                         || B3_ID_EQUALS(other, s_mTool[pa]))
                     {
                         const float hit = h->approachSpeed * b3Body_GetMass(s_eArm[arm]);
-                        if (hit > s_eBlockHit) s_eBlockHit = hit;
-                        // Any real contact with a guarding arm INTERRUPTS
-                        // the swing (the playtest said blocking didn't
-                        // work — at the old threshold, most honest blocks
-                        // didn't count). The club's momentum dies with it:
-                        // the strike visibly stops on your arm, recovery
-                        // starts now, and recovery is the punish window.
-                        // Blocking earns the counter; that is the boxing
-                        // contract.
-                        if (hit > 3.0f && s_eState == E_SWING)
+                        // Approach speed, not momentum, decides what was a
+                        // BLOCK: momentum thresholds stop scaling the moment
+                        // the machines gain bulk, and a hair-trigger let the
+                        // player's resting arms cancel every swing by touch.
+                        // A strike arriving faster than ~2 m/s into a guard
+                        // is caught; a drifting graze is nothing.
+                        if (h->approachSpeed > 1.2f && hit > s_eBlockHit) s_eBlockHit = hit;
+                        // A caught swing INTERRUPTS (the playtest said
+                        // blocking didn't work — damage leaked through and
+                        // honest blocks didn't count). The club's momentum
+                        // dies where it rang: the strike visibly stops on
+                        // your arm, recovery starts now, and recovery is
+                        // the punish window. Blocking earns the counter;
+                        // that is the boxing contract.
+                        if (h->approachSpeed > 2.0f && s_eState == E_SWING)
                         {
                             s_eState = E_RECOVER;
                             s_eTimer = 0.0f;
@@ -3074,12 +3389,25 @@ void w_enemy_post(void)
                 b3Body_ApplyAngularImpulse(s_eTorso, spin, true);
             }
         }
-        if (loss >= 4.0f
+        // A machine with a smashed head staggers off half the tear it used
+        // to shrug off — broken gyros, broken poise.
+        const float stag = ePartDead(PART_HEAD) ? 2.0f : 4.0f;
+        const float down = ePartDead(PART_HEAD) ? 4.0f : 8.0f;
+        // A knockdown-sized tear floors it from ANY fighting state — a
+        // same-step parry used to flip it into RECOVER first and the
+        // state gate quietly ate the knockdown.
+        if (loss >= down && s_eState != E_TRIUMPH)
+        {
+            s_eState = E_RECOVER;
+            s_eTimer = -1.1f;
+            s_eDownTimer = 0.9f;
+            eKeel(3.4f);
+        }
+        else if (loss >= stag
             && (s_eState == E_APPROACH || s_eState == E_WINDUP || s_eState == E_SWING))
         {
             s_eState = E_RECOVER;
-            s_eTimer = loss >= 8.0f ? -1.1f : -0.35f;
-            if (loss >= 8.0f) s_eDownTimer = 0.9f;
+            s_eTimer = -0.35f;
         }
         s_ePrevPlateAlive = alive;
     }
@@ -3091,7 +3419,12 @@ void w_enemy_post(void)
         s_eState = E_DEAD;
         // Drives off: the arms go limp and the legs stop holding, so the
         // machine drops where it stands.
-        for (int a = 0; a < 2; a++) b3SphericalJoint_SetSpringHertz(s_eShoulder[a], 0.0f);
+        for (int a = 0; a < 2; a++)
+        {
+            b3SphericalJoint_SetSpringHertz(s_eShoulder[a], 0.0f);
+            b3SphericalJoint_SetSpringHertz(s_eElbow[a], 0.0f);
+        }
+        eKeel(3.4f);   // rigid legs cannot crumple; the dead machine falls
         if (s_eGrid >= 0 && s_vxG[s_eGrid].used)
         {
             VoxGrid* g = &s_vxG[s_eGrid];
@@ -3137,7 +3470,7 @@ void w_enemy_damage_core(float amount)
 WASM_EXPORT("w_enemy_state")
 float* w_enemy_state(void)
 {
-    static float out[28];
+    static float out[29];
     if (!s_eExists) return out;
     b3Pos p = b3Body_GetPosition(s_eTorso);
     b3Quat q = b3Body_GetRotation(s_eTorso);
@@ -3158,6 +3491,7 @@ float* w_enemy_state(void)
     out[25] = s_eHitPlayerCore;
     out[26] = s_eBlockHit;
     out[27] = (float)s_eSwingStyle;
+    out[28] = ePartDead(PART_HEAD) ? 0.0f : 1.0f;   // the visor needs a head
     return out;
 }
 
