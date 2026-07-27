@@ -605,6 +605,11 @@ this, and it can still be killed mid-pose, because a machine
 showboating over a live pilot has made a mistake. 68 engine checks and
 57 page checks stand behind all of it.
 
+**The second lap.** Finishing the campaign restarts it with unlocks
+intact and every machine 15% faster per lap (capped three deep) — "they
+remember you." The four-act structure holds; completion now opens a
+harder mirror of itself. This is Phase 6's replay ladder in first form.
+
 **What only a headset can verify now** — the punch list for the next
 playtest, in the order the game presents them:
 
