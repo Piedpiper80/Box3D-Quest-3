@@ -578,8 +578,13 @@ One Must Fall." Three passes landed the same day:
    sweeps, heavyweight leads overheads), and a pose-only brain call so
    it WAITS IN GUARD during READY instead of hanging dead-armed.
 
-All three campaign proofs re-choreographed and standing. The next
-verdict belongs to the same headset that forced this one.
+All three campaign proofs re-choreographed and standing. And the
+tuning wheel moved to where the hands are: **URL feel knobs**
+(`?grip=`, `?spring=`, 0.3–3× multipliers, named in the report when
+active) let the headset A/B the two numbers that matter in minutes,
+instead of round-tripping every guess through a rebuild. The next
+verdict belongs to the same headset that forced this one — ideally
+with the numbers that felt right attached.
 
 **The lap curve, measured.** NG+ tempo compounds on the God:
 kill/undefended-death times run 13.6 s/4.3 s at lap 1, 9.7/5.3 at ×1.15,
