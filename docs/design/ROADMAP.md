@@ -665,15 +665,16 @@ because the sweep rounds both the guard and the plate). The tunes kept
 the physics honest: the sweep telegraphs longer and comes three swings
 in eight, and the hull hardens with each unlocked weight class (130 +
 45/level) because a Juggernaut's club lands ~130 momentum in one clean
-hit and a one-hit collapse is a coin flip, not a fight. After tuning
-and the personality biases, measured against each chapter's real hull
-limit (single deterministic samples, not averages): undefended survival
-runs 19.9 s / 11.0 s / 21.3 s / 4.3 s across the ladder — teach, test,
-endure, survive. The overhead-heavy Juggernaut is survivable-but-long
-(its slow-crush fantasy: the plate takes what you can see coming); the
-sweep-heavy God punishes passivity hardest, which is the finale's job —
-with the second wind and the hardened hull as the player's answer, and
-heat still taxing heavy-arm offense on the other side of the ledger.
+hit and a one-hit collapse is a coin flip, not a fight. Post-feel-
+rebuild (crisp arms, jabs, hardened steel), the whole ladder runs at
+sprint pace — metronome kill times 4.7/3.6/2.1/4.1 s, undefended
+survival 23.9/8.1/4.0/2.1 s (single deterministic samples). The probe
+overstates sustained offense: it has no heat (which taxes heavy arms
+hard in the real game) and no human imprecision. The shape holds —
+gentle opener, the ladder tightening to the God — and the pacing now
+sits where the playtest verdict pointed: fight-speed trades, weight at
+the impact, with the second wind and the hardened hull as the player's
+answer. The next headset verdict tunes from here.
 
 **Each chapter lays its own ground.** Scattered heaps, the mill square,
 foundry aisles — and the High Dark strips the cover entirely, because
