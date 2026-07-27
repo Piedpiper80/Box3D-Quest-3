@@ -1166,6 +1166,22 @@
         }
       }
 
+      // Wherever a fists-up gesture is wanted, two ghost markers float where
+      // the fists need to go — the gesture taught without a word of text —
+      // and they brighten as the hold progresses, so holding visibly works.
+      var wantFists = match === "READY" ||
+        ((match === "WON" || match === "LOST") && endTimer > 2.0) ||
+        (match === "ENDING" && endTimer > 3.0);
+      if (wantFists) {
+        var gp2 = (0.40 + 0.30 * Math.sin(lastT * 0.006)) *
+                  (0.6 + 1.4 * Math.min(1, fistTimer / 0.9));
+        for (var gI = -1; gI <= 1; gI += 2) {
+          items.push({ m: trs([hp.x + O.x + gI * 0.22, hp.y + O.y + 0.24,
+                               hp.z + O.z - 0.12], [0,0,0,1], 0.032),
+                       c: [0.30 * gp2, 0.62 * gp2, 0.85 * gp2], mat: 5 });
+        }
+      }
+
       // The repair pad: always there, only urgent when you are crawling.
       var padUrgent = match === "COLLAPSED";
       items.push({ m: trs([padPos.x, floorY + 0.02, padPos.z], [0,0,0,1], [0.55, 0.02, 0.55]),
