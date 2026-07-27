@@ -239,8 +239,10 @@ async function runPage(file, frames, poseAt, extraStore) {
   // being guarded against, so it is caught here and reported, not thrown.
   const perFrame = [];
   const matchSeq = [];   // every distinct match-state the report passed through
+  let curMatch = "";     // last match-state seen — fed back to the script, so
+                         // poses can react to the game instead of to a clock
   for (let f = 0; f < frames; f++) {
-    const p = poseAt(f);
+    const p = poseAt(f, curMatch);
     poses.head = p.head;
     poses.controllers.forEach((c, i) => {
       c.pos = p.controllers[i].pos;
@@ -268,11 +270,12 @@ async function runPage(file, frames, poseAt, extraStore) {
     }
     perFrame.push(drawLog.slice(before));
     const mm = el("report").textContent.match(/match: (\w+)/);
-    if (mm && matchSeq[matchSeq.length - 1] !== mm[1]) matchSeq.push(mm[1]);
-    if (process.env.DBGF && f % 150 === 0) {
-      const cl = el("report").textContent.match(/crawl: [^\n]*/);
-      if (cl) console.log("  f" + f, cl[0]);
+    if (mm) {
+      curMatch = mm[1];
+      if (matchSeq[matchSeq.length - 1] !== mm[1]) matchSeq.push(mm[1]);
     }
+    if (process.env.DBGR && f % 40 === 0)
+      console.log("  f" + f, (el("report").textContent.match(/match: [^\n]*/) || [""])[0]);
   }
 
   return { drawLog, perFrame, errors, matchSeq,
@@ -469,12 +472,12 @@ function poseArena(f) {
   return mk(vec(-0.26, 1.12, -0.25), vec(0.06, 1.12, -0.22 - 0.48 * out));
 }
 
-// The arena's losing path: start the fight, then keep the hands wide and low
-// and let the enemy work. The hull limit trips, the legs cut out, the pad
-// timer runs dry, and the rematch gesture rebuilds the chapter. This is the
-// second-wind flow end to end, minus the crawl itself (the crawl mechanics
-// are drag.html's tests; here what matters is the states around them).
-function poseArenaCollapse(f) {
+// The arena's losing path, driven by the game's own state: start the fight,
+// take the beating undefended, stay down through the whole knockdown count
+// (fists low — never the rise gesture), and when the loss lands, raise the
+// fists for the rematch. State-aware, so no tuning of fight pacing can
+// silently desynchronise the script from the match again.
+function poseArenaCollapse(f, m) {
   if (f < TPOSE_UNTIL) return pose(f);
   const mk = (l, r) => ({
     head: vec(0, HEAD_Y, 0),
@@ -485,16 +488,18 @@ function poseArenaCollapse(f) {
     trigger: false,
   });
   if (f < 40) return mk(vec(-0.24, 1.15, -0.30), vec(0.24, 1.15, -0.30));
-  if (f < 130) return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));  // start it
-  if (f < 3600) return mk(vec(-0.55, 0.80, -0.05), vec(0.55, 0.80, -0.05)); // take it
-  return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));               // rematch
+  if (m === "READY" || m === "LOST")
+    return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));  // start / rematch
+  return mk(vec(-0.55, 0.80, -0.05), vec(0.55, 0.80, -0.05));    // take it, stay down
 }
 
 // The final fight, played to WIN: an aggressive metronome against the God,
 // used to prove the campaign is actually completable and that the fifth win
-// fires ENDING — the one transition nothing else reaches. High guard on the
-// left, fast punches on the right, driven at the hovering chest height.
-function poseArenaWin(f) {
+// fires ENDING — the one transition nothing else reaches. State-aware:
+// metronome while fighting (punches driven at the risen God's core height —
+// stature raised every machine), fists up for every gesture the flow wants,
+// including the rise if a knockdown interrupts the attempt.
+function poseArenaWin(f, m) {
   if (f < TPOSE_UNTIL) return pose(f);
   const mk = (l, r) => ({
     head: vec(0, HEAD_Y, 0),
@@ -505,66 +510,32 @@ function poseArenaWin(f) {
     trigger: false,
   });
   if (f < 40) return mk(vec(-0.24, 1.15, -0.30), vec(0.24, 1.15, -0.30));
-  if (f < 130) return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));  // start
-  if (f < 3400) {
+  if (m === "FIGHT") {
     const c = (f - 130) % 24, out = c < 10 ? c / 10 : Math.max(0, 1 - (c - 10) / 14);
-    return mk(vec(-0.06, 1.28, -0.34),                     // centre guard
-              vec(0.10, 1.42, -0.22 - 0.55 * out));        // punches at core height
+    return mk(vec(-0.06, 1.35, -0.34),                     // centre guard
+              vec(0.10, 1.60, -0.22 - 0.55 * out));        // punches at core height
   }
-  return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));  // claim the sky
+  return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));  // every gesture
 }
 
-// The second wind, end to end: get beaten down, then knuckle-haul the dead
-// machine sideways to the repair pad and stand back up healed. Strokes run
-// along +x because that is where the pad is; the enemy freezes while you
-// crawl, so the crawl itself is the whole problem.
-function poseArenaCrawl(f) {
+// The knockdown survived, end to end: take the beating undefended, go down,
+// and while the count bells strike raise both fists and HOLD — the machine
+// stands back up healed and the fight resumes. COLLAPSED followed by FIGHT
+// is the rise; nothing else produces that pair.
+function poseArenaRise(f, m) {
   if (f < TPOSE_UNTIL) return pose(f);
-  const mk = (l, r, grip) => ({
+  const mk = (l, r) => ({
     head: vec(0, HEAD_Y, 0),
     controllers: [
       { pos: l, q: quat(0, 0, 0, 1) },
       { pos: r, q: quat(0, 0, 0, 1) },
     ],
-    trigger: false, grip: !!grip,
+    trigger: false,
   });
   if (f < 40) return mk(vec(-0.24, 1.15, -0.30), vec(0.24, 1.15, -0.30));
-  if (f < 130) return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));  // start
-  // Phase A: take the beating with hands wide and DOWN, no grip — the hull
-  // stays near the spawn (a gripping stroke mid-fight anchors the moment a
-  // knock dips a fist to the floor, and hauls the standing machine away).
-  if (f < 1450) return mk(vec(-0.55, 0.80, -0.05), vec(0.55, 0.80, -0.05));
-  // Phase B: arms high and wide, no grip — frees them from under the hull.
-  // (The jab-led machine finishes the beating in half the old time, so
-  // every phase sits earlier than it used to.)
-  if (f < 1570) return mk(vec(-0.6, 1.5, -0.05), vec(0.6, 1.5, -0.05));
-  // Phase C: a dogleg. The foe stands 0.55 m off the direct line and any
-  // fist that grazes it provokes a beating, so haul +z away from it first,
-  // then +x along the clear lane to the pad. Plant far in the direction of
-  // travel, pull through to the other side; the hull follows the anchors.
-  const PULL = 24, SWING = 24, CYCLE = PULL + SWING;
-  const C1_END = 1570 + 3 * CYCLE;
-  const C2_END = C1_END + 5 * CYCLE;
-  // The crisp-grip arms haul ~0.7 m a cycle, so the route is short and then
-  // it STOPS — hands neutral, the hull coasts the last stretch to the pad.
-  if (f >= C2_END) return mk(vec(-0.24, 1.15, -0.30), vec(0.24, 1.15, -0.30));
-  if (f < C1_END) {
-    const c1 = (f - 1570) % CYCLE;
-    if (c1 < PULL) {
-      const t = c1 / PULL, z = 0.45 - 0.60 * t;
-      return mk(vec(-0.24, 1.06, z), vec(0.24, 1.06, z), true);
-    }
-    const t = (c1 - PULL) / SWING, y1 = 1.06 + 0.30 * Math.sin(t * Math.PI);
-    return mk(vec(-0.24, y1, -0.15 + 0.60 * t), vec(0.24, y1, -0.15 + 0.60 * t), false);
-  }
-  const c = (f - C1_END) % CYCLE;
-  if (c < PULL) {
-    const t = c / PULL, x = 0.50 - 0.70 * t;
-    return mk(vec(x - 0.48, 1.06, -0.12), vec(x, 1.06, -0.12), true);
-  }
-  const t = (c - PULL) / SWING, y = 1.06 + 0.30 * Math.sin(t * Math.PI);
-  const x = -0.20 + 0.70 * t;
-  return mk(vec(x - 0.48, y, -0.12), vec(x, y, -0.12), false);
+  if (m === "READY" || m === "COLLAPSED")
+    return mk(vec(-0.20, 1.80, -0.10), vec(0.20, 1.80, -0.10));  // start / RISE
+  return mk(vec(-0.55, 0.80, -0.05), vec(0.55, 0.80, -0.05));    // take the beating
 }
 
 (async () => {
@@ -615,7 +586,8 @@ function poseArenaCrawl(f) {
           (r.report.match(/enemy: \w+/) || ["no enemy line"])[0]);
 
     // Second run: the losing path. Undefended, the fight should end in the
-    // collapse -> pad timeout -> loss -> rematch chain, in that order.
+    // knockdown -> count runs out -> loss -> rematch chain, in that order
+    // (the script keeps its fists down through the whole count).
     const r2 = await runPage(page, 6800, poseArenaCollapse);
     check("collapse run: no exception escaped", r2.errors.length === 0, r2.errors[0] || "");
     const seq = r2.matchSeq.join(">");
@@ -658,16 +630,15 @@ function poseArenaCrawl(f) {
     check("the God can be beaten, and the fifth win fires the ending",
           endAt >= endChain.length, "states seen: " + r4.matchSeq.join(">"));
 
-    // Fifth run: the second wind survived, end to end. Take the beating,
-    // collapse, then knuckle-haul a dogleg to the repair pad — +z away from
-    // the watching foe, then +x along the clear lane — and stand back up
-    // healed, back in the fight. COLLAPSED followed by FIGHT is the pad
-    // recovery; nothing else produces that pair.
-    const r5 = await runPage(page, 3200, poseArenaCrawl);
+    // Fifth run: the knockdown survived, end to end. Take the beating, go
+    // down, and during the count raise both fists — the machine stands
+    // back up healed and fights on. COLLAPSED followed by FIGHT is the
+    // rise; nothing else produces that pair.
+    const r5 = await runPage(page, 3200, poseArenaRise);
     const swChain = ["FIGHT", "COLLAPSED", "FIGHT"];
     let swAt = 0;
     for (const s of r5.matchSeq) if (s === swChain[swAt]) swAt++;
-    check("the second wind can be survived: crawl, pad, stand back up",
+    check("the knockdown can be survived: count, fists up, stand and fight on",
           swAt >= swChain.length, "states seen: " + r5.matchSeq.join(">"));
   }
 

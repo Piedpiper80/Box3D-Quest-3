@@ -70,9 +70,10 @@
       <li>Press <strong>A</strong> (or <strong>X</strong> on the left controller) between fights to change arm weight. Heavy arms hit far harder,
           lumber, and cook fast; light arms dance and sting. Each victory unlocks the next class
           and toughens your hull.</li>
-      <li><strong>If your hull gives out, the legs cut — you are not dead.</strong> Grip the
-          ground (grip button) where the teal patches pulse and haul yourself to the beacon
-          before its column drains. Reach it and you stand back up whole. Once per fight.</li>
+      <li><strong>If your hull gives out you are knocked down, not dead.</strong> The other
+          machine breaks to its corner and the count bells strike. Raise both fists above
+          your head and hold — the machine stands back up whole. Once per fight; the second
+          knockdown is the loss.</li>
       <li>Five chapters, five machines, five places. Beat the thing that does not stand on the
           earth and the sky is yours — and if you go again, the machines remember you: every
           lap they come faster. Every sound is synthesised from the physics — nothing is a
@@ -508,8 +509,11 @@
   var travelTimer = 0, rumbleT = 0, travelThump = 0, eStepT = 0;
   var sparks = [], prevEPlate = null, scrapeT = 0;
   var motes = [], moteT = 0, prevPlateFrac = null;
-  var provoked = false;              // hit the frozen victor and it wakes
+  var lastCount = 11;                // the knockdown count's last-struck bell
+  var dmgFlash = 0;                  // seconds your own arms burn red after a hull hit
+  var lastTier = 0, alarmT = 0;      // the hull's spoken damage arc
   var prevEnemyPos = null, eStride = 0, lastStepN = 0;
+  var eyeYMax = 0;                   // tallest head line seen — the pilot's real eye height
   var whooshT = 0, prevArmSpd = 0;
   var hitStop = 0;
   // Overheat: swing hard and long and the actuators cook. Heavier arms heat
@@ -521,7 +525,6 @@
   // locomotion fallback, exactly where the design always wanted it.
   var O = { x: 0, y: 0, z: 0 };
   var secondWind = false, padTimer = 0;
-  var padPos = { x: 0, z: 0 };
   var playerCoreLimit = 130;         // momentum the bare hull can take;
                                      // grows with the machine you have earned
   var enemyGrid = -1, playerGrid = -1;
@@ -566,6 +569,31 @@
     var g = AC.createGain(); g.gain.setValueAtTime(gain, AC.currentTime);
     g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + 0.18);
     o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime + 0.2); }
+  // The hull alarm: a two-tone klaxon blip, sharper with each tier, so the
+  // machine narrates its own decline — the floor never arrives unannounced.
+  function klaxon(n) { if (!AC) return;
+    var f0 = n >= 3 ? 700 : n === 2 ? 560 : 460;
+    for (var kq = 0; kq < 2; kq++) {
+      var o = AC.createOscillator(); o.type = "square";
+      o.frequency.value = f0 * (kq ? 0.75 : 1);
+      var g = AC.createGain(); g.gain.value = 0.0001;
+      var t0 = AC.currentTime + kq * 0.11;
+      g.gain.setValueAtTime(0.085, t0);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.10);
+      o.connect(g); g.connect(AC.destination); o.start(t0); o.stop(t0 + 0.13);
+    } }
+  // The knockdown count's bell: struck metal, rising in pitch with urgency
+  // (0 = first strike, 1 = the last), so the arithmetic is audible.
+  function bell(urgency) { if (!AC) return;
+    for (var bT = 0; bT < 2; bT++) {
+      var o = AC.createOscillator(); o.type = "triangle";
+      o.frequency.value = (bT ? 1318 : 880) * (1 + 0.25 * urgency);
+      var g = AC.createGain(); g.gain.value = 0.0001;
+      g.gain.setValueAtTime(0.14 + 0.10 * urgency, AC.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + 0.5);
+      o.connect(g); g.connect(AC.destination);
+      o.start(); o.stop(AC.currentTime + 0.55);
+    } }
   function boom() { noiseBurst(0.7, 140, 0.6);
     if (!AC) return;
     var o = AC.createOscillator(); o.type = "sine"; o.frequency.value = 68;
@@ -667,6 +695,16 @@
     enemyGrid = E.w_enemy_create_ex(hx, hz - 3.2, ch2.mat, ch2.scale,
                                     ch2.core, ch2.hover,
                                     ch2.tempo * (1 + lap * 0.15));
+    // Sized against the pilot, not against a constant. The engine default
+    // stands every torso around waist height — the playtest read that as
+    // fighting something half your size. From your real eye line (best
+    // head height seen, or the arm-span rule of thumb before that) the
+    // ladder lands on the body: the Dancer at your chin, the Warden eye
+    // to eye, the Juggernaut overhead, the God floating above all of it.
+    var eyeEst = Math.min(2.1, Math.max(1.35,
+        Math.max(eyeYMax, (armSpan || 1.75) - 0.12)));
+    var visorY = eyeEst * (0.35 + 0.65 * ch2.scale) + (ch2.hover ? 0.12 : 0);
+    E.w_enemy_stature(visorY - 0.34 * ch2.scale);
     // Pillars: cover, scenery, wreckage-in-waiting. Each chapter lays its
     // own ground — scattered heaps, the mill square, foundry aisles, and
     // the High Dark strips the cover entirely: you, the God, the stars.
@@ -685,9 +723,8 @@
     E.w_mech_legs(1);
     O.x = 0; O.y = 0; O.z = 0;
     secondWind = false;
-    padPos = { x: hx + 2.6, z: hz + 0.6 };
     match = "READY";
-    provoked = false;
+    lastCount = 11; lastTier = 0; alarmT = 0; dmgFlash = 0;
     prevStats = null; prevChunks = 0; prevEnemy = null;
     sparks.length = 0; prevEPlate = null;
     motes.length = 0; prevPlateFrac = null;
@@ -772,6 +809,7 @@
 
   function simulate(frame, pose, items) {
     var hp = pose.transform.position;
+    if (floorY !== null && hp.y - floorY > eyeYMax) eyeYMax = hp.y - floorY;
 
     // Before the floor is set, the grid tracks the lower controller so you can
     // see it following your hand — then the trigger pins it. Afterwards it sits
@@ -920,15 +958,13 @@
       while (acc >= STEP) {
         acc -= STEP;
         stepped = true;
-        // The enemy thinks during the fight and after it wins — the triumph
-        // stalk needs the brain running. It stays frozen while you crawl,
-        // watching — UNLESS you hit it. A harness run found the machine
-        // could grind its fists into the frozen victor and kill it risk-free
-        // mid-crawl; provoked, it fights the crawler back. During READY it
-        // gets the pose-only call (dt 0): guard up, feet planted — a fighter
-        // waiting, not a mannequin with dead arms.
-        if (match === "FIGHT" || match === "LOST" ||
-            (match === "COLLAPSED" && provoked)) {
+        // The enemy thinks during the fight, through your knockdown count
+        // (corner mode: it backs off, guards, and waits — a boxer, not a
+        // vulture, and nothing frozen to grind free damage into), and after
+        // it wins — the triumph stalk needs the brain running. During READY
+        // it gets the pose-only call (dt 0): guard up, feet planted — a
+        // fighter waiting, not a mannequin with dead arms.
+        if (match === "FIGHT" || match === "LOST" || match === "COLLAPSED") {
           var msP = E.w_mech_state() >>> 2, fP0 = new Float32Array(E.memory.buffer);
           E.w_enemy_update(fP0[msP], fP0[msP+1], fP0[msP+2], STEP);
         } else if (match === "READY") {
@@ -980,8 +1016,18 @@
                 c[1] + (0.30 - c[1]) * hg * 0.9,
                 c[2] + (0.10 - c[2]) * hg * 0.9];
       };
+      // Taking a hull hit burns your own metal red for a third of a second
+      // — the one part of your machine always in view is your arms, so
+      // that is where being hit is written.
+      if (dmgFlash > 0) dmgFlash -= frameDt;
+      var flashF = Math.max(0, Math.min(1, dmgFlash * 3));
+      var hitTint = function (c) {
+        return [c[0] + (1.0 - c[0]) * flashF,
+                c[1] * (1 - 0.78 * flashF),
+                c[2] * (1 - 0.78 * flashF)];
+      };
       for (var aI = 0; aI < 2; aI++) {
-        var col = hot(armCol[aI]), dim = [col[0]*0.75, col[1]*0.75, col[2]*0.75];
+        var col = hitTint(hot(armCol[aI])), dim = [col[0]*0.75, col[1]*0.75, col[2]*0.75];
         // Stride three, not two. Adding the attachment took the state from five
         // bodies to seven and this was left behind, so the right arm was drawn
         // from the left attachment and the right upper arm — the wrong bodies
@@ -993,7 +1039,7 @@
         // the two boxes you look at most in the whole game. They read as a
         // fist you would punch with, not a blunt instrument you carry.
         var fq = [fa[to+3], fa[to+4], fa[to+5], fa[to+6]];
-        var fCol = overheated ? [1.0, 0.32, 0.14] : hot([0.86,0.88,0.92]);
+        var fCol = overheated ? [1.0, 0.32, 0.14] : hitTint(hot([0.86,0.88,0.92]));
         var fMat = overheated ? 5 : 3;
         var gOff = function (d) {
           return [d * 2 * (fq[0]*fq[2] + fq[3]*fq[1]),
@@ -1006,7 +1052,7 @@
                      c: fCol, mat: fMat });
         items.push({ m: trs([fa[to]+kOf[0], fa[to+1]+kOf[1], fa[to+2]+kOf[2]], fq,
                             [segLen[2]*0.80, segLen[2]*0.70, segLen[2]*0.45]),
-                     c: overheated ? [1.0, 0.40, 0.18] : hot([0.72,0.75,0.82]),
+                     c: overheated ? [1.0, 0.40, 0.18] : hitTint(hot([0.72,0.75,0.82])),
                      mat: fMat });
         // Dark blocks on the shoulder, elbow and wrist, so the joints are
         // things you can see rather than guess at from where two boxes meet.
@@ -1172,9 +1218,8 @@
                : eState === 6 ? [1.0,0.30,0.14]
                : (eState === 2 || eState === 3) ? [1.0,0.42,0.18]
                : [0.85,0.20,0.16];
-        // While you crawl, the victor holds still — but the visor breathes,
-        // slowly, so stillness reads as watching rather than as a hang. It
-        // idles the same way before the fight: alive, waiting.
+        // Before the fight and through your count the visor breathes,
+        // slowly — waiting reads as alive, not as a hang.
         if (match === "COLLAPSED" || match === "READY") {
           var wp = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(lastT * 0.004));
           vc = [0.85 * wp, 0.20 * wp, 0.16 * wp];
@@ -1198,10 +1243,13 @@
         if (ef[ep+23] > 1) {                                  // you hit its core
           thud(2.5);
           hitStop = Math.min(0.09, 0.03 + ef[ep+23] * 0.001); // the hit lands, time flinches
-          if (match === "COLLAPSED") provoked = true;         // it noticed
         }
         if (ef[ep+24] > 1) {                                  // it hit your hull
-          thud(3); shake = 0.16;
+          // Unmistakable, or it never happened: the playtest could not
+          // tell it was being hit. A hull hit now lands as metal-on-metal
+          // clang over the thud, a longer shake, both controllers kicking,
+          // and your own arms burning red for a third of a second.
+          thud(3); clang(2.2); shake = 0.22; dmgFlash = 0.35;
           for (var hI = 0; hI < srcs.length; hI++) haptic(srcs[hI], 1.0, 120);
         }
         if (ef[ep+26] > 1.2) {                                // its club rang on your ARM
@@ -1226,6 +1274,31 @@
           }
         }
         if (chunksNow > prevChunks) hitStop = Math.max(hitStop, 0.05);
+      }
+      // The damage arc, spoken: the hull calls out its own decline at one
+      // half, three quarters, and past nine tenths — a klaxon tier per
+      // threshold, the last one repeating with steam off both wrists. The
+      // playtest went to the floor without knowing it was in trouble;
+      // never again.
+      {
+        var hullFrac3 = match === "FIGHT" ? ef[ep+25] / playerCoreLimit : 0;
+        var tierNow = hullFrac3 > 0.9 ? 3 : hullFrac3 > 0.75 ? 2 : hullFrac3 > 0.5 ? 1 : 0;
+        if (tierNow >= 1 && lastTier < 1) klaxon(1);
+        if (tierNow >= 2 && lastTier < 2) klaxon(2);
+        lastTier = tierNow;
+        if (tierNow < 3) alarmT = 0;
+        else {
+          alarmT -= frameDt;
+          if (alarmT <= 0) {
+            klaxon(3); alarmT = 1.1;
+            for (var wS = 0; wS < 2 && sparks.length < 36; wS++) {
+              var wB = ms + (3 + wS*3)*7;
+              sparks.push({ x: fa[wB], y: fa[wB+1] + 0.04, z: fa[wB+2],
+                            vx: (Math.random()-0.5)*0.5, vy: 0.9 + Math.random()*0.5,
+                            vz: (Math.random()-0.5)*0.5, t: 0.5, st: 1 });
+            }
+          }
+        }
       }
       // The enemy is heard before it is felt: a servo catch as the club
       // draws up, air as it comes down, and its tread while it closes.
@@ -1304,7 +1377,7 @@
         if (heat < 0.45) overheated = false;
         var derate = overheated ? 0.22 : 1.0;
         // A lost machine is dead: drives out, arms limp where they fell.
-        // (COLLAPSED keeps them — the crawl IS the arms.)
+        // (COLLAPSED keeps them — down, you still guard with your arms.)
         E.w_mech_joint_spring(match === "LOST" ? 0 : 18000 * KNOB_SPRING * derate, 1.0);
         if (overheated && !wasOver) {
           // vent: steam off both arms — the derate explains itself
@@ -1358,10 +1431,14 @@
         if (eState === 5) { match = "WON"; endTimer = 0; sting(true); boom(); }
         else if (hullDmg > playerCoreLimit) {
           if (!secondWind) {
-            // The legs cut out. One chance: drag yourself to the pad.
+            // Knocked down. A boxing count: the legs cut out, the machine
+            // drops where it stands, the opponent breaks to a neutral
+            // corner, and a bell strikes each second away. Both fists
+            // above your head — the game's one gesture — bring it back up.
             secondWind = true;
-            match = "COLLAPSED"; padTimer = 25; provoked = false;
+            match = "COLLAPSED"; padTimer = 10; lastCount = 11;
             E.w_mech_legs(0);
+            E.w_enemy_corner(1);
             boom(); shake = 0.2;
           } else {
             // No third chance. The machine dies the way the enemy's does:
@@ -1434,32 +1511,38 @@
         }
       } else if (match === "COLLAPSED") {
         padTimer -= frameDt;
-        // Found by a harness run that killed the God from its knees and
-        // still lost: the enemy's death only counted in FIGHT. Beating the
-        // machine to death while your own legs are gone is the best win the
-        // game can produce — it counts from here too.
-        var msC = E.w_mech_state() >>> 2, fC = new Float32Array(E.memory.buffer);
-        var nearPad = Math.hypot(fC[msC] - padPos.x, fC[msC+2] - padPos.z) < 0.75;
+        // A win from the floor still counts — a harness run once killed
+        // the God from its knees, and the rule it minted stays.
         if (eState === 5) { match = "WON"; endTimer = 0; sting(true); boom(); }
-        else
-        if (nearPad) {
-          // The pad takes you back: legs, plate, hull. The fight is still out
-          // there and it watched you crawl.
-          E.w_mech_legs(1);
-          E.w_vox_heal(playerGrid);
-          E.w_player_repair();
-          match = "FIGHT";
-          sting(true);
-        } else if (padTimer <= 0) {
-          match = "LOST"; endTimer = 0; sting(false);
-          E.w_enemy_triumph();
+        else {
+          // The count, struck: one bell per second, climbing in pitch as
+          // the time runs out — audible arithmetic, no numbers anywhere.
+          var cN = Math.ceil(Math.max(0, padTimer));
+          if (cN !== lastCount) { lastCount = cN; bell(1 - cN / 10); }
+          // The rise is the gesture the game already taught for
+          // everything else: both fists above your head, held. Legs,
+          // plate and hull come back — the second wind, standing up.
+          fistTimer = fistsUp ? fistTimer + frameDt : 0;
+          if (fistTimer > 1.1) {
+            fistTimer = 0;
+            E.w_mech_legs(1);
+            E.w_vox_heal(playerGrid);
+            E.w_player_repair();
+            E.w_enemy_corner(0);
+            match = "FIGHT";
+            sting(true);
+          } else if (padTimer <= 0) {
+            match = "LOST"; endTimer = 0; sting(false);
+            E.w_enemy_corner(0);
+            E.w_enemy_triumph();
+          }
         }
       }
 
       // Wherever a fists-up gesture is wanted, two ghost markers float where
       // the fists need to go — the gesture taught without a word of text —
       // and they brighten as the hold progresses, so holding visibly works.
-      var wantFists = match === "READY" ||
+      var wantFists = match === "READY" || match === "COLLAPSED" ||
         ((match === "WON" || match === "LOST") && endTimer > 2.0) ||
         (match === "ENDING" && endTimer > 3.0);
       if (wantFists) {
@@ -1472,32 +1555,19 @@
         }
       }
 
-      // The repair pad: always there, only urgent when you are crawling.
-      var padUrgent = match === "COLLAPSED";
-      items.push({ m: trs([padPos.x, floorY + 0.02, padPos.z], [0,0,0,1], [0.55, 0.02, 0.55]),
-                   c: padUrgent ? [0.20, 0.95, 0.85] : [0.12, 0.35, 0.33], mat: 5 });
-      if (padUrgent) {
-        // The beacon is the countdown — no numbers in the headset, so the
-        // column drains like an hourglass and its pulse quickens as the
-        // time does.
-        var padFrac = Math.max(0, padTimer) / 25;
-        var pulse = 0.5 + 0.5 * Math.sin(lastT * (0.010 + (1 - padFrac) * 0.024));
+      // The count, visible: while you are down, an amber column drains
+      // between you and the machine that put you there — the height is the
+      // time, the pulse quickens as it runs out, and it stands in the one
+      // direction you are already looking. No numbers anywhere.
+      if (match === "COLLAPSED") {
+        var padFrac = Math.max(0, padTimer) / 10;
+        var pulse = 0.5 + 0.5 * Math.sin(lastT * (0.010 + (1 - padFrac) * 0.028));
+        var cCx = hp.x + O.x + (ef[ep] - hp.x - O.x) * 0.45;
+        var cCz = hp.z + O.z + (ef[ep+2] - hp.z - O.z) * 0.45;
         var bH = 0.15 + 1.05 * padFrac;
-        items.push({ m: trs([padPos.x, floorY + bH, padPos.z], [0,0,0,1],
+        items.push({ m: trs([cCx, floorY + bH, cCz], [0,0,0,1],
                             [0.04, bH, 0.04]),
-                     c: [0.20, 0.9 * pulse + 0.1, 0.8], mat: 5 });
-        // And the grip is taught by the ground: until a fist is planted, a
-        // teal patch pulses on the floor under each free hand. Grab there.
-        var gpp = 0.5 + 0.5 * Math.sin(lastT * 0.010);
-        for (var gH = 0; gH < srcs.length && gH < handPos.length; gH++) {
-          var aIx = srcs[gH].handedness === "right" ? 1 : 0;
-          if (fa[dsA + aIx] > 0.5) continue;       // that fist is planted
-          items.push({ m: trs([handPos[gH].x + O.x, floorY + 0.015,
-                               handPos[gH].z + O.z], [0,0,0,1],
-                              [0.09, 0.012, 0.09]),
-                       c: [0.20*gpp + 0.08, 0.80*gpp + 0.10, 0.72*gpp + 0.08],
-                       mat: 5 });
-        }
+                     c: [0.95 * pulse, 0.55 * pulse, 0.12 * pulse], mat: 5 });
       }
 
       // ---- arena dressing ----
@@ -1652,13 +1722,9 @@
                                : [Math.min(1, 1.0*sg2 + 0.2), 0.55*sg2, 0.12*sg2],
                      mat: sp2.st ? 0 : 5 });
       }
-      for (var pI = 0; pI < 8; pI++) {
-        var lit = (plateFrac > 0.06) ? (pI / 8 < plateFrac) : (pI / 8 < coreFrac);
-        items.push({ m: trs([ef[ep] - 0.28 + pI * 0.08, ef[ep+1] + 0.62 * eS, ef[ep+2]],
-                            [0,0,0,1], 0.022),
-                     c: lit ? ((plateFrac > 0.06) ? [0.55,0.58,0.66] : [0.92,0.35,0.25])
-                            : [0.16,0.17,0.20], mat: 5 });
-      }
+      // (No pip rows anywhere — the playtest called them out. The machine's
+      // state IS its body: plates visibly missing, the core glowing through
+      // the gaps, the kill-window notes when the armour stops counting.)
 
       // Debris wears the material it broke from — wood browns, stone greys,
       // steel pales. The toy palette belongs to the spike pages, not here.
@@ -1671,17 +1737,6 @@
                      c: DEBC[fa[co+8]|0] || [0.45,0.46,0.50] });
       }
 
-      // Arm-class pips ride the RIGHT wrist, the mirror of the plate gauge on
-      // the left: bright gold is the class you are wearing, dim gold is
-      // earned, dark is still locked. (They used to float at a fixed spot in
-      // the room, which roomscale drift left behind.)
-      for (var mI = 0; mI < DENSITIES.length; mI++) {
-        items.push({ m: trs([fa[ms+42] - 0.075 + mI * 0.05, fa[ms+43] + 0.12, fa[ms+44]],
-                            [0,0,0,1], 0.015),
-                     c: mI === level ? [0.98,0.72,0.25]
-                       : mI <= unlockedLevel ? [0.45,0.36,0.16] : [0.16,0.17,0.20],
-                     mat: mI === level ? 5 : 0 });
-      }
       if (KNOB_GRIP !== 1 || KNOB_SPRING !== 1)
         lines.push("FEEL KNOBS  grip x" + KNOB_GRIP.toFixed(2) +
                    "  spring x" + KNOB_SPRING.toFixed(2));
@@ -1690,18 +1745,6 @@
       var NAMES = ["IDLE","APPROACH","WINDUP","SWING","RECOVER","DEAD","TRIUMPH"];
       var pg3 = E.w_vox_grid_stats(playerGrid) >>> 2, pf3 = new Float32Array(E.memory.buffer);
       var pAlive2 = pf3[pg3], pTot2 = pf3[pg3 + 2];
-      // Your own gauge rides your left wrist — the page's numbers do not
-      // exist inside the headset. Plate cells while the plate holds; once it
-      // is gone the pips turn hull-red and count what is left of you.
-      var pFrac2 = pTot2 > 0 ? pAlive2 / pTot2 : 0;
-      var hullFrac2 = 1 - Math.min(1, ef[ep+25] / playerCoreLimit);
-      for (var wI = 0; wI < 6; wI++) {
-        var wlit = (pFrac2 > 0.06) ? (wI / 6 < pFrac2) : (wI / 6 < hullFrac2);
-        items.push({ m: trs([fa[ms+21] - 0.125 + wI * 0.05, fa[ms+22] + 0.12, fa[ms+23]],
-                            [0,0,0,1], 0.015),
-                     c: wlit ? ((pFrac2 > 0.06) ? [0.55,0.58,0.66] : [0.92,0.35,0.25])
-                             : [0.16,0.17,0.20], mat: 5 });
-      }
       var chNow = CAMPAIGN[Math.min(chapter, CAMPAIGN.length - 1)];
       lines.push("chapter " + (Math.min(chapter, CAMPAIGN.length - 1) + 1) + " of " +
                  CAMPAIGN.length + ": " + chNow.name + " — " + chNow.place +
@@ -1711,25 +1754,13 @@
                  match === "WON" ? "  — fists up to travel on" :
                  match === "TRAVEL" ? "  — travelling to " + CAMPAIGN[Math.min(chapter, CAMPAIGN.length-1)].place :
                  match === "ENDING" ? "  — THE SKY IS YOURS. Fists up to begin again." :
-                 match === "COLLAPSED" ? "  — LEGS GONE. GRAB THE GROUND, HAUL TO THE PAD. " +
-                   Math.max(0, padTimer).toFixed(0) + " s" :
+                 match === "COLLAPSED" ? "  — DOWN. RAISE BOTH FISTS TO STAND. " +
+                   Math.max(0, padTimer).toFixed(0) + " s" +
+                   (fistTimer > 0 ? "  hold " + fistTimer.toFixed(2) : "") :
                  match === "LOST" ? "  — fists up to try again" : ""));
       lines.push("heat: " + Math.round(heat * 100) + "%" +
                  (overheated ? "  OVERHEATED — actuators derated, let them cool" : "") +
                  "   arms unlocked: " + (unlockedLevel + 1) + " of " + DENSITIES.length);
-      if (match === "COLLAPSED") {
-        var dsR = E.w_mech_drag_state() >>> 2;
-        var msR = E.w_mech_state() >>> 2;
-        var fR = new Float32Array(E.memory.buffer);
-        lines.push("crawl: anchors " + (fR[dsR] > 0.5 ? "L" : "-") +
-                   (fR[dsR+1] > 0.5 ? "R" : "-") +
-                   "  hull x " + fR[msR].toFixed(2) + " y " + fR[msR+1].toFixed(2) +
-                   " z " + fR[msR+2].toFixed(2) +
-                   "  tips y " + fR[msR+22].toFixed(2) + "/" + fR[msR+43].toFixed(2) +
-                   "  pad x " + padPos.x.toFixed(2) + " z " + padPos.z.toFixed(2) +
-                   "  foe x " + ef[ep].toFixed(2) + " z " + ef[ep+2].toFixed(2) +
-                   (provoked ? " PROVOKED" : ""));
-      }
       lines.push("enemy: " + NAMES[ef ? ef[ep+7] : 0] +
                  ((ef && ef[ep+27] > 0.5 && (ef[ep+7] === 2 || ef[ep+7] === 3)) ? " (sweep)" : "") +
                  "   its plate " +

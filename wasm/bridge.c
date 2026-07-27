@@ -2517,6 +2517,36 @@ int w_enemy_create(float x, float z, int material)
     return w_enemy_create_inner(x, z, material);
 }
 
+// How tall it stands. The default stature parks every torso around waist
+// height on a real pilot — the playtest read the opponent as "half my
+// height". The page knows the pilot's calibrated eye line, so it sets the
+// stand height after creation and the machines are sized against the
+// person actually in the headset. Call after w_enemy_create_ex.
+WASM_EXPORT("w_enemy_stature")
+void w_enemy_stature(float standY)
+{
+    if (standY > 0.6f && standY < 3.0f) s_eStandY = standY;
+}
+
+// The neutral corner. While the player's machine is down and counting, a
+// boxing opponent does not stand over the body swinging — it backs off,
+// keeps its guard, and waits. Corner mode abandons any strike in motion,
+// retreats to long range, and never winds up; clearing it resumes the
+// fight. This is also what killed the old grind exploit: there is no
+// frozen statue to punch for free damage, only a machine that keeps its
+// distance until you stand.
+static int s_eCorner = 0;
+WASM_EXPORT("w_enemy_corner")
+void w_enemy_corner(int on)
+{
+    s_eCorner = on ? 1 : 0;
+    if (s_eCorner && (s_eState == E_WINDUP || s_eState == E_SWING))
+    {
+        s_eState = E_RECOVER;
+        s_eTimer = 0.0f;
+    }
+}
+
 static int w_enemy_create_inner(float x, float z, int material)
 {
     b3BodyDef td = b3DefaultBodyDef();
@@ -2601,6 +2631,7 @@ static int w_enemy_create_inner(float x, float z, int material)
     s_eStrafePhase = 0.0f;
     s_eHoverPhase = 0.0f;
     s_eHitPlayerCore = 0.0f;
+    s_eCorner = 0;
     s_eExists = 1;
     return s_eGrid;
 }
@@ -2624,7 +2655,9 @@ static void eAimArm(int i, b3Vec3 worldTarget, float hertz)
 {
     b3WorldTransform tt = b3Body_GetTransform(s_eTorso);
     const float side = i == 0 ? -1.0f : 1.0f;
-    b3Vec3 shoulderLocal = { side * 0.32f, 0.10f, 0.0f };
+    // The joint anchors scale with the machine; the aim origin must match
+    // or every swing on a scaled machine starts from a phantom shoulder.
+    b3Vec3 shoulderLocal = { side * 0.32f * s_eScale, 0.10f * s_eScale, 0.0f };
     b3Vec3 sw = b3RotateVector(tt.q, shoulderLocal);
     sw.x += (float)tt.p.x; sw.y += (float)tt.p.y; sw.z += (float)tt.p.z;
 
@@ -2683,8 +2716,16 @@ void w_enemy_update(float px, float py, float pz, float dt)
         b3Vec3 toP = { px - (float)tp.x, 0.0f, pz - (float)tp.z };
         const float dist = __builtin_sqrtf(toP.x*toP.x + toP.z*toP.z);
         float gx = (float)tp.x, gz = (float)tp.z;
-        const float wantRange = ENEMY_RANGE + (s_eScale - 1.0f) * 0.35f;
-        if (dist > wantRange && dt > 0.0f)
+        const float wantRange = s_eCorner ? 3.4f
+                              : ENEMY_RANGE + (s_eScale - 1.0f) * 0.35f;
+        if (s_eCorner && dist < wantRange - 0.3f && dist > 1e-3f && dt > 0.0f)
+        {
+            // Cornered off: step back until the count's distance is kept.
+            const float back = wantRange - dist;
+            gx -= toP.x / dist * back;
+            gz -= toP.z / dist * back;
+        }
+        else if (dist > wantRange && dt > 0.0f)
         {
             const float step = dist - wantRange;
             gx += toP.x / dist * step;
@@ -2787,7 +2828,8 @@ void w_enemy_update(float px, float py, float pz, float dt)
             eAimGuard(1, tp, pHat, lat);
             const float reach = ENEMY_RANGE + (s_eScale - 1.0f) * 0.35f;
             const float d2 = toP.x*toP.x + toP.z*toP.z;
-            if (d2 < (reach + 0.15f) * (reach + 0.15f) && s_eTimer > 0.8f)
+            if (!s_eCorner &&
+                d2 < (reach + 0.15f) * (reach + 0.15f) && s_eTimer > 0.8f)
             {
                 s_eState = E_WINDUP; s_eTimer = 0.0f;
                 s_eSwingArm = 1 - s_eSwingArm;
