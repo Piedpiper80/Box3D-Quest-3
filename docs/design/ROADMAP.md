@@ -578,6 +578,16 @@ One Must Fall." Three passes landed the same day:
    sweeps, heavyweight leads overheads), and a pose-only brain call so
    it WAITS IN GUARD during READY instead of hanging dead-armed.
 
+**The defensive game closed the rebuild.** A solid parry INTERRUPTS
+the swing (engine-enforced, test 70): the club rings on your arm, the
+strike is spent, and recovery — the punish window — starts that step,
+announced by two rising notes behind the clang. Block → counter is the
+boxing contract. Each attack also telegraphs by EAR (jab ticks, over-
+head knocks, sweep drags), because at a 0.22 s windup the second
+channel is the fair one; and the redline vents visible steam off both
+arms, so the derate explains itself. Guard, parry, hear the opening,
+punish — or eat the jab you didn't hear.
+
 All three campaign proofs re-choreographed and standing. And the
 tuning wheel moved to where the hands are: **URL feel knobs**
 (`?grip=`, `?spring=`, 0.3–3× multipliers, named in the report when
