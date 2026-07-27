@@ -544,6 +544,7 @@
   var lastCount = 11;                // the knockdown count's last-struck bell
   var dmgFlash = 0;                  // seconds your own arms burn red after a hull hit
   var lastTier = 0, alarmT = 0;      // the hull's spoken damage arc
+  var lastPartsDead = 0;             // severed-part events fire on the rise
   var prevEnemyPos = null, eStride = 0, lastStepN = 0;
   var eyeYMax = 0;                   // tallest head line seen — the pilot's real eye height
   var whooshT = 0, prevArmSpd = 0;
@@ -701,7 +702,7 @@
   // the Pages CDN both cache hard — a playtest once got the old game and,
   // fairly, could not tell), and it is printed on the card so which build
   // loaded is never a guess.
-  var BUILD = 12;
+  var BUILD = 13;
   var bTag = document.getElementById("buildTag");
   if (bTag) bTag.textContent = "(build " + BUILD + ")";
   fetch("box3d.wasm?v=" + BUILD)
@@ -781,7 +782,7 @@
     O.x = 0; O.y = 0; O.z = 0;
     secondWind = false;
     match = "READY";
-    lastCount = 11; lastTier = 0; alarmT = 0; dmgFlash = 0;
+    lastCount = 11; lastTier = 0; alarmT = 0; dmgFlash = 0; lastPartsDead = 0;
     prevStats = null; prevChunks = 0; prevEnemy = null;
     sparks.length = 0; prevEPlate = null;
     motes.length = 0; prevPlateFrac = null;
@@ -1266,6 +1267,17 @@
           thud(2.5);
           hitStop = Math.min(0.09, 0.03 + ef[ep+23] * 0.001); // the hit lands, time flinches
         }
+        // A PART came off — the moment the per-part fight is made of.
+        // Severing a fist, a forearm, a leg is announced like the event it
+        // is: deep boom under a hard clang, a long beat of stopped time,
+        // both controllers slammed.
+        if (ef[ep+29] > lastPartsDead) {
+          boom(); clang(3);
+          hitStop = Math.max(hitStop, 0.07);
+          shake = Math.max(shake, 0.12);
+          for (var svI = 0; svI < srcs.length; svI++) haptic(srcs[svI], 1.0, 160);
+        }
+        lastPartsDead = ef[ep+29];
         if (ef[ep+24] > 1) {                                  // it hit your hull
           // Unmistakable, or it never happened: the playtest could not
           // tell it was being hit. A hull hit now lands as metal-on-metal
@@ -1810,7 +1822,8 @@
                  ((ef && ef[ep+27] > 0.5 && (ef[ep+7] === 2 || ef[ep+7] === 3)) ? " (sweep)" : "") +
                  "   its plate " +
                  ePlateAlive + "/" + ePlateTotal +
-                 "   its core " + Math.round((ef ? ef[ep+8] : 1) * 100) + "%");
+                 "   its core " + Math.round((ef ? ef[ep+8] : 1) * 100) + "%" +
+                 (ef && ef[ep+29] > 0 ? "   parts torn off: " + ef[ep+29] : ""));
       lines.push("you: plate " + pf3[pg3] + "/" + pf3[pg3+2] + "   hull damage " +
                  Math.round(ef ? ef[ep+25] : 0) + " of " + playerCoreLimit);
     } else if (E && floorY !== null && armSpan !== null && !built) {
