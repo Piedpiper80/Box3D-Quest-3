@@ -594,6 +594,14 @@ hit and a one-hit collapse is a coin flip, not a fight. After tuning:
 13 s / 6.5 s / two-hits / two-hits undefended across the ladder, with
 heat still taxing heavy-arm offense on the other side of the ledger.
 
+Body language closed the round: the approach **weaves** (a tempo-scaled
+drift across the bearing, so closing reads as circling, not a rail),
+and when your hull gives out for good the victor **stalks to the wreck
+and raises both clubs** — its brain runs during the loss for exactly
+this, and it can still be killed mid-pose, because a machine
+showboating over a live pilot has made a mistake. 68 engine checks and
+57 page checks stand behind all of it.
+
 #### Phase 1 status: all three spikes built, awaiting headset verdicts
 
 | Spike | Page | Machine-verified | Needs from the headset |
