@@ -1804,6 +1804,12 @@ static void vxWorldReset(void)
 static void vxDebris(const VoxGrid* g, float x, float y, float z,
                      float vx, float vy, float vz)
 {
+    // A hidden grid is simulated here but drawn by the page — the practice
+    // piece IS its deformed mesh, and that mesh falls on its own when the
+    // budget is spent. Bursting a debris cube as well drops a second,
+    // undented box beside it, which is the one thing the piece is not.
+    if (g->hidden) return;
+
     const float half = g->size * 0.42f;
     const float color = VOX_MATS[g->material].debrisColor;
     if (s_vxDebrisCount < VOX_DEBRIS_CAP && s_count < MAX_CUBES)
