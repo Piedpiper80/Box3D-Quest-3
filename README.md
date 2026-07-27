@@ -34,7 +34,8 @@ boxes).
 
 No headset handy? Add `?flat=1` to the arena URL for a flat in-browser
 preview with a scripted pilot, and `&ch=2` (0–3) to drop straight into a
-later chapter's arena.
+later chapter's arena. In VR, `?grip=` and `?spring=` (0.3–3) tune the
+punch feel live, and `?calm=1` removes all view shake.
 
 ### What it looks like
 
