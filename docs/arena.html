@@ -75,6 +75,9 @@
           machine breaks to its corner and the count bells strike. Raise both fists above
           your head and hold — the machine stands back up whole. Once per fight; the second
           knockdown is the loss.</li>
+      <li><strong>The practice box</strong> floats behind your right shoulder, in reach — beat on
+          it and the steel itself crumples, vertex by vertex, exactly where you land. This is the
+          deformation the robots will inherit; judge it here first.</li>
       <li><strong>Passthrough:</strong> the second button starts the same fight in YOUR room —
           just you and the machine, no arena. Works anywhere you have a clear couple of metres.</li>
       <li>Five chapters, five machines, five places. Beat the thing that does not stand on the
@@ -216,6 +219,107 @@
   gl.bindVertexArray(null);
   gl.enable(gl.DEPTH_TEST);
 
+  // --- the deformable mesh ---------------------------------------------------
+  // A real mesh whose VERTICES take the hit — not repositioned boxes. Each
+  // face of the practice box is a grid of quads in one dynamic vertex
+  // buffer; every impact caves the surface in around the contact point,
+  // raises a rim, and the crumple is permanent. This is the metal the next
+  // robot will wear, auditioned on a single block. (Playtest request:
+  // "actual deformations in the mesh, not just rendered.")
+  var DEF_N = 10;                       // quads per cube edge
+  function buildDeformMesh(cx, cy, cz, half) {
+    var verts = [], idx = [];
+    var faces = [
+      [[ 1,0,0],[0,1,0],[0,0,1]], [[-1,0,0],[0,1,0],[0,0,-1]],
+      [[0, 1,0],[0,0,1],[1,0,0]], [[0,-1,0],[0,0,-1],[1,0,0]],
+      [[0,0, 1],[0,1,0],[-1,0,0]], [[0,0,-1],[0,1,0],[1,0,0]]
+    ];
+    for (var fI = 0; fI < 6; fI++) {
+      var n = faces[fI][0], u = faces[fI][1], v = faces[fI][2];
+      var base = verts.length / 6;
+      for (var a = 0; a <= DEF_N; a++)
+        for (var b = 0; b <= DEF_N; b++) {
+          var ua = (a / DEF_N) * 2 - 1, vb = (b / DEF_N) * 2 - 1;
+          verts.push((n[0] + u[0]*ua + v[0]*vb) * half,
+                     (n[1] + u[1]*ua + v[1]*vb) * half,
+                     (n[2] + u[2]*ua + v[2]*vb) * half,
+                     n[0], n[1], n[2]);
+        }
+      for (var a2 = 0; a2 < DEF_N; a2++)
+        for (var b2 = 0; b2 < DEF_N; b2++) {
+          var i0 = base + a2 * (DEF_N+1) + b2;
+          idx.push(i0, i0+1, i0+DEF_N+2, i0, i0+DEF_N+2, i0+DEF_N+1);
+        }
+    }
+    var dvao = gl.createVertexArray(); gl.bindVertexArray(dvao);
+    var dvbo = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, dvbo);
+    var va = new Float32Array(verts);
+    gl.bufferData(gl.ARRAY_BUFFER, va, gl.DYNAMIC_DRAW);
+    var debo = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, debo);
+    var ia = new Uint16Array(idx);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, ia, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,24,0);
+    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1,3,gl.FLOAT,false,24,12);
+    gl.bindVertexArray(null);
+    return { vao: dvao, vbo: dvbo, verts: va, idx: ia, n: idx.length,
+             cx: cx, cy: cy, cz: cz, half: half, dirty: false,
+             hits: 0, deepest: 0,
+             m: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, cx, cy, cz, 1]) };
+  }
+  // An impact: cave every vertex near the contact point inward along the
+  // hit direction, with a raised rim around the crater. Permanent.
+  function deformAt(mesh, wx, wy, wz, force) {
+    var lx = wx - mesh.cx, ly = wy - mesh.cy, lz = wz - mesh.cz;
+    var il = Math.hypot(lx, ly, lz) || 1;
+    var inx = -lx/il, iny = -ly/il, inz = -lz/il;   // inward: toward the heart
+    var depth = Math.min(0.02 + force * 0.0006, 0.028);
+    var R = mesh.half * 1.1;
+    var maxPush = mesh.half * 0.55;
+    for (var vi = 0; vi < mesh.verts.length; vi += 6) {
+      var dx = mesh.verts[vi] - lx, dy = mesh.verts[vi+1] - ly, dz = mesh.verts[vi+2] - lz;
+      var r = Math.hypot(dx, dy, dz);
+      if (r > R * 1.5) continue;
+      var push;
+      if (r < R) {
+        var f2 = 1 - r / R;                       // crater: deepest at the point
+        push = depth * f2 * f2;
+      } else {
+        var f3 = 1 - (r - R) / (R * 0.5);         // rim: shoved slightly OUT
+        push = -depth * 0.3 * f3 * f3;
+      }
+      // Never push a vertex past the box's heart — metal folds, it doesn't invert.
+      var px = mesh.verts[vi] + inx * push, py = mesh.verts[vi+1] + iny * push,
+          pz = mesh.verts[vi+2] + inz * push;
+      if (Math.hypot(px, py, pz) < mesh.half * (1 - 0) - maxPush) continue;
+      mesh.verts[vi] = px; mesh.verts[vi+1] = py; mesh.verts[vi+2] = pz;
+      if (push > mesh.deepest) mesh.deepest = push;
+    }
+    mesh.hits++;
+    mesh.dirty = true;
+  }
+  // Lighting stays honest: normals recomputed from the crumpled triangles.
+  function refreshDeformMesh(mesh) {
+    var v = mesh.verts, ix = mesh.idx;
+    for (var vi = 0; vi < v.length; vi += 6) { v[vi+3] = 0; v[vi+4] = 0; v[vi+5] = 0; }
+    for (var t2 = 0; t2 < ix.length; t2 += 3) {
+      var a = ix[t2]*6, b = ix[t2+1]*6, c2 = ix[t2+2]*6;
+      var e1x = v[b]-v[a], e1y = v[b+1]-v[a+1], e1z = v[b+2]-v[a+2];
+      var e2x = v[c2]-v[a], e2y = v[c2+1]-v[a+1], e2z = v[c2+2]-v[a+2];
+      var nx2 = e1y*e2z - e1z*e2y, ny2 = e1z*e2x - e1x*e2z, nz2 = e1x*e2y - e1y*e2x;
+      v[a+3]+=nx2; v[a+4]+=ny2; v[a+5]+=nz2;
+      v[b+3]+=nx2; v[b+4]+=ny2; v[b+5]+=nz2;
+      v[c2+3]+=nx2; v[c2+4]+=ny2; v[c2+5]+=nz2;
+    }
+    for (var vn = 0; vn < v.length; vn += 6) {
+      var nl = Math.hypot(v[vn+3], v[vn+4], v[vn+5]) || 1;
+      v[vn+3]/=nl; v[vn+4]/=nl; v[vn+5]/=nl;
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, mesh.vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, v, gl.DYNAMIC_DRAW);
+    mesh.dirty = false;
+  }
+  var defBox = null;
+
   function draw(vp, items) {
     gl.useProgram(prog); gl.uniformMatrix4fv(uVP, false, vp); gl.bindVertexArray(vao);
     gl.uniform3fv(uEye, eyePos);
@@ -224,6 +328,15 @@
       gl.uniform3fv(uC, items[i].c);
       gl.uniform1f(uMat, items[i].mat || 0);
       gl.drawElements(gl.TRIANGLES, I.length, gl.UNSIGNED_SHORT, 0);
+    }
+    if (defBox) {
+      if (defBox.dirty) refreshDeformMesh(defBox);
+      gl.bindVertexArray(defBox.vao);
+      gl.uniformMatrix4fv(uM, false, defBox.m);
+      gl.uniform3fv(uC, [0.62, 0.66, 0.74]);
+      gl.uniform1f(uMat, 3);
+      gl.drawElements(gl.TRIANGLES, defBox.n, gl.UNSIGNED_SHORT, 0);
+      gl.bindVertexArray(vao);
     }
     gl.bindVertexArray(null);
   }
@@ -567,6 +680,7 @@
   // locomotion fallback, exactly where the design always wanted it.
   var O = { x: 0, y: 0, z: 0 };
   var AR = false;                    // passthrough: draw the machines, not the world
+  var practiceGrid = -1;             // the deformation testbed's hidden collider
   var arBtn = document.getElementById("enterAR");
   var secondWind = false, padTimer = 0;
   var playerCoreLimit = 130;         // momentum the bare hull can take;
@@ -713,7 +827,7 @@
   // the Pages CDN both cache hard — a playtest once got the old game and,
   // fairly, could not tell), and it is printed on the card so which build
   // loaded is never a guess.
-  var BUILD = 16;
+  var BUILD = 17;
   var bTag = document.getElementById("buildTag");
   if (bTag) bTag.textContent = "(build " + BUILD + ")";
   fetch("box3d.wasm?v=" + BUILD)
@@ -767,7 +881,7 @@
     var eyeEst = Math.min(2.1, Math.max(1.55,
         Math.max(eyeYMax, (armSpan || 1.75) - 0.12)));
     var visorY = eyeEst * (0.55 + 0.55 * ch2.scale) + (ch2.hover ? 0.15 : 0);
-    if (E.w_enemy_stature) E.w_enemy_stature(visorY - 0.34 * ch2.scale * EBULK);
+    if (E.w_enemy_stature) E.w_enemy_stature(floorY + visorY - 0.34 * ch2.scale * EBULK);
     enemyGrid = E.w_enemy_create_ex(hx, hz - 3.2, ch2.mat, ch2.scale * EBULK,
                                     ch2.core, ch2.hover,
                                     ch2.tempo * (1 + lap * 0.15));
@@ -780,6 +894,15 @@
       E.w_vox_create(hx + ch2.pillars[pP][0], floorY, hz + ch2.pillars[pP][1],
                      4, 16, 4, 0.10, ch2.pillarMat);
     }
+    // The practice box — "one box that I can just beat on, and we'll see
+    // how it deforms." A hidden steel collider gives the punch its thump
+    // and reports every impact; what you SEE is the real mesh, caving
+    // vertex by vertex where you land. Behind your right shoulder at
+    // spawn, within arm's reach, in VR and passthrough alike.
+    practiceGrid = E.w_vox_create(hx + 0.75, floorY + 0.85, hz + 0.35, 4, 4, 4, 0.085, 2);
+    E.w_vox_hide(practiceGrid, 1);
+    if (defBox) { gl.deleteVertexArray(defBox.vao); gl.deleteBuffer(defBox.vbo); }
+    defBox = buildDeformMesh(hx + 0.75, floorY + 1.02, hz + 0.35, 0.17);
     heat = 0; overheated = false;
     if (KNOB_GRIP !== 1)
       E.w_mech_tune(5200 * KNOB_GRIP, 1.0, 7800 * KNOB_GRIP, 14000);
@@ -1156,17 +1279,18 @@
       for (var rA = 0; rA < rn2; rA++) {
         var roA = rp2 + rA * 12;
         var mcA = MATC[fbA[roA+11] | 0] || MATC[1];
-        // A hurt panel is a DENT: crushed darker and drawn slightly inset
-        // from its neighbours, so damage stays written in the metal
-        // instead of flashing like a warning light. (Playtest ask.)
-        var dHurt = fbA[roA+10] > 0.5;
-        var dIn = dHurt ? 0.88 : 1;
+        // DENTS, graded: [10] is 0..1 damage. The engine already caves the
+        // cell toward the body's centre; here depth also shrinks it into
+        // the crater and crushes the colour toward beaten metal — every
+        // hit leaves a mark that stays.
+        var dD = fbA[roA+10];
+        var dIn = 1 - 0.30 * dD;
         items.push({ m: trs([fbA[roA], fbA[roA+1], fbA[roA+2]],
                             [fbA[roA+3], fbA[roA+4], fbA[roA+5], fbA[roA+6]],
                             [fbA[roA+7]*dIn, fbA[roA+8]*dIn, fbA[roA+9]*dIn]),
-                     c: dHurt
-                        ? [mcA[0]*0.48+0.10, mcA[1]*0.44+0.06, mcA[2]*0.40+0.04]
-                        : mcA,
+                     c: [mcA[0]*(1-0.52*dD)+0.09*dD,
+                         mcA[1]*(1-0.56*dD)+0.05*dD,
+                         mcA[2]*(1-0.58*dD)+0.04*dD],
                      mat: (fbA[roA+11] | 0) + 1 });
       }
       var cn2 = E.w_vox_chunk_box_count(), cp2 = E.w_vox_chunk_boxes() >>> 2;
@@ -1284,6 +1408,20 @@
                        c: vc, mat: eState === 5 ? 0 : 5 });
         }
       })();
+
+      // Impacts into the practice box crumple its mesh where they landed.
+      if (practiceGrid >= 0 && defBox && stepped) {
+        var nHits = E.w_vox_hit_count();
+        if (nHits > 0) {
+          var hb = E.w_vox_hit_events() >>> 2, hf = new Float32Array(E.memory.buffer);
+          for (var hE = 0; hE < nHits; hE++) {
+            var ho = hb + hE * 5;
+            if ((hf[ho+4] | 0) !== practiceGrid) continue;
+            deformAt(defBox, hf[ho], hf[ho+1], hf[ho+2], hf[ho+3]);
+            clang(Math.min(2, 0.6 + hf[ho+3] * 0.02));
+          }
+        }
+      }
 
       // ---- the wearable state, read as deltas for sound and haptics ----
       var vs0 = E.w_vox_stats() >>> 2, vf0 = new Float32Array(E.memory.buffer);
@@ -1854,6 +1992,9 @@
                    Math.max(0, padTimer).toFixed(0) + " s" +
                    (fistTimer > 0 ? "  hold " + fistTimer.toFixed(2) : "") :
                  match === "LOST" ? "  — fists up to try again" : ""));
+      if (defBox && defBox.hits > 0)
+        lines.push("practice box: " + defBox.hits + " hits, deepest dent " +
+                   (defBox.deepest * 1000).toFixed(0) + " mm");
       lines.push("heat: " + Math.round(heat * 100) + "%" +
                  (overheated ? "  OVERHEATED — actuators derated, let them cool" : "") +
                  "   arms unlocked: " + (unlockedLevel + 1) + " of " + DENSITIES.length);

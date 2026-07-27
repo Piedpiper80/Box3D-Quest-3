@@ -203,9 +203,11 @@ void w_step(float dt)
 // runtime declines a local-floor reference space and falls back to local, the
 // origin sits at the viewer instead, and a floor built at 0 ends up at head
 // height with the whole scene stacked above it.
+static float s_worldFloorY = 0.0f;   // where the ground plane actually is
 WASM_EXPORT("w_reset")
 void w_reset(int enableSleep, float groundY)
 {
+    s_worldFloorY = groundY;
     // Tracked with an explicit flag rather than by inspecting the id: the id is
     // zero-initialised at load, and a zeroed id is not guaranteed to compare
     // equal to the library's null id.
@@ -1758,9 +1760,16 @@ typedef struct
                                    // parts must not break on walls or floors)
     float partDens;                // >0 overrides material density: limb parts
                                    // must be liftable by their own joints
+    float cellHpMax;               // true per-cell hp ceiling (parts scale it) —
+                                   // the dent read is hp against THIS
 } VoxGrid;
 static VoxGrid s_vxG[VOX_GRIDS];
 static int s_vxLastHits = 0;
+// Ring of this step's impacts: where, how hard, which grid — the page
+// reads it to drive real mesh deformation.
+#define VOX_HITEV_MAX 16
+static float s_vxHitEv[VOX_HITEV_MAX * 5];
+static int s_vxHitEvCount = 0;
 
 typedef struct
 {
@@ -1954,6 +1963,7 @@ static int vxBuild(b3BodyId body, b3Vec3 local, int nx, int ny, int nz,
     g->killed = 0;
 
     const float hp = VOX_MATS[material].hp;
+    g->cellHpMax = hp;
     for (int i = 0; i < nx * ny * nz; i++) g->hp[i] = hp;
     for (int r = 0; r < ny * nz; r++) { g->rowShapes[r] = 0; g->rowDirty[r] = 0; }
 
@@ -1976,6 +1986,7 @@ static void vxMakePart(int grid, float hpMul)
     VoxGrid* g = &s_vxG[grid];
     const int total = g->n[0] * g->n[1] * g->n[2];
     for (int i = 0; i < total; i++) g->hp[i] *= hpMul;
+    g->cellHpMax *= hpMul;
     g->armOnly = 1;
     g->partDens = 220.0f;
     for (int z = 0; z < g->n[2]; z++)
@@ -2239,6 +2250,7 @@ void w_vox_post(void)
 
     b3ContactEvents ev = b3World_GetContactEvents(s_world);
     s_vxLastHits = 0;
+    s_vxHitEvCount = 0;
     int killedBefore[VOX_GRIDS];
     for (int i = 0; i < VOX_GRIDS; i++) killedBefore[i] = s_vxG[i].killed;
 
@@ -2315,6 +2327,15 @@ void w_vox_post(void)
         }
 
         s_vxLastHits++;
+        if (s_vxHitEvCount < VOX_HITEV_MAX)
+        {
+            float* he = &s_vxHitEv[s_vxHitEvCount * 5];
+            he[0] = (float)h->point.x; he[1] = (float)h->point.y;
+            he[2] = (float)h->point.z;
+            he[3] = h->approachSpeed * mass;
+            he[4] = (float)(g - s_vxG);
+            s_vxHitEvCount++;
+        }
         vxDamageAt(g, (float)h->point.x, (float)h->point.y, (float)h->point.z,
                    h->approachSpeed * mass);
     }
@@ -2345,7 +2366,14 @@ static void vxFillRuns(void)
         if (!g->used || g->hidden) continue;
         const b3Transform t = vxPose(g);
         const float half = 0.5f * g->size;
-        const float maxHp = VOX_MATS[g->material].hp;
+        // Dent = damage, graded: hp measured against the grid's TRUE cell
+        // ceiling (parts scale theirs — against the raw material number a
+        // part could lose most of its metal and still read pristine).
+        const float maxHp = g->cellHpMax > 0.0f ? g->cellHpMax : VOX_MATS[g->material].hp;
+        b3Vec3 gc;
+        gc.x = g->local.x + 0.5f * g->n[0] * g->size;
+        gc.y = g->local.y + 0.5f * g->n[1] * g->size;
+        gc.z = g->local.z + 0.5f * g->n[2] * g->size;
         for (int z = 0; z < g->n[2]; z++)
         for (int y = 0; y < g->n[1]; y++)
         {
@@ -2353,28 +2381,56 @@ static void vxFillRuns(void)
             while (x < g->n[0])
             {
                 if (!vxAliveAt(g, x, y, z)) { x++; continue; }
-                const int hurt0 = g->hp[vxIdx(g, x, y, z)] < 0.5f * maxHp;
+                float d0 = 1.0f - g->hp[vxIdx(g, x, y, z)] / maxHp;
+                if (d0 < 0.0f) d0 = 0.0f; if (d0 > 0.96f) d0 = 0.96f;
+                const int q0 = (int)(d0 * 4.0f);
                 int x0 = x;
-                while (x < g->n[0] && vxAliveAt(g, x, y, z) &&
-                       (g->hp[vxIdx(g, x, y, z)] < 0.5f * maxHp) == hurt0) x++;
+                while (x < g->n[0] && vxAliveAt(g, x, y, z))
+                {
+                    float dn = 1.0f - g->hp[vxIdx(g, x, y, z)] / maxHp;
+                    if (dn < 0.0f) dn = 0.0f; if (dn > 0.96f) dn = 0.96f;
+                    if ((int)(dn * 4.0f) != q0) break;
+                    x++;
+                }
                 if (s_vxRunCount >= cap) return;
                 float* o = &s_vxRunBuf[s_vxRunCount * 12];
                 const int len = x - x0;
+                const float d = q0 * 0.25f;
                 b3Vec3 c;
                 c.x = g->local.x + (x0 + 0.5f * len) * g->size;
                 c.y = g->local.y + (y + 0.5f) * g->size;
                 c.z = g->local.z + (z + 0.5f) * g->size;
+                // The crumple: dented metal caves toward the body's centre,
+                // deeper the more it has taken.
+                if (d > 0.0f)
+                {
+                    b3Vec3 in = { gc.x - c.x, gc.y - c.y, gc.z - c.z };
+                    const float il = __builtin_sqrtf(in.x*in.x + in.y*in.y + in.z*in.z);
+                    if (il > 1e-4f)
+                    {
+                        const float push = d * g->size * 0.45f;
+                        c.x += in.x / il * push;
+                        c.y += in.y / il * push;
+                        c.z += in.z / il * push;
+                    }
+                }
                 const b3Vec3 wc = b3TransformPoint(t, c);
                 o[0] = wc.x; o[1] = wc.y; o[2] = wc.z;
                 o[3] = t.q.v.x; o[4] = t.q.v.y; o[5] = t.q.v.z; o[6] = t.q.s;
                 o[7] = len * half; o[8] = half; o[9] = half;
-                o[10] = hurt0 ? 1.0f : 0.0f;
+                o[10] = d;
                 o[11] = VOX_MATS[g->material].colorIdx;
                 s_vxRunCount++;
             }
         }
     }
 }
+
+WASM_EXPORT("w_vox_hit_count")
+int w_vox_hit_count(void) { return s_vxHitEvCount; }
+
+WASM_EXPORT("w_vox_hit_events")
+float* w_vox_hit_events(void) { return s_vxHitEv; }
 
 WASM_EXPORT("w_vox_run_count")
 int w_vox_run_count(void) { vxFillRuns(); return s_vxRunCount; }
@@ -2833,7 +2889,7 @@ static int w_enemy_create_inner(float x, float z, int material)
         // its buried feet at millimetres per second, stalled a metre out
         // of range. Short-statured machines get stubby legs; buried feet
         // get nobody anywhere.
-        float legLen = ENEMY_STAND_Y - 0.56f * sc - 0.10f;
+        float legLen = (ENEMY_STAND_Y - s_worldFloorY) - 0.56f * sc - 0.10f;
         if (legLen < 0.12f) legLen = 0.12f;
         float uSz = legLen * 0.40f; if (uSz > 0.13f * sc) uSz = 0.13f * sc;
         float lSz = uSz;

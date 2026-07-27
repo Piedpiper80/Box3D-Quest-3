@@ -576,6 +576,22 @@ function poseArenaRise(f, m) {
   return mk(vec(-0.28, 0.80, 0.18), vec(0.28, 0.80, 0.18));      // take the beating
 }
 
+// Beating on the practice box: right hand drives repeatedly into the
+// deformable block behind the spawn's right shoulder. No fists-up — the
+// box is there before the match, which is the whole point of it.
+function poseBox(f) {
+  if (f < TPOSE_UNTIL) return pose(f);
+  const c = f % 20, out = c < 8 ? c / 8 : Math.max(0, 1 - (c - 8) / 10);
+  return {
+    head: vec(0, HEAD_Y, 0),
+    controllers: [
+      { pos: vec(-0.22, 1.10, -0.20), q: quat(0, 0, 0, 1) },
+      { pos: vec(0.30 + 0.40 * out, 1.02, 0.02 + 0.28 * out), q: quat(0, 0, 0, 1) },
+    ],
+    trigger: false,
+  };
+}
+
 (async () => {
   const page = process.argv[2] || "mech.html";
   console.log(`--- ${page} ---`);
@@ -672,6 +688,14 @@ function poseArenaRise(f, m) {
     // down, and during the count raise both fists — the machine stands
     // back up healed and fights on. COLLAPSED followed by FIGHT is the
     // rise; nothing else produces that pair.
+    // Sixth run: the deformation testbed. Punch the practice box and the
+    // mesh must report real, permanent dents.
+    const r6 = await runPage(page, 500, poseBox);
+    const pb = r6.report.match(/practice box: (\d+) hits, deepest dent (\d+) mm/);
+    check("the practice box takes real dents from punches",
+          pb && parseInt(pb[1], 10) > 0 && parseInt(pb[2], 10) > 0,
+          pb ? `${pb[1]} hits, ${pb[2]} mm` : "no practice-box line in the report");
+
     const r5 = await runPage(page, 3200, poseArenaRise);
     const swChain = ["FIGHT", "COLLAPSED", "FIGHT"];
     let swAt = 0;
