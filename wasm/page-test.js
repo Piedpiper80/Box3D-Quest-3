@@ -576,7 +576,7 @@ function poseArenaRise(f, m) {
 
   if (page === "arena.html") {
     check("the fists-up gesture started the fight",
-          /match: (FIGHT|WON|LOST)/.test(r.report), (r.report.match(/match: \w+/) || ["no match line"])[0]);
+          r.matchSeq.includes("FIGHT"), "states seen: " + r.matchSeq.join(">"));
     const eplate = r.report.match(/its plate (\d+)\/(\d+)/);
     const you = r.report.match(/you: plate (\d+)\/(\d+)/);
     const damage = (eplate && parseInt(eplate[1], 10) < parseInt(eplate[2], 10)) ||

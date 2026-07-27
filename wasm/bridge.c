@@ -2501,7 +2501,10 @@ WASM_EXPORT("w_enemy_create_ex")
 int w_enemy_create_ex(float x, float z, int material, float scale,
                       float coreHp, int hover, float tempo)
 {
-    s_eScale = scale < 0.5f ? 0.5f : (scale > 2.0f ? 2.0f : scale);
+    // Clamp ceiling 3.0: mech-bulk chapters legitimately reach ~2.1, and a
+    // clamped physics scale under an unclamped drawn scale re-opens the
+    // drawn-smaller-than-simulated bug the campaign already fixed once.
+    s_eScale = scale < 0.5f ? 0.5f : (scale > 3.0f ? 3.0f : scale);
     s_eTempo = tempo < 0.4f ? 0.4f : (tempo > 2.5f ? 2.5f : tempo);
     s_eHover = hover ? 1 : 0;
     s_eCoreHpMax = coreHp > 20.0f ? coreHp : 260.0f;
