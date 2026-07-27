@@ -998,6 +998,11 @@
       if (prevEnemy !== null && stepped && AC) {
         if (prevEnemy !== 2 && eState === 2) noiseBurst(0.09, 2200, 0.09);
         if (prevEnemy !== 3 && eState === 3) noiseBurst(0.24, 760, 0.20);
+        // RECOVER entered from anything but its own swing is the stagger —
+        // a slab just came off it. It groans like stressed metal.
+        if (eState === 4 && (prevEnemy === 1 || prevEnemy === 2)) {
+          noiseBurst(0.5, 130, 0.30); clang(0.8);
+        }
         var chS = CAMPAIGN[Math.min(chapter, CAMPAIGN.length - 1)];
         if (eState === 1 && !chS.hover) {
           eStepT -= frameDt;
@@ -1035,7 +1040,9 @@
         if (heat > 0.92) overheated = true;
         if (heat < 0.45) overheated = false;
         var derate = overheated ? 0.30 : 1.0;
-        E.w_mech_joint_spring(8000 * derate, 1.0);
+        // A lost machine is dead: drives out, arms limp where they fell.
+        // (COLLAPSED keeps them — the crawl IS the arms.)
+        E.w_mech_joint_spring(match === "LOST" ? 0 : 8000 * derate, 1.0);
         if (overheated && !wasOver && AC) {
           for (var wq2 = 0; wq2 < 3; wq2++) {
             (function (k2) {
@@ -1256,9 +1263,16 @@
                      c: DEBC[fa[co+8]|0] || [0.45,0.46,0.50] });
       }
 
+      // Arm-class pips ride the RIGHT wrist, the mirror of the plate gauge on
+      // the left: bright gold is the class you are wearing, dim gold is
+      // earned, dark is still locked. (They used to float at a fixed spot in
+      // the room, which roomscale drift left behind.)
       for (var mI = 0; mI < DENSITIES.length; mI++) {
-        items.push({ m: trs([hp.x + 0.6, floorY + 1.1 + mI*0.07, hp.z - 0.5], [0,0,0,1], 0.02),
-                     c: mI <= level ? [0.98,0.72,0.25] : [0.20,0.23,0.30] });
+        items.push({ m: trs([fa[ms+42] - 0.075 + mI * 0.05, fa[ms+43] + 0.12, fa[ms+44]],
+                            [0,0,0,1], 0.015),
+                     c: mI === level ? [0.98,0.72,0.25]
+                       : mI <= unlockedLevel ? [0.45,0.36,0.16] : [0.16,0.17,0.20],
+                     mat: mI === level ? 5 : 0 });
       }
       lines.push("arm material " + (level+1) + " of " + DENSITIES.length +
                  "  (density " + DENSITIES[level] + ")");
