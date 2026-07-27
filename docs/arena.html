@@ -836,7 +836,7 @@
   // the Pages CDN both cache hard — a playtest once got the old game and,
   // fairly, could not tell), and it is printed on the card so which build
   // loaded is never a guess.
-  var BUILD = 19;
+  var BUILD = 20;
   var bTag = document.getElementById("buildTag");
   if (bTag) bTag.textContent = "(build " + BUILD + ")";
   fetch("box3d.wasm?v=" + BUILD)
@@ -912,7 +912,7 @@
     // dents. Nothing chips off along the way — when the budget is spent
     // the piece breaks free and the crumpled mesh itself falls.
     practiceGrid = E.w_vox_create(hx + 0.75, floorY + 0.85, hz + 0.35, 1, 1, 1, 0.34, 2);
-    if (E.w_vox_scale_hp) E.w_vox_scale_hp(practiceGrid, 5);
+    if (E.w_vox_scale_hp) E.w_vox_scale_hp(practiceGrid, 16);
     E.w_vox_hide(practiceGrid, 1);
     if (defBox) { gl.deleteVertexArray(defBox.vao); gl.deleteBuffer(defBox.vbo); }
     defBox = buildDeformMesh(hx + 0.75, floorY + 1.02, hz + 0.35, 0.17);

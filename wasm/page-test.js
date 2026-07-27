@@ -672,7 +672,10 @@ function poseBox(f) {
 
     // Third run: a saved campaign boots where it was left. Seeded storage
     // says lap 2, chapter 3, all arms — the report must agree.
-    const r3 = await runPage(page, 200, pose,
+    // 600 frames, not 200: the check races the wasm compile, and a slow
+    // CI runner lost that race — the world builds when the module lands,
+    // however long that takes, and the budget must cover it.
+    const r3 = await runPage(page, 600, pose,
       { "box3d.campaign": JSON.stringify({ c: 2, u: 3, l: 1, v: 3 }),
         "box3d.armSpan": "1.75" });
     check("a saved campaign boots where it was left",
