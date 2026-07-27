@@ -561,6 +561,11 @@
     srcN.start();
   }
   function thud(mag) { noiseBurst(0.16, 320 + 140 * mag, Math.min(0.55, 0.12 + 0.10 * mag)); }
+  function stomp(gain) { if (!AC) return;
+    var o = AC.createOscillator(); o.type = "sine"; o.frequency.value = 52;
+    var g = AC.createGain(); g.gain.setValueAtTime(gain, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + 0.18);
+    o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime + 0.2); }
   function boom() { noiseBurst(0.7, 140, 0.6);
     if (!AC) return;
     var o = AC.createOscillator(); o.type = "sine"; o.frequency.value = 68;
@@ -1245,7 +1250,16 @@
           if (stepNow !== lastStepN) {
             lastStepN = stepNow;
             var dS = Math.hypot(ef[ep] - (hp.x + O.x), ef[ep+2] - (hp.z + O.z));
-            thud(Math.max(0, 1.5 - dS * 0.35));
+            thud(Math.max(0, 1.5 - dS * 0.35) * (0.6 + 0.4 * chS.scale));
+            // A heavy frame arrives through the floor: within a few
+            // metres each plant lands a sub-thump and a breath of view
+            // shake that grows as it closes — the Juggernaut is
+            // announced by the ground before the eye finds it.
+            if (chS.scale >= 1.2 && dS < 3.5) {
+              var close = 1 - dS / 3.5;
+              stomp(0.10 + 0.30 * close);
+              shake = Math.max(shake, 0.03 + 0.05 * close);
+            }
           }
         }
       }
