@@ -561,6 +561,39 @@ The rule that fell out of it, for every VR page from here on: **if the
 player needs it, it lives in the world.** The page card may repeat it; it
 may never own it.
 
+#### The deep-polish rounds: variety, truth at scale, measured balance
+
+Fight variety went into the engine: a **second line of attack** (the
+lateral sweep, drawn wide instead of high — the pose is the telegraph),
+a **stagger** (a slab torn off the plate breaks whatever it was doing
+into a long reel), and **blocks as an event** (club momentum landed on a
+player arm rings a clang and a short haptic — the parry, working). The
+stagger's first cut guarded during recovery, which parked the clubs
+across its own core and made the machine accidentally unkillable — so
+recovery now reels open-armed, and recovery is the punish window. Two
+engine tests grew out of it (66 total).
+
+Looking at chapters 3 and 4 (a `?flat=1&ch=N` preview exists now for
+exactly this) found the renderer lying twice: the enemy drew at scale 1
+while its physics ran up to 1.35×, landing hits past its visible club
+tip; and debris wore the spike pages' toy palette. Both fixed — the
+Gods loom at their true size, debris wears its material. Each chapter's
+machine also got its own hull (rust, slate, foundry iron, violet dark),
+the arenas their own skylines, floors and embers, and travel streams
+the destination's skyline past both sides of the road.
+
+**Balance is measured, not felt-out.** A headless probe asks each
+chapter two questions: how fast does a steady metronome attacker kill
+it, and how long does an undefended hull last. It caught the sweep
+doing its job too well (undefended survival fell to 1–3 s mid-campaign,
+because the sweep rounds both the guard and the plate). The tunes kept
+the physics honest: the sweep telegraphs longer and comes three swings
+in eight, and the hull hardens with each unlocked weight class (130 +
+45/level) because a Juggernaut's club lands ~130 momentum in one clean
+hit and a one-hit collapse is a coin flip, not a fight. After tuning:
+13 s / 6.5 s / two-hits / two-hits undefended across the ladder, with
+heat still taxing heavy-arm offense on the other side of the ledger.
+
 #### Phase 1 status: all three spikes built, awaiting headset verdicts
 
 | Spike | Page | Machine-verified | Needs from the headset |
