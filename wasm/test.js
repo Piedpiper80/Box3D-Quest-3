@@ -716,6 +716,27 @@ const wasi = new WASI({ version: "preview1" });
   check("a solid parry interrupts the swing into recovery",
         parried, `block events ${blockEvents}, interrupted ${parried}`);
 
+  // The pose-only call (dt 0): the machine raises its guard and holds its
+  // ground — the READY-state wait pose. It must not walk and must not
+  // advance its fight timer.
+  E.w_reset(1, 0);
+  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
+  E.w_player_plate(1);
+  E.w_enemy_create(0, -3.0, 1);
+  const posedFrom = est();
+  for (let s3 = 0; s3 < 250; s3++) {
+    E.w_mech_stand(0, CHEST, 0);
+    E.w_enemy_update(0, CHEST, 0, 0);
+    E.w_mech_apply(); E.w_step(1 / 72); E.w_vox_post(); E.w_enemy_post();
+  }
+  const posed = est();
+  const guardTipY = (o) => posed[o+1] + 1.2 * (posed[o+4]*posed[o+5] - posed[o+6]*posed[o+3]);
+  check("the pose-only call holds ground and raises the guard",
+        Math.abs(posed[2] - posedFrom[2]) < 0.35 && posed[7] === 1 &&
+        guardTipY(9) > posed[1] + 0.10 && guardTipY(16) > posed[1] + 0.10,
+        `moved ${(posed[2]-posedFrom[2]).toFixed(2)} m, state ${posed[7]}, ` +
+        `guard tips +${(guardTipY(9)-posed[1]).toFixed(2)}/+${(guardTipY(16)-posed[1]).toFixed(2)}`);
+
   // A BIG tear is a knockdown: the stand cuts out, the machine drops under
   // its own weight, and then it hauls itself back up to height.
   E.w_reset(1, 0);
