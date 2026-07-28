@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CORE BREAKER</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🤖</text></svg>">
+<title>THE FIGURE</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🦴</text></svg>">
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -13,7 +13,7 @@
     font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
   .wrap { max-width: 700px; margin: 0 auto; }
-  h1 { font-size: 24px; margin: 0 0 4px; }
+  h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: .02em; }
   .sub { color: #93a0b8; margin: 0 0 20px; }
   .card { background: #141821; border: 1px solid #232a38; border-radius: 12px; padding: 18px 20px; margin: 0 0 16px; }
   button {
@@ -31,64 +31,47 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>CORE BREAKER</h1>
-  <p class="sub"><span id="fightCount">Six fights.</span> Another machine wants your core. Strip its armour, smash what's underneath — before it does the same to you. <span id="buildTag"></span></p>
+  <h1>THE FIGURE</h1>
+  <p class="sub">One opponent, standing in your room, built on a human skeleton. Hit it and the
+     metal caves where you land. Hit the same place enough and the bone comes off, and whatever
+     was below it goes too. <span id="buildTag"></span></p>
 
   <div class="card">
-    <button id="enter" disabled>Checking headset…</button>
-    <button id="enterAR" disabled style="display:none">Passthrough</button>
+    <button id="enterAR" disabled>Checking headset…</button>
+    <button id="enter" disabled style="background:#2b3242;color:#e8ecf4;margin-left:10px">In VR instead</button>
     <button id="resetFloor" style="background:#2b3242;color:#e8ecf4;margin-left:10px">Reset floor</button>
-    <button id="resetSpan" style="background:#2b3242;color:#e8ecf4;margin-left:10px">Reset arm span</button>
-    <button id="resetCamp" style="background:#2b3242;color:#e8ecf4;margin-left:10px">Reset campaign</button>
     <p class="status" id="status">Loading…</p>
   </div>
 
   <div class="card">
     <ul>
-      <li><strong>First time:</strong> set the floor (controller on the ground, pull trigger), then
-          your arm span (arms straight out, pull trigger). Both are remembered — and so is the
-          campaign: chapter, unlocked arms and laps survive taking the headset off.
-          <strong>Reset campaign</strong> above starts over.</li>
-      <li><strong>Raise both fists above your head</strong> to start the fight — the two glowing
-          markers show you exactly where. Same gesture to rematch and to travel on.</li>
-      <li><strong>Read its body.</strong> Club drawn <em>high</em>: an overhead is coming.
-          Drawn <em>wide</em>: a sweep, around your guard — it telegraphs longer, use the time.
-          Catch a club on your arm and it rings off: that is a parry, and it costs you nothing.</li>
-      <li><strong>Make your windows.</strong> Tear a slab off its plate and it staggers open-armed.
-          Tear a big one and it goes <em>down</em> — then climbs back up. Its recovery is your
-          punish window; when its plate stops counting you'll hear two rising notes — the core
-          is bare.</li>
-      <li><strong>Watch your wrists and your metal.</strong> Left wrist: your plate, then your
-          hull in red. Right wrist: your arm class. Arms glowing hot: you're near the redline —
-          past it they weaken until they cool. Pace your punches.</li>
-      <li><strong>Plays seated:</strong> the machine fits itself to your head height live, and
-          every gesture works from a chair. Motion-sensitive? Add <code>?calm=1</code> to the
-          address to remove all view shake.</li>
-      <li><strong>Tune the feel yourself:</strong> add <code>?grip=1.3</code> or
-          <code>?spring=1.25</code> (0.3–3, multipliers) to this page's address before
-          entering VR to scale the wrist pull and the arm actuators. The report names
-          any active knob — tell me the numbers that feel right.</li>
-      <li>Press <strong>A</strong> (or <strong>X</strong> on the left controller) between fights to change arm weight. Heavy arms hit far harder,
-          lumber, and cook fast; light arms dance and sting. Each victory unlocks the next class
-          and toughens your hull.</li>
-      <li><strong>If your hull gives out you are knocked down, not dead.</strong> The other
-          machine breaks to its corner and the count bells strike. Raise both fists above
-          your head and hold — the machine stands back up whole. Once per fight; the second
-          knockdown is the loss.</li>
-      <li><strong>The practice box</strong> floats behind your right shoulder, in reach — beat on
-          it and the steel itself crumples, vertex by vertex, exactly where you land. This is the
-          deformation the robots will inherit; judge it here first.</li>
-      <li><strong>Passthrough:</strong> the second button starts the same fight in YOUR room —
-          just you and the machine, no arena. Works anywhere you have a clear couple of metres.</li>
-      <li>Five chapters, five machines, five places. Beat the thing that does not stand on the
-          earth and the sky is yours — and if you go again, the machines remember you: every
-          lap they come faster. Every sound is synthesised from the physics — nothing is a
-          recording.</li>
+      <li><strong>Passthrough is the point.</strong> It stands on your real floor, in your real
+          room, and nothing else is drawn. Give yourself a clear couple of metres.</li>
+      <li><strong>First time:</strong> rest a controller on the floor and pull the trigger. That is
+          the only calibration, and it is remembered. Its height is taken from yours — it is
+          built to your size, so it stands eye to eye.</li>
+      <li><strong>Raise both fists above your head</strong> to bring one in. The two glowing
+          markers show you where. Same gesture when it is finished, for the next one.</li>
+      <li><strong>There is no core, no reactor, nothing to detonate.</strong> There is a body.
+          Every bone dents under your fists — the surface craters where you land and stays
+          cratered — and a bone beaten past a third of itself breaks off, taking everything
+          below it. Break an elbow and the forearm and hand go together.</li>
+      <li><strong>The legs are the way down.</strong> Take one and it drops to that knee and stops
+          walking. Take both and it goes down for good. The head and the chest are the slow way.</li>
+      <li><strong>It reads like a person because it is jointed like one</strong> — ball shoulders
+          and hips, hinge elbows and knees, a spine in three parts. Watch the arm draw back;
+          that is the whole telegraph. When it has thrown one, it is open.</li>
+      <li><strong>Plays seated,</strong> and every gesture works from a chair. Motion-sensitive?
+          Add <code>?calm=1</code> to the address for no view shake at all.</li>
+      <li><strong>Tune it yourself:</strong> <code>?power=</code> (0.3–3) scales how much of your
+          arm goes into a punch, <code>?tempo=</code> (0.3–2) how fast it fights. The report names
+          any knob you set. Tell me the numbers that felt right.</li>
+      <li>Every sound is synthesised from the physics as it happens — nothing here is a recording.</li>
     </ul>
   </div>
 
   <div class="card">
-    <p style="margin:0 0 4px"><strong>Report</strong> — updates live, and stays here after you exit VR.</p>
+    <p style="margin:0 0 4px"><strong>Report</strong> — updates live, and stays here after you exit.</p>
     <pre id="report">(not started)</pre>
   </div>
 </div>
@@ -97,60 +80,42 @@
 (function () {
   "use strict";
   var enterBtn = document.getElementById("enter");
+  var arBtn = document.getElementById("enterAR");
   var statusEl = document.getElementById("status");
   var reportEl = document.getElementById("report");
 
   function setStatus(m, warn) { statusEl.textContent = m; statusEl.className = warn ? "status warn" : "status"; }
+  function report(txt) { reportEl.textContent = txt; }
+
+  var BUILD = 1;
+  var tagEl = document.getElementById("buildTag");
+  if (tagEl) tagEl.textContent = "Build " + BUILD + ".";
 
   var canvas = document.createElement("canvas");
-  var gl = canvas.getContext("webgl2", { xrCompatible: true });
+  var gl = canvas.getContext("webgl2", { xrCompatible: true, antialias: true, alpha: true });
   if (!gl) { setStatus("WebGL2 unavailable.", true); return; }
 
+  // --- maths ------------------------------------------------------------------
   function mul(a, b) {
     var o = new Float32Array(16);
-    for (var c = 0; c < 4; c++) for (var r = 0; r < 4; r++)
+    for (var c = 0; c < 4; c++) for (var r = 0; r < 4; r++) {
       o[c*4+r] = a[r]*b[c*4] + a[4+r]*b[c*4+1] + a[8+r]*b[c*4+2] + a[12+r]*b[c*4+3];
+    }
     return o;
   }
   function trs(p, q, s) {
-    // s may be a number (uniform) or [x,y,z].
-    var sx = (typeof s === "number") ? s : s[0];
-    var sy = (typeof s === "number") ? s : s[1];
-    var sz = (typeof s === "number") ? s : s[2];
-    var x=q[0],y=q[1],z=q[2],w=q[3];
-    var x2=x+x,y2=y+y,z2=z+z;
-    var xx=x*x2,xy=x*y2,xz=x*z2,yy=y*y2,yz=y*z2,zz=z*z2,wx=w*x2,wy=w*y2,wz=w*z2;
+    var x=q[0], y=q[1], z=q[2], w=q[3];
+    var xx=x*x, yy=y*y, zz=z*z, xy=x*y, xz=x*z, yz=y*z, wx=w*x, wy=w*y, wz=w*z;
+    var sx = s[0], sy = s[1], sz = s[2];
     return new Float32Array([
-      (1-(yy+zz))*sx, (xy+wz)*sx, (xz-wy)*sx, 0,
-      (xy-wz)*sy, (1-(xx+zz))*sy, (yz+wx)*sy, 0,
-      (xz+wy)*sz, (yz-wx)*sz, (1-(xx+yy))*sz, 0,
+      (1-2*(yy+zz))*sx, (2*(xy+wz))*sx,   (2*(xz-wy))*sx,   0,
+      (2*(xy-wz))*sy,   (1-2*(xx+zz))*sy, (2*(yz+wx))*sy,   0,
+      (2*(xz+wy))*sz,   (2*(yz-wx))*sz,   (1-2*(xx+yy))*sz, 0,
       p[0], p[1], p[2], 1
     ]);
   }
 
-  // Block letters, 3x5, forged from the same cubes as everything else. The
-  // campaign has to be written IN the world — the page's chapter titles do
-  // not exist inside a headset, and a playtest that never saw them asked,
-  // fairly, where the campaign was. 3-bit rows, top first, bit 2 = left.
-  var GLYPH = {
-    A:[2,5,7,5,5], C:[3,4,4,4,3], D:[6,5,5,5,6], E:[7,4,6,4,7], F:[7,4,6,4,4],
-    G:[3,4,5,5,3], H:[5,5,7,5,5], I:[7,2,2,2,7], J:[1,1,1,5,2], N:[5,7,7,5,5],
-    O:[2,5,5,5,2], P:[6,5,6,4,4], R:[6,5,6,5,5], S:[3,4,2,1,6], T:[7,2,2,2,2],
-    U:[5,5,5,5,7], V:[5,5,5,5,2], W:[5,5,7,7,5], " ":[0,0,0,0,0]
-  };
-  function drawText(items, str, cx, cy, cz, s, col) {
-    var x0 = cx - ((str.length * 4 - 1) * s) / 2;
-    for (var gI2 = 0; gI2 < str.length; gI2++) {
-      var gRows = GLYPH[str[gI2]];
-      if (!gRows) continue;
-      for (var gRy = 0; gRy < 5; gRy++)
-        for (var gRx = 0; gRx < 3; gRx++)
-          if (gRows[gRy] & (4 >> gRx))
-            items.push({ m: trs([x0 + (gI2 * 4 + gRx) * s, cy + (4 - gRy) * s, cz],
-                                [0, 0, 0, 1], s * 0.46), c: col, mat: 5 });
-    }
-  }
-
+  // --- shaders ----------------------------------------------------------------
   function sh(t, src) {
     var s = gl.createShader(t); gl.shaderSource(s, src); gl.compileShader(s);
     if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) setStatus("Shader: " + gl.getShaderInfoLog(s), true);
@@ -164,7 +129,7 @@
   gl.attachShader(prog, sh(gl.FRAGMENT_SHADER,
     "#version 300 es\nprecision mediump float;in vec3 vN;in vec3 vW;" +
     "uniform vec3 uC;uniform float uMat;uniform vec3 uEye;out vec4 o;" +
-    // cheap value noise from a hash — every material's grain comes from this
+    // cheap value noise from a hash — the grain of everything comes from this
     "float h(vec3 p){return fract(sin(dot(p,vec3(127.1,311.7,74.7)))*43758.5453);}" +
     "float vn(vec3 p){vec3 i=floor(p);vec3 f=fract(p);f=f*f*(3.0-2.0*f);" +
     "float a=mix(h(i),h(i+vec3(1,0,0)),f.x);float b=mix(h(i+vec3(0,1,0)),h(i+vec3(1,1,0)),f.x);" +
@@ -173,24 +138,19 @@
     "void main(){" +
     "vec3 n=normalize(vN);vec3 base=uC;float rough=0.75;float spec=0.15;" +
     "int m=int(uMat+0.5);" +
-    "if(m==1){float ring=0.5+0.5*sin((vW.x*2.1+vW.y*0.4)*22.0+vn(vW*9.0)*3.0);" +
-    "  base*=0.82+0.20*ring;base*=0.9+0.2*vn(vW*33.0);rough=0.9;spec=0.05;}" +          // wood
-    "else if(m==2){base*=0.78+0.36*vn(vW*17.0);base*=0.92+0.12*vn(vW*61.0);rough=0.85;spec=0.08;}" + // stone
-    "else if(m==3){float brush=0.5+0.5*sin(vW.y*640.0+vn(vW*11.0)*5.0);" +
-    "  base*=0.94+0.045*brush;base*=0.92+0.10*vn(vW*29.0);spec=0.75;rough=0.30;}" +                                   // steel
-    "else if(m==4){vec2 g=abs(fract(vW.xz*1.0)-0.5);float line=smoothstep(0.485,0.5,max(g.x,g.y));" +
-    "  base*=0.85+0.30*vn(vW*5.0);base=mix(base,base*1.9,line*0.5);rough=0.9;spec=0.05;}" + // floor
-    "else if(m==5){o=vec4(uC,1.0);return;}" +                                            // emissive
-    "else{base*=0.90+0.16*vn(vW*23.0);spec=0.35;rough=0.5;}" +                           // hull
+    "if(m==1){float brush=0.5+0.5*sin(vW.y*640.0+vn(vW*11.0)*5.0);" +
+    "  base*=0.94+0.045*brush;base*=0.92+0.10*vn(vW*29.0);spec=0.75;rough=0.30;}" +   // bone metal
+    "else if(m==2){o=vec4(uC,1.0);return;}" +                                        // emissive
+    "else if(m==3){vec2 g=abs(fract(vW.xz*1.0)-0.5);float line=smoothstep(0.485,0.5,max(g.x,g.y));" +
+    "  base*=0.85+0.30*vn(vW*5.0);base=mix(base,base*1.9,line*0.5);rough=0.9;spec=0.05;}" + // VR floor
+    "else{base*=0.90+0.16*vn(vW*23.0);spec=0.40;rough=0.45;}" +                      // your gauntlets
     "vec3 L1=normalize(vec3(0.45,1.0,0.35));vec3 L2=normalize(vec3(-0.6,0.3,-0.5));" +
     "float d1=max(dot(n,L1),0.0);float d2=max(dot(n,L2),0.0)*0.35;" +
     "float wrap=0.5+0.5*dot(n,L1);" +
     "vec3 V=normalize(uEye-vW);vec3 H=normalize(L1+V);" +
     "float sp=pow(max(dot(n,H),0.0),mix(64.0,8.0,rough))*spec;" +
-    "float rim=pow(1.0-max(dot(n,V),0.0),3.0)*0.12;" +
-    "vec3 col=base*(0.30+0.55*d1+0.18*d2+0.12*wrap)+vec3(sp)+vec3(rim);" +
-    "float fog=clamp(length(uEye-vW)/26.0,0.0,1.0);fog*=fog;" +
-    "col=mix(col,vec3(0.055,0.075,0.11),fog);" +
+    "float rim=pow(1.0-max(dot(n,V),0.0),3.0)*0.14;" +
+    "vec3 col=base*(0.32+0.55*d1+0.18*d2+0.12*wrap)+vec3(sp)+vec3(rim);" +
     "o=vec4(col,1.0);}"));
   gl.linkProgram(prog);
   var uVP = gl.getUniformLocation(prog, "uVP");
@@ -200,6 +160,7 @@
   var uEye = gl.getUniformLocation(prog, "uEye");
   var eyePos = [0, 1.6, 0];
 
+  // The plain box, for everything that is not the figure.
   var V = [
      1,-1,-1,1,0,0, 1,-1,1,1,0,0, 1,1,1,1,0,0, 1,1,-1,1,0,0,
     -1,-1,1,-1,0,0,-1,-1,-1,-1,0,0,-1,1,-1,-1,0,0,-1,1,1,-1,0,0,
@@ -208,7 +169,7 @@
     -1,-1,1,0,0,1, -1,1,1,0,0,1, 1,1,1,0,0,1, 1,-1,1,0,0,1,
      1,-1,-1,0,0,-1, 1,1,-1,0,0,-1,-1,1,-1,0,0,-1,-1,-1,-1,0,0,-1
   ];
-  var I = []; for (var f = 0; f < 6; f++) { var b = f*4; I.push(b,b+1,b+2,b,b+2,b+3); }
+  var I = []; for (var fq = 0; fq < 6; fq++) { var bq = fq*4; I.push(bq,bq+1,bq+2,bq,bq+2,bq+3); }
   var vao = gl.createVertexArray(); gl.bindVertexArray(vao);
   var vbo = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(V), gl.STATIC_DRAW);
@@ -219,15 +180,14 @@
   gl.bindVertexArray(null);
   gl.enable(gl.DEPTH_TEST);
 
-  // --- the deformable mesh ---------------------------------------------------
-  // A real mesh whose VERTICES take the hit — not repositioned boxes. Each
-  // face of the practice box is a grid of quads in one dynamic vertex
-  // buffer; every impact caves the surface in around the contact point,
-  // raises a rim, and the crumple is permanent. This is the metal the next
-  // robot will wear, auditioned on a single block. (Playtest request:
-  // "actual deformations in the mesh, not just rendered.")
-  var DEF_N = 10;                       // quads per cube edge
-  function buildDeformMesh(cx, cy, cz, half) {
+  // --- the deformable mesh ----------------------------------------------------
+  // A real mesh whose VERTICES take the hit — not repositioned boxes. Each face
+  // of a bone is a grid of quads in one dynamic vertex buffer; every impact
+  // caves the surface in around the contact point, raises a rim, and the
+  // crumple is permanent. This is the one piece of the old project that was
+  // unambiguously right, and it is now what the entire opponent is made of.
+  var DEF_N = 8;                        // quads per box edge
+  function buildDeformMesh(half) {
     var verts = [], idx = [];
     var faces = [
       [[ 1,0,0],[0,1,0],[0,0,1]], [[-1,0,0],[0,1,0],[0,0,-1]],
@@ -256,118 +216,21 @@
     var va = new Float32Array(verts);
     gl.bufferData(gl.ARRAY_BUFFER, va, gl.DYNAMIC_DRAW);
     var debo = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, debo);
-    var ia = new Uint16Array(idx);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, ia, gl.STATIC_DRAW);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,24,0);
     gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1,3,gl.FLOAT,false,24,12);
     gl.bindVertexArray(null);
-    return { vao: dvao, vbo: dvbo, verts: va, idx: ia, n: idx.length,
-             cx: cx, cy: cy, cz: cz, half: half, dirty: false,
-             hits: 0, deepest: 0, busted: false, rested: false, vy: 0, fallA: 0,
-             m: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, cx, cy, cz, 1]) };
-  }
-  // ---- the opponent's body, in deformable mesh -------------------------------
-  // Every part of the machine is a vox grid in the engine. Hidden from the
-  // engine's box renderer, each is drawn here as a subdivided mesh that caves
-  // where it is hit — the practice piece's treatment, on the thing you fight.
-  // The mesh lives in the part's LOCAL frame (centre 0,0,0) and the part's world
-  // pose goes into its model matrix, so it follows a swinging limb for free.
-  var harMeshes = [];
-
-  function releaseHarMeshes() {
-    for (var i = 0; i < harMeshes.length; i++) {
-      var m = harMeshes[i].mesh;
-      if (m) { gl.deleteVertexArray(m.vao); gl.deleteBuffer(m.vbo); }
-    }
-    harMeshes = [];
+    return { vao: dvao, vbo: dvbo, verts: va, idx: new Uint16Array(idx), n: idx.length,
+             half: half, dirty: false, hits: 0, deepest: 0,
+             m: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]) };
   }
 
-  function buildHarMeshes(hullC, plateGrid) {
-    releaseHarMeshes();
-    if (!E.w_enemy_part_grid || !E.w_vox_grid_pose) return;
-    var n = E.w_enemy_part_count ? E.w_enemy_part_count() : 14;
-    // The fourteen parts AND the chest plate. The plate is a separate 7x7 grid
-    // and it is the biggest thing on the machine — leaving it on the engine's
-    // box renderer meant the one surface you punch most was the one surface
-    // that still broke into chunks instead of caving.
-    var grids = [];
-    for (var q = 0; q < n; q++) grids.push(E.w_enemy_part_grid(q));
-    if (plateGrid !== undefined && plateGrid !== null && plateGrid >= 0) grids.push(plateGrid);
-    for (var p = 0; p < grids.length; p++) {
-      var g = grids[p];
-      if (g < 0) continue;
-      var f = new Float32Array(E.memory.buffer);
-      var o = E.w_vox_grid_pose(g) >>> 2;
-      var ex = f[o+7], ey = f[o+8], ez = f[o+9];
-      var big = Math.max(ex, Math.max(ey, ez));
-      if (!(big > 0)) continue;
-      // One cube mesh at the part's largest half extent; the model matrix
-      // squashes it to the real proportions, so a 1x1x4 limb reads as a limb.
-      var mesh = buildDeformMesh(0, 0, 0, big);
-      mesh.cx = 0; mesh.cy = 0; mesh.cz = 0;
-      harMeshes.push({ grid: g, mesh: mesh, alive: 1,
-                       sx: ex/big, sy: ey/big, sz: ez/big,
-                       q: [0,0,0,1], wx: 0, wy: 0, wz: 0,
-                       color: hullC || [0.55,0.58,0.64] });
-      E.w_vox_hide(g, 1);     // the engine stops drawing boxes for it
-    }
-  }
-
-  // Follow the parts. Called every frame the enemy exists.
-  function updateHarMeshes() {
-    if (!harMeshes.length) return;
-    var f = new Float32Array(E.memory.buffer);
-    for (var i = 0; i < harMeshes.length; i++) {
-      var h = harMeshes[i];
-      var o = E.w_vox_grid_pose(h.grid) >>> 2;
-      h.alive = f[o+10];
-      var qx = f[o+3], qy = f[o+4], qz = f[o+5], qw = f[o+6];
-      h.q[0]=qx; h.q[1]=qy; h.q[2]=qz; h.q[3]=qw;
-      h.wx = f[o]; h.wy = f[o+1]; h.wz = f[o+2];
-      var xx=qx*qx, yy=qy*qy, zz=qz*qz, xy=qx*qy, xz=qx*qz, yz=qy*qz,
-          wx=qw*qx, wy=qw*qy, wz=qw*qz, m = h.mesh.m;
-      m[0]=(1-2*(yy+zz))*h.sx; m[1]=(2*(xy+wz))*h.sx;   m[2]=(2*(xz-wy))*h.sx;   m[3]=0;
-      m[4]=(2*(xy-wz))*h.sy;   m[5]=(1-2*(xx+zz))*h.sy; m[6]=(2*(yz+wx))*h.sy;   m[7]=0;
-      m[8]=(2*(xz+wy))*h.sz;   m[9]=(2*(yz-wx))*h.sz;   m[10]=(1-2*(xx+yy))*h.sz; m[11]=0;
-      m[12]=h.wx; m[13]=h.wy; m[14]=h.wz; m[15]=1;
-    }
-  }
-
-  // Rotate a world vector into a part's local frame (conjugate rotation).
-  function intoLocal(q, x, y, z, out) {
-    var ix=-q[0], iy=-q[1], iz=-q[2], w=q[3];
-    var tx = 2*(iy*z - iz*y), ty = 2*(iz*x - ix*z), tz = 2*(ix*y - iy*x);
-    out[0] = x + w*tx + (iy*tz - iz*ty);
-    out[1] = y + w*ty + (iz*tx - ix*tz);
-    out[2] = z + w*tz + (ix*ty - iy*tx);
-    return out;
-  }
-
-  var HL = [0,0,0], HD = [0,0,0];
-  // Route one engine impact to the part it landed on and crumple it there.
-  function dentHarPart(grid, wx, wy, wz, force, svx, svy, svz) {
-    for (var i = 0; i < harMeshes.length; i++) {
-      var h = harMeshes[i];
-      if (h.grid !== grid || h.alive <= 0) continue;
-      intoLocal(h.q, wx - h.wx, wy - h.wy, wz - h.wz, HL);
-      intoLocal(h.q, svx || 0, svy || 0, svz || 0, HD);
-      // The mesh is drawn squashed, so undo that squash on the way in or the
-      // crater lands off the spot on any part that is not a cube.
-      deformAt(h.mesh, HL[0]/(h.sx||1), HL[1]/(h.sy||1), HL[2]/(h.sz||1),
-               force, HD[0], HD[1], HD[2]);
-      return true;
-    }
-    return false;
-  }
-
-  // An impact: cave every vertex near the contact point inward along the
-  // hit direction, with a raised rim around the crater. Permanent.
-  function deformAt(mesh, wx, wy, wz, force, svx, svy, svz) {
-    var lx = wx - mesh.cx, ly = wy - mesh.cy, lz = wz - mesh.cz;
-    // The crumple follows the BLOW: cave along the striker's velocity, so
-    // tops and bottoms crater as truly as the sides (toward-centre made
-    // top-face dents degenerate). Centre-seeking only when the impact
-    // direction is too small to trust.
+  // An impact: cave every vertex near the contact point inward along the blow,
+  // with a raised rim around the crater. Permanent.
+  function deformAt(mesh, lx, ly, lz, force, svx, svy, svz) {
+    // The crumple follows the BLOW, so a hammer-fist on the top of a shoulder
+    // craters straight down. Centre-seeking only when the impact direction is
+    // too small to trust — that fallback made top-face dents degenerate.
     var inx, iny, inz;
     var sl = Math.hypot(svx || 0, svy || 0, svz || 0);
     if (sl > 0.4) { inx = svx/sl; iny = svy/sl; inz = svz/sl; }
@@ -375,8 +238,8 @@
       var il = Math.hypot(lx, ly, lz) || 1;
       inx = -lx/il; iny = -ly/il; inz = -lz/il;
     }
-    var depth = Math.min(0.02 + force * 0.0006, 0.028);
-    var R = mesh.half * 1.1;
+    var depth = Math.min(0.018 + force * 0.0007, 0.030);
+    var R = mesh.half * 1.15;
     var maxPush = mesh.half * 0.55;
     for (var vi = 0; vi < mesh.verts.length; vi += 6) {
       var dx = mesh.verts[vi] - lx, dy = mesh.verts[vi+1] - ly, dz = mesh.verts[vi+2] - lz;
@@ -393,13 +256,14 @@
       // Never push a vertex past the box's heart — metal folds, it doesn't invert.
       var px = mesh.verts[vi] + inx * push, py = mesh.verts[vi+1] + iny * push,
           pz = mesh.verts[vi+2] + inz * push;
-      if (Math.hypot(px, py, pz) < mesh.half * (1 - 0) - maxPush) continue;
+      if (Math.hypot(px, py, pz) < mesh.half - maxPush) continue;
       mesh.verts[vi] = px; mesh.verts[vi+1] = py; mesh.verts[vi+2] = pz;
       if (push > mesh.deepest) mesh.deepest = push;
     }
     mesh.hits++;
     mesh.dirty = true;
   }
+
   // Lighting stays honest: normals recomputed from the crumpled triangles.
   function refreshDeformMesh(mesh) {
     var v = mesh.verts, ix = mesh.idx;
@@ -421,8 +285,92 @@
     gl.bufferData(gl.ARRAY_BUFFER, v, gl.DYNAMIC_DRAW);
     mesh.dirty = false;
   }
-  var defBox = null;
 
+  // --- the figure's bones, in deformable mesh ---------------------------------
+  // Every bone is a voxel grid in the engine, hidden from the engine's box
+  // renderer and drawn here as a subdivided mesh that caves where it is hit.
+  // The mesh lives in the bone's LOCAL frame and the bone's world pose goes
+  // into its model matrix, so it follows a swinging limb for free — and a bone
+  // that has been snapped off keeps its dents on the way to the floor.
+  var boneMeshes = [];
+
+  function releaseBoneMeshes() {
+    for (var i = 0; i < boneMeshes.length; i++) {
+      var m = boneMeshes[i].mesh;
+      if (m) { gl.deleteVertexArray(m.vao); gl.deleteBuffer(m.vbo); }
+    }
+    boneMeshes = [];
+  }
+
+  function buildBoneMeshes() {
+    releaseBoneMeshes();
+    if (!E.w_fig_bone_grid) return;
+    var n = E.w_fig_bone_count();
+    for (var b = 0; b < n; b++) {
+      var g = E.w_fig_bone_grid(b);
+      if (g < 0) continue;
+      var f = new Float32Array(E.memory.buffer);
+      var o = E.w_vox_grid_pose(g) >>> 2;
+      var ex = f[o+7], ey = f[o+8], ez = f[o+9];
+      var big = Math.max(ex, Math.max(ey, ez));
+      if (!(big > 0)) continue;
+      // One cube mesh at the bone's largest half extent; the model matrix
+      // squashes it to the real proportions, so a 1x3x1 limb reads as a limb.
+      boneMeshes.push({ bone: b, grid: g, mesh: buildDeformMesh(big), alive: 1,
+                        sx: ex/big, sy: ey/big, sz: ez/big,
+                        q: [0,0,0,1], wx: 0, wy: 0, wz: 0 });
+      E.w_vox_hide(g, 1);     // the engine stops drawing boxes for it
+    }
+  }
+
+  function updateBoneMeshes() {
+    if (!boneMeshes.length) return;
+    var f = new Float32Array(E.memory.buffer);
+    for (var i = 0; i < boneMeshes.length; i++) {
+      var h = boneMeshes[i];
+      var o = E.w_vox_grid_pose(h.grid) >>> 2;
+      h.alive = f[o+10];
+      var qx = f[o+3], qy = f[o+4], qz = f[o+5], qw = f[o+6];
+      h.q[0]=qx; h.q[1]=qy; h.q[2]=qz; h.q[3]=qw;
+      h.wx = f[o]; h.wy = f[o+1]; h.wz = f[o+2];
+      var xx=qx*qx, yy=qy*qy, zz=qz*qz, xy=qx*qy, xz=qx*qz, yz=qy*qz,
+          wx=qw*qx, wy=qw*qy, wz=qw*qz, m = h.mesh.m;
+      m[0]=(1-2*(yy+zz))*h.sx; m[1]=(2*(xy+wz))*h.sx;   m[2]=(2*(xz-wy))*h.sx;   m[3]=0;
+      m[4]=(2*(xy-wz))*h.sy;   m[5]=(1-2*(xx+zz))*h.sy; m[6]=(2*(yz+wx))*h.sy;   m[7]=0;
+      m[8]=(2*(xz+wy))*h.sz;   m[9]=(2*(yz-wx))*h.sz;   m[10]=(1-2*(xx+yy))*h.sz; m[11]=0;
+      m[12]=h.wx; m[13]=h.wy; m[14]=h.wz; m[15]=1;
+    }
+  }
+
+  // Rotate a world vector into a bone's local frame (conjugate rotation).
+  var HL = [0,0,0], HD = [0,0,0];
+  function intoLocal(q, x, y, z, out) {
+    var ix=-q[0], iy=-q[1], iz=-q[2], w=q[3];
+    var tx = 2*(iy*z - iz*y), ty = 2*(iz*x - ix*z), tz = 2*(ix*y - iy*x);
+    out[0] = x + w*tx + (iy*tz - iz*ty);
+    out[1] = y + w*ty + (iz*tx - ix*tz);
+    out[2] = z + w*tz + (ix*ty - iy*tx);
+    return out;
+  }
+
+  // Route one engine impact to the bone it landed on and crumple it there.
+  function dentBone(grid, wx, wy, wz, force, svx, svy, svz) {
+    for (var i = 0; i < boneMeshes.length; i++) {
+      var h = boneMeshes[i];
+      if (h.grid !== grid || h.alive <= 0) continue;
+      intoLocal(h.q, wx - h.wx, wy - h.wy, wz - h.wz, HL);
+      intoLocal(h.q, svx || 0, svy || 0, svz || 0, HD);
+      // The mesh is drawn squashed, so undo that squash on the way in or the
+      // crater lands off the spot on any bone that is not a cube.
+      deformAt(h.mesh, HL[0]/(h.sx||1), HL[1]/(h.sy||1), HL[2]/(h.sz||1),
+               force, HD[0], HD[1], HD[2]);
+      return true;
+    }
+    return false;
+  }
+
+  // --- draw -------------------------------------------------------------------
+  var BONE_COL = [0.56, 0.60, 0.67];
   function draw(vp, items) {
     gl.useProgram(prog); gl.uniformMatrix4fv(uVP, false, vp); gl.bindVertexArray(vao);
     gl.uniform3fv(uEye, eyePos);
@@ -432,1868 +380,451 @@
       gl.uniform1f(uMat, items[i].mat || 0);
       gl.drawElements(gl.TRIANGLES, I.length, gl.UNSIGNED_SHORT, 0);
     }
-    if (defBox) {
-      if (defBox.dirty) refreshDeformMesh(defBox);
-      gl.bindVertexArray(defBox.vao);
-      gl.uniformMatrix4fv(uM, false, defBox.m);
-      gl.uniform3fv(uC, [0.62, 0.66, 0.74]);
-      gl.uniform1f(uMat, 3);
-      gl.drawElements(gl.TRIANGLES, defBox.n, gl.UNSIGNED_SHORT, 0);
-      gl.bindVertexArray(vao);
-    }
-    // The opponent's own body, part by part, in the same deforming mesh as the
-    // practice piece — so punches CRUMPLE the machine you are fighting instead
-    // of chipping cells off it.
-    for (var hm = 0; hm < harMeshes.length; hm++) {
-      var HM = harMeshes[hm];
-      if (HM.alive <= 0) continue;              // torn off: the engine drew it away
+    // The figure, bone by bone, in the deforming mesh — so punches CRUMPLE
+    // what you are fighting instead of chipping cells off it.
+    for (var hm = 0; hm < boneMeshes.length; hm++) {
+      var HM = boneMeshes[hm];
+      if (HM.alive <= 0) continue;              // gone: nothing left of it
       if (HM.mesh.dirty) refreshDeformMesh(HM.mesh);
       gl.bindVertexArray(HM.mesh.vao);
       gl.uniformMatrix4fv(uM, false, HM.mesh.m);
-      gl.uniform3fv(uC, HM.color);
-      gl.uniform1f(uMat, 3);
+      gl.uniform3fv(uC, BONE_COL);
+      gl.uniform1f(uMat, 1);
       gl.drawElements(gl.TRIANGLES, HM.mesh.n, gl.UNSIGNED_SHORT, 0);
       gl.bindVertexArray(vao);
     }
     gl.bindVertexArray(null);
   }
 
-  // --- flat preview -----------------------------------------------------------
-  // ?flat=1 runs the whole game without a headset: same engine, same shaders,
-  // same fight, drawn to an ordinary canvas from a fixed camera with a
-  // scripted pilot. It exists so the game's look can be SEEN — screenshotted,
-  // reviewed, improved — without putting a headset on. The playtest feedback
-  // that forced it: nobody building this had ever actually looked at it.
+  // --- knobs, and the flat preview --------------------------------------------
+  // ?flat=1 runs the whole thing without a headset: same engine, same shaders,
+  // same fight, drawn to an ordinary canvas from a fixed camera with a scripted
+  // pilot. It exists so the look can be SEEN — screenshotted, reviewed,
+  // improved — without putting a headset on. Nobody building the old project
+  // had ever actually looked at it, and it showed.
   var FLAT = typeof location !== "undefined" && /[?&]flat=1/.test(location.search);
+  var KNOB_POWER = 1, KNOB_TEMPO = 1, KNOB_CALM = false;
+  if (typeof location !== "undefined") {
+    var mP = location.search.match(/[?&]power=([0-9.]+)/);
+    var mT = location.search.match(/[?&]tempo=([0-9.]+)/);
+    if (mP) KNOB_POWER = Math.min(3, Math.max(0.3, parseFloat(mP[1]) || 1));
+    if (mT) KNOB_TEMPO = Math.min(2, Math.max(0.3, parseFloat(mT[1]) || 1));
+    KNOB_CALM = /[?&]calm=1/.test(location.search);
+  }
   if (FLAT) {
     canvas.width = 1280; canvas.height = 720;
     canvas.style.cssText = "width:100%;max-width:960px;border-radius:12px;display:block;margin:0 0 16px";
     if (document.querySelector) document.querySelector(".wrap").insertBefore(canvas, document.querySelector(".card"));
-    try {
-      localStorage.setItem("box3d.floorY", "0");
-      localStorage.setItem("box3d.armSpan", "1.75");
-    } catch (e) {}
+    try { localStorage.setItem("box3d.floorY", "0"); } catch (e) {}
   }
 
-  // Feel knobs, straight from the URL, usable IN VR: add ?grip=1.3 or
-  // ?spring=1.25 (multipliers) to the address before Enter VR and the
-  // wrist pull / joint actuators scale to match. The report names any
-  // active knob. This exists so a headset session can A/B the punch feel
-  // in minutes instead of round-tripping every guess through a rebuild.
-  var KNOB_GRIP = 1, KNOB_SPRING = 1, KNOB_CALM = false;
-  if (typeof location !== "undefined") {
-    var mG = location.search.match(/[?&]grip=([0-9.]+)/);
-    var mS = location.search.match(/[?&]spring=([0-9.]+)/);
-    if (mG) KNOB_GRIP = Math.min(3, Math.max(0.3, parseFloat(mG[1]) || 1));
-    if (mS) KNOB_SPRING = Math.min(3, Math.max(0.3, parseFloat(mS[1]) || 1));
-    KNOB_CALM = /[?&]calm=1/.test(location.search);
-  }
-
-  function flatStart() {
-    floorY = 0; armSpan = 1.75; sizeArm();
-    // ?flat=1&ch=N previews a later chapter directly — the only way to look
-    // at the Foundry or the High Dark without playing there first.
-    var fch = (location.search.match(/[?&]ch=(\d)/) || [])[1];
-    if (fch) {
-      chapter = Math.min(CAMPAIGN.length - 1, +fch);
-      unlockedLevel = Math.min(DENSITIES.length - 1, chapter + 1);
-    }
-    var t0 = null, fakeT = 0;
-    var perspM = (function () {
-      var f = 1 / Math.tan(0.5 * 1.05), a = canvas.width / canvas.height;
-      var n = 0.05, fa2 = 40;
-      return new Float32Array([f/a,0,0,0, 0,f,0,0, 0,0,(fa2+n)/(n-fa2),-1, 0,0,2*fa2*n/(n-fa2),0]);
-    })();
-    function lookAt(e, c) {
-      var zx=e[0]-c[0], zy=e[1]-c[1], zz=e[2]-c[2];
-      var zl=Math.hypot(zx,zy,zz); zx/=zl; zy/=zl; zz/=zl;
-      var xx=zz*0-0*zy, xy=0*zx-1*zz, xz=1*zy-zx*0;   // up x z
-      xx=-zy*0+1*zz*0; // recompute properly below
-      xx = (1*zz - 0*zy); xy = (0*zx - 0*zz); xz = (0*zy - 1*zx);
-      // x = normalize(cross(up, z)), up=(0,1,0)
-      xx = zz; xy = 0; xz = -zx;
-      var xl=Math.hypot(xx,xy,xz)||1; xx/=xl; xy/=xl; xz/=xl;
-      var yx=zy*xz-zz*xy, yy=zz*xx-zx*xz, yz=zx*xy-zy*xx;
-      return new Float32Array([
-        xx,yx,zx,0, xy,yy,zy,0, xz,yz,zz,0,
-        -(xx*e[0]+xy*e[1]+xz*e[2]), -(yx*e[0]+yy*e[1]+yz*e[2]), -(zx*e[0]+zy*e[1]+zz*e[2]), 1]);
-    }
-    // Scripted pilot, state-aware: whatever the frame rate, it holds its fists
-    // up until the match actually starts, then throws a steady punch. Long
-    // previews ride the whole campaign — win, travel, next chapter.
-    function pilot(tS) {
-      var L = { x:-0.24, y:1.15, z:-0.30 }, R = { x:0.24, y:1.15, z:-0.30 };
-      if (match === "FIGHT") {
-        var c = tS % 0.9, out = c < 0.45 ? c/0.45 : (0.9-c)/0.45;
-        R = { x: 0.08, y: 1.10, z: -0.22 - 0.48*out };
-      } else if (tS > 1.0) { L.y = R.y = 1.80; L.z = R.z = -0.10; }
-      return [L, R];
-    }
-    var fakeSpaces = [{ i: 0 }, { i: 1 }];
-    var fakeSources = fakeSpaces.map(function (sp2, i) {
-      return { handedness: i ? "right" : "left", gripSpace: sp2, targetRaySpace: sp2,
-               gamepad: { buttons: [ {pressed:false,value:0},{pressed:false,value:0},
-                                     {pressed:false,value:0},{pressed:false,value:0},
-                                     {pressed:false,value:0} ] } };
-    });
-    session = {
-      renderState: { baseLayer: { framebuffer: null,
-        getViewport: function () { return { x:0, y:0, width: canvas.width, height: canvas.height }; } } },
-      inputSources: fakeSources,
-      requestAnimationFrame: function (cb) { requestAnimationFrame(function (tt) { cb(tt, fakeFrame); }); },
-      addEventListener: function () {},
-    };
-    var hands = [{x:-0.24,y:1.15,z:-0.30},{x:0.24,y:1.15,z:-0.30}];
-    // ?pov=1 renders the flat preview from the PILOT'S EYES instead of the
-    // third-person camera. The third-person view lied about scale — close
-    // to the machines, everything looks big — and a playtest had to point
-    // out that a screenshot from over there is not what a headset sees.
-    var FLAT_POV = /[?&]pov=1/.test(location.search);
-    var fakeFrame = {
-      getViewerPose: function () {
-        var tS = fakeT;
-        var eye = FLAT_POV ? [0, 1.62, 0] : [0.55, 1.75, 0.85];
-        var at = FLAT_POV ? [0, 1.45, -3.0] : [0, 1.1, -1.0];
-        var vm2 = lookAt(eye, at);
-        eyePos = eye;
-        return { transform: { position: { x: 0, y: 1.62, z: 0 } },
-                 views: [{ projectionMatrix: perspM, transform: { inverse: { matrix: vm2 } } }] };
-      },
-      getPose: function (sp2) {
-        var h = hands[sp2.i];
-        return { transform: { position: { x: h.x, y: h.y, z: h.z },
-                              orientation: { x: 0, y: 0, z: 0, w: 1 } } };
-      },
-    };
-    refSpace = { kind: "flat" }; spaceKind = "flat"; floorReal = true;
-    var drive = function (tt, frame) {
-      if (t0 === null) t0 = tt;
-      fakeT = (tt - t0) / 1000;          // real seconds since preview start
-      var ph = pilot(fakeT);
-      hands[0] = ph[0]; hands[1] = ph[1];
-      onFrame(tt, fakeFrame);
-    };
-    session.requestAnimationFrame = function (cb) {
-      requestAnimationFrame(function (tt) { drive(tt, fakeFrame); });
-    };
-    setStatus("Flat preview running.");
-    drive(0, fakeFrame);
-  }
-
-  if (FLAT) {
-    enterBtn.disabled = false; enterBtn.textContent = "Preview running";
-    setStatus("Flat preview: same game, no headset.");
-    // wait for the wasm, then go
-    var flatWait = setInterval(function () {
-      if (E) { clearInterval(flatWait); flatStart(); }
-    }, 60);
-  }
-  else if (!navigator.xr) { setStatus("No WebXR. Open this in the Meta Quest Browser.", true); }
-  else {
-    navigator.xr.isSessionSupported("immersive-vr").then(function (ok) {
-      if (ok) { enterBtn.disabled = false; enterBtn.textContent = "Enter VR"; setStatus("Ready."); }
-      else setStatus("WebXR present but no VR device.", true);
-    });
-    // Passthrough: the same fight, standing in YOUR room.
-    navigator.xr.isSessionSupported("immersive-ar").then(function (ok) {
-      if (ok && arBtn) { arBtn.disabled = false; arBtn.style.display = ""; }
-    }).catch(function () {});
-  }
-
-  var refSpace = null, spaceKind = "?", floorReal = false, session = null;
-  var lines = [];
-
-  // Floor height, set by the player rather than assumed.
-  //
-  // Every VR game does this, and for good reason: the runtime's idea of the
-  // floor is often absent or wrong, and guessing at it has been the single
-  // biggest source of things ending up at the wrong height here. Put a
-  // controller on the ground, pull the trigger, done — and it is remembered, so
-  // it is asked once and not every session.
-  var floorY = null;
+  // --- the floor --------------------------------------------------------------
+  // Set by the player, never inferred from the runtime. That is a house rule
+  // this project learned the hard way: a runtime that declines a local-floor
+  // space puts the origin at your eyes, and a figure built against it stands
+  // in the ceiling.
+  var floorY = null, floorReal = false, spaceKind = "";
   try {
-    var saved = localStorage.getItem("box3d.floorY");
-    if (saved !== null) floorY = parseFloat(saved);
+    var stored = localStorage.getItem("box3d.floorY");
+    if (stored !== null) floorY = parseFloat(stored);
   } catch (e) {}
-  var prevTrig = false;
-
-  var resetBtn = document.getElementById("resetFloor");
-  if (resetBtn) resetBtn.addEventListener("click", function () {
-    floorY = null;
-    try { localStorage.removeItem("box3d.floorY"); } catch (e) {}
-    setStatus("Floor cleared. Enter VR, rest a controller on the ground and pull the trigger.");
-  });
-
-  var spanBtn = document.getElementById("resetSpan");
-  if (spanBtn) spanBtn.addEventListener("click", function () {
-    armSpan = null; built = false;
-    try { localStorage.removeItem("box3d.armSpan"); } catch (e) {}
-    setStatus("Arm span cleared. In VR, hold both arms straight out and pull a trigger.");
-  });
-
-  var campBtn = document.getElementById("resetCamp");
-  if (campBtn) campBtn.addEventListener("click", function () {
-    chapter = 0; unlockedLevel = 1; lap = 0; level = Math.min(level, 1);
-    built = false;
-    try { localStorage.removeItem("box3d.campaign"); } catch (e) {}
-    setStatus("Campaign reset: chapter 1, two arm classes, no laps on the ring.");
-  });
-
   function setFloor(y) {
     floorY = y;
     try { localStorage.setItem("box3d.floorY", String(y)); } catch (e) {}
   }
+  var rf = document.getElementById("resetFloor");
+  if (rf) rf.addEventListener("click", function () {
+    floorY = null;
+    try { localStorage.removeItem("box3d.floorY"); } catch (e) {}
+    setStatus("Floor cleared. In the headset, rest a controller on the ground and pull the trigger.");
+  });
 
-  function report(txt) { reportEl.textContent = txt; }
-
-  // --- the machine ---------------------------------------------------------
-  var E = null, built = false;
-  // The arm has to be the length of *your* arm.
-  //
-  // It was 1.04 m from shoulder to tip while the controller never got further
-  // than 0.70 m away and averaged 0.52 — twice the distance it had to span. An
-  // arm that long has nowhere to put the extra except a permanent double fold,
-  // which is why the elbow sat at angles that had nothing to do with yours.
-  //
-  // With the hand mapped 1:1 there is no way around this: the linkage must
-  // match the pilot or the pose can never agree. A mech can still be huge — the
-  // limbs are thick and the torso is heavy — but the joints have to sit where
-  // yours do. Shoulder to grip is about a third of standing height, so it comes
-  // from the head height the headset reports rather than from a guess.
-  // So the machine is measured off you, standing there, with your arms out —
-  // the same way the floor is measured off the controller you put on it.
-  // Guessing it from a height ratio was the wrong answer to the right problem.
-  var THICK = 0.06;
-  var TOOL_LEN = 2 * THICK * 1.0;      // must match the mount in w_mech_create
-  var UPPER_LEN = 0.26, FORE_LEN = 0.21, SHOULDER_HALF = 0.20;
-
-  // Wingspan, fingertip to fingertip, as the headset measured it.
-  var armSpan = null;
-  try {
-    var savedSpan = localStorage.getItem("box3d.armSpan");
-    if (savedSpan !== null) armSpan = parseFloat(savedSpan);
-  } catch (e) {}
-
-  function sizeArm() {
-    if (!armSpan) return;                       // not measured yet
-    // Shoulder breadth is a little under a quarter of a span; the rest is arm.
-    SHOULDER_HALF = armSpan * 0.11;
-    var bones = Math.max(0.20, armSpan * 0.5 - SHOULDER_HALF - TOOL_LEN);
-    UPPER_LEN = bones * 0.55;
-    FORE_LEN = bones * 0.45;
-  }
-
-  function setSpan(w) {
-    armSpan = w;
-    try { localStorage.setItem("box3d.armSpan", String(w)); } catch (e) {}
-  }
-  // These two are joint friction — how stiff the mechanism is — not motors
-  // driving the arm anywhere. At the 1400 and 900 N m they used to carry, the
-  // arm was being hauled by the hand and braked by its own joints at the same
-  // time, and it thrashed.
-  // Joint friction only. The pose now comes from an IK solve driven into the
-  // joints' own springs, so any real stiction here just fights it: at 25/16 the
-  // arm barely moved at all, and the springs could not overcome the brake.
-  var SHOULDER_TORQUE = 4, ELBOW_TORQUE = 3;
-  // A quarter turn is the widest cone Box3D accepts; it was being given 2.2 rad
-  // and silently going degenerate, since the assert that would have caught it
-  // is compiled out of a release build.
-  var CONE = 1.5707;
-  // Measured on the real build: 400 tracks closely, 3000 overshoots and drags
-  // the torso, 7800 cannot be swung at all by these joints.
-  // Top end trimmed: 7800 could not be swung at all, which is a broken toy
-  // rather than a heavy one. These all move; they just move differently.
-  var DENSITIES = [350, 800, 1600, 2800];
-  var level = 1;
-  var prevCycle = { l: false, r: false };
-
-  // --- the match ---
-  // CALIBRATE is implicit (floor/span). READY waits for fists-up. FIGHT runs
-  // the enemy. WON/LOST hold until fists-up rematches.
-  // --- the campaign: five chapters, five machines, five places ---
-  // Each chapter is a machine AND a place: skyline height/colour, floor
-  // tint, and the pillar material change with the fight, so travelling
-  // arrives somewhere that looks like its name.
-  // EBULK is the mech multiplier on every opponent's physical volume. The
-  // cockpit view proved that human-proportioned opponents read as toys
-  // from three metres — a machine you box has to be BUILT like a machine.
-  var EBULK = 1.55;
-  var CAMPAIGN = [
-    // The JAGUAR opens the ladder. In One Must Fall it is the chassis every
-    // pilot starts on — a lean security machine, the fastest thing of its
-    // size, light enough that a clean hit tells. It teaches the fight: quick
-    // enough to punish standing still, thin enough in the core to reward
-    // stripping armour properly. Ochre plate over a gunmetal frame.
-    { name: "JAGUAR", place: "The Owner's Yard",
-      story: "A rich man's bodyguard, off its leash. Fast, and it knows it.",
-      // Durability is set for a pilot carrying UNLOCKED arms into chapter 1 on
-      // a later lap, not for the starting set — at mat 0 and core 150 it died
-      // to a single punch, which is not a fight. Stone plate and a fuller core;
-      // still the lightest machine on the ladder, just no longer a formality.
-      // Still dying in three punches at core 260 on stone. Steel plate and a
-      // core past the Juggernaut's: a narrow machine has less plate area to
-      // strip, so it needs the metal to be worth stripping.
-      // Tempo is not just speed — bridge.c picks the attack mix from it, and
-      // only a machine UNDER 0.9 draws the heavy overhead crush as its main
-      // line. Above it, half of every eight swings is the short-telegraph JAB.
-      // At 1.20 this thing flurried at you like a person, which is the one
-      // thing a giant machine must never do. 0.78 buys both halves of what a
-      // heavy hitter is: the overhead mix, and a telegraph that runs 22%
-      // longer instead of 20% shorter, because the same tempo scales s_eTimer.
-      mat: 2, scale: 0.82, core: 420, hover: 0, tempo: 0.78, pillarMat: 0,
-      skyC: [0.135,0.12,0.145], skyH: 0.7, skyN: 10, floorC: [0.175,0.17,0.205],
-      // Blue, from the game's own HAR-select sprite — NOT the ochre this was
-      // first built in, which was invented out of nothing. The sprite reads:
-      // saturated blue plate, RED joint dots at every articulation, and a gold
-      // cat-face emblem across the chest, which is the one feature that says
-      // Jaguar from any distance. Limbs are thin and lanky, the head is small.
-      // jointC and crestC are the pieces the renderer cannot use yet — the
-      // enemy's part geometry is shared across the whole roster, so a per-
-      // machine head shape and chest crest is the next job, not a colour tweak.
-      hullC: [0.16,0.28,0.78], jointC: [0.85,0.13,0.13], crestC: [0.86,0.72,0.16],
-      // The silhouette is the whole point: the Jaguar is lanky. Four cells to
-      // a limb segment makes every limb a quarter of the stock thickness at
-      // the same reach, and a 3x1x2 head is wide and flat instead of a cube.
-      // Human proportions, and the height is the half that matters. Legs fill
-      // whatever gap the trunk leaves to the floor, so a SHORT trunk is what
-      // buys long legs — at 0.92 this was a fridge on stilts. 0.55 puts the hip
-      // near half the standing height, which is roughly where a person's is.
-      // Height stays near stock. Cutting the trunk to 0.55 changed the torso's
-      // inertia enough that the upright spring — tuned for the stock body —
-      // could not hold it, and the machine floated on its face. Narrowing is
-      // safe because it does not fight that spring; shortening is not.
-      // limbCells cuts a limb segment into that many cubes ALONG ITS LENGTH,
-      // so each cell — and therefore the limb — is length/N thick. More cells
-      // is a THINNER limb, not a finer one. At 3 the legs read as chicken
-      // legs; 2 keeps the Jaguar lean without the machine standing on wire.
-      // The head was [3,1,2] — one cell tall, a flap rather than a head. It
-      // needs real height before a visor band means anything on it.
-      limbs: 2, head: [3,3,3], torso: [0.66, 0.98, 0.74], visor: 1,
-      pillars: [[-2.5,-1.5],[2.4,-1.9],[-2.0,1.5],[2.2,1.3]] },
-    { name: "SCRAPPER", place: "The Scrapfields",
-      story: "An old harvester frame, re-armed. It remembers being told to dig.",
-      mat: 0, scale: 0.85, core: 170, hover: 0, tempo: 1.15, pillarMat: 0,
-      skyC: [0.14,0.115,0.085], skyH: 0.6, skyN: 11, floorC: [0.185,0.175,0.195],
-      hullC: [0.36,0.26,0.20],
-      pillars: [[-2.4,-1.8],[2.0,-2.3],[-1.6,1.2],[2.5,0.9],[-2.6,-0.2]] },
-    { name: "WARDEN", place: "Milltown Ring",
-      story: "Town watch chassis. Stone-plated. Patient. It has never lost here.",
-      mat: 1, scale: 1.0, core: 260, hover: 0, tempo: 1.0, pillarMat: 1,
-      skyC: [0.115,0.115,0.13], skyH: 1.0, skyN: 9, floorC: [0.16,0.185,0.235],
-      hullC: [0.28,0.30,0.36],
-      pillars: [[-2.1,-2.1],[2.1,-2.1],[-2.1,1.4],[2.1,1.4]] },
-    { name: "THE DANCER", place: "Saltyard Row",
-      story: "Built to spar the champions. It has never been allowed to win.",
-      mat: 0, scale: 0.80, core: 220, hover: 0, tempo: 1.35, pillarMat: 0,
-      skyC: [0.10,0.12,0.12], skyH: 0.8, skyN: 13, floorC: [0.15,0.19,0.20],
-      hullC: [0.30,0.34,0.30],
-      pillars: [[-1.9,-2.2],[1.9,-2.2],[-2.6,0.2],[2.6,0.2],[-1.6,1.6],[1.6,1.6]] },
-    { name: "JUGGERNAUT", place: "The Foundry",
-      story: "Foundry guard, steel-skinned. Bring your heaviest arms.",
-      mat: 2, scale: 1.25, core: 340, hover: 0, tempo: 0.85, pillarMat: 1,
-      skyC: [0.125,0.10,0.095], skyH: 1.7, skyN: 11, floorC: [0.155,0.16,0.20], ember: 1,
-      hullC: [0.17,0.16,0.17],
-      pillars: [[-2.3,-2.6],[-2.3,-0.8],[-2.3,1.0],[2.3,-2.6],[2.3,-0.8],[2.3,1.0]] },
-    { name: "THE RETURNED", place: "The High Dark",
-      story: "It does not stand on the earth. The old gods never did.",
-      mat: 2, scale: 1.35, core: 430, hover: 1, tempo: 1.25, pillarMat: 2,
-      skyC: [0.05,0.055,0.095], skyH: 2.3, skyN: 5, floorC: [0.095,0.11,0.155],
-      hullC: [0.20,0.14,0.26], stars: 1,
-      pillars: [] },
-  ];
-  var chapter = 0;
-  var lap = 0;                       // finish the campaign and go again:
-                                     // the machines remember you, faster
-  // The campaign survives taking the headset off. Progress loads here and
-  // saves at every milestone; the flat preview never touches it, so the
-  // screenshot loop stays deterministic.
-  function saveCampaign() {
-    if (FLAT) return;
-    try {
-      localStorage.setItem("box3d.campaign",
-        JSON.stringify({ c: chapter, u: unlockedLevel, l: lap, v: level }));
-    } catch (e) {}
-  }
-  var unlockedLevel = 1;             // arm weights unlock as the campaign goes
-  if (!FLAT) {
-    try {
-      var savedCamp = JSON.parse(localStorage.getItem("box3d.campaign") || "null");
-      if (savedCamp) {
-        chapter = Math.min(Math.max(savedCamp.c | 0, 0), CAMPAIGN.length - 1);
-        unlockedLevel = Math.min(Math.max(savedCamp.u | 0, 1), DENSITIES.length - 1);
-        lap = Math.min(Math.max(savedCamp.l | 0, 0), 3);
-        level = Math.min(Math.max(savedCamp.v | 0, 0), unlockedLevel);
-      }
-    } catch (e) {}
-  }
-  var match = "READY";
-  var fistTimer = 0, endTimer = 0, frameDt = 1 / 72;
-  var travelTimer = 0, rumbleT = 0, travelThump = 0, eStepT = 0;
-  var sparks = [], prevEPlate = null, scrapeT = 0;
-  var motes = [], moteT = 0, prevPlateFrac = null;
-  var lastCount = 11;                // the knockdown count's last-struck bell
-  var dmgFlash = 0;                  // seconds your own arms burn red after a hull hit
-  var lastTier = 0, alarmT = 0;      // the hull's spoken damage arc
-  var lastPartsDead = 0;             // severed-part events fire on the rise
-  var prevEnemyPos = null, eStride = 0, lastStepN = 0;
-  var eyeYMax = 0;                   // tallest head line seen — the pilot's real eye height
-  var whooshT = 0, prevArmSpd = 0;
-  var hitStop = 0;
-  // Overheat: swing hard and long and the actuators cook. Heavier arms heat
-  // faster. Past the redline they weaken until you let them cool.
-  var heat = 0, overheated = false;
-  // The second wind: when your hull gives out the legs cut, the machine drops,
-  // and you get one chance — knuckle-drag yourself to the repair pad before
-  // the countdown dies, while the other machine keeps coming. Phase 1's
-  // locomotion fallback, exactly where the design always wanted it.
-  var O = { x: 0, y: 0, z: 0 };
-  var AR = false;                    // passthrough: draw the machines, not the world
-  var practiceGrid = -1;             // the deformation testbed's hidden collider
-  var arBtn = document.getElementById("enterAR");
-  var secondWind = false, padTimer = 0;
-  var playerCoreLimit = 130;         // momentum the bare hull can take;
-                                     // grows with the machine you have earned
-  var enemyGrid = -1, playerGrid = -1;
-  var prevStats = null, prevChunks = 0, prevEnemy = null;
-  var shake = 0;                     // seconds of view shake left
-
-  // --- sound: synthesised from the physics, no recordings ---
-  var AC = null, humOsc = null, humGain = null, humFilt = null;
-  var droneGain = null;
+  // --- sound: synthesised from the physics, no recordings ---------------------
+  var AC = null;
   function audioInit() {
     if (AC) return;
-    try {
-      AC = new (window.AudioContext || window.webkitAudioContext)();
-      humOsc = AC.createOscillator(); humOsc.type = "sawtooth"; humOsc.frequency.value = 55;
-      humFilt = AC.createBiquadFilter(); humFilt.type = "lowpass"; humFilt.frequency.value = 120;
-      humGain = AC.createGain(); humGain.gain.value = 0.0;
-      humOsc.connect(humFilt); humFilt.connect(humGain); humGain.connect(AC.destination);
-      humOsc.start();
-      // The God's drone: a low beat-note pair that only opens while a
-      // hovering machine is alive and the fight is on.
-      var d1 = AC.createOscillator(); d1.type = "sine"; d1.frequency.value = 47;
-      var d2 = AC.createOscillator(); d2.type = "sine"; d2.frequency.value = 47.7;
-      droneGain = AC.createGain(); droneGain.gain.value = 0.0;
-      d1.connect(droneGain); d2.connect(droneGain); droneGain.connect(AC.destination);
-      d1.start(); d2.start();
-    } catch (e) { AC = null; }
+    try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { AC = null; }
   }
   function noiseBurst(dur, cutoff, gain) {
     if (!AC) return;
-    var n = AC.sampleRate * dur, buf = AC.createBuffer(1, n, AC.sampleRate);
+    var n = Math.floor(AC.sampleRate * dur);
+    var buf = AC.createBuffer(1, n, AC.sampleRate);
     var d = buf.getChannelData(0);
-    for (var i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
-    var srcN = AC.createBufferSource(); srcN.buffer = buf;
-    var f = AC.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = cutoff;
+    for (var i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2.2);
+    var src = AC.createBufferSource(); src.buffer = buf;
+    var flt = AC.createBiquadFilter(); flt.type = "lowpass"; flt.frequency.value = cutoff;
     var g = AC.createGain(); g.gain.value = gain;
-    srcN.connect(f); f.connect(g); g.connect(AC.destination);
-    srcN.start();
+    src.connect(flt); flt.connect(g); g.connect(AC.destination); src.start();
   }
-  function thud(mag) { noiseBurst(0.16, 320 + 140 * mag, Math.min(0.55, 0.12 + 0.10 * mag)); }
-  function stomp(gain) { if (!AC) return;
-    var o = AC.createOscillator(); o.type = "sine"; o.frequency.value = 52;
-    var g = AC.createGain(); g.gain.setValueAtTime(gain, AC.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + 0.18);
-    o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime + 0.2); }
-  // The hull alarm: a two-tone klaxon blip, sharper with each tier, so the
-  // machine narrates its own decline — the floor never arrives unannounced.
-  function klaxon(n) { if (!AC) return;
-    var f0 = n >= 3 ? 700 : n === 2 ? 560 : 460;
-    for (var kq = 0; kq < 2; kq++) {
-      var o = AC.createOscillator(); o.type = "square";
-      o.frequency.value = f0 * (kq ? 0.75 : 1);
-      var g = AC.createGain(); g.gain.value = 0.0001;
-      var t0 = AC.currentTime + kq * 0.11;
-      g.gain.setValueAtTime(0.085, t0);
-      g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.10);
-      o.connect(g); g.connect(AC.destination); o.start(t0); o.stop(t0 + 0.13);
-    } }
-  // The knockdown count's bell: struck metal, rising in pitch with urgency
-  // (0 = first strike, 1 = the last), so the arithmetic is audible.
-  function bell(urgency) { if (!AC) return;
-    for (var bT = 0; bT < 2; bT++) {
-      var o = AC.createOscillator(); o.type = "triangle";
-      o.frequency.value = (bT ? 1318 : 880) * (1 + 0.25 * urgency);
-      var g = AC.createGain(); g.gain.value = 0.0001;
-      g.gain.setValueAtTime(0.14 + 0.10 * urgency, AC.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + 0.5);
-      o.connect(g); g.connect(AC.destination);
-      o.start(); o.stop(AC.currentTime + 0.55);
-    } }
-  function boom() { noiseBurst(0.7, 140, 0.6);
+  // A blow: the thump of mass arriving, scaled by the momentum behind it.
+  function thud(mag) { noiseBurst(0.16, 300 + 150 * mag, Math.min(0.55, 0.10 + 0.11 * mag)); }
+  // A bone going: a crack, then the clatter of it hitting your floor.
+  function crack() {
     if (!AC) return;
-    var o = AC.createOscillator(); o.type = "sine"; o.frequency.value = 68;
-    var g = AC.createGain(); g.gain.setValueAtTime(0.5, AC.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + 0.7);
-    o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime + 0.72);
+    noiseBurst(0.09, 3200, 0.42);
+    var o = AC.createOscillator(), g = AC.createGain();
+    o.type = "square"; o.frequency.setValueAtTime(220, AC.currentTime);
+    o.frequency.exponentialRampToValueAtTime(60, AC.currentTime + 0.22);
+    g.gain.setValueAtTime(0.30, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + 0.34);
+    o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime + 0.35);
   }
-  function clang(mag) {
+  // It hit you.
+  function slam(mag) { noiseBurst(0.22, 180, Math.min(0.6, 0.2 + 0.1 * mag)); }
+  // It is finished.
+  function fell() { noiseBurst(0.8, 130, 0.55); }
+  // Two rising notes: one is standing in front of you.
+  function arrive() {
     if (!AC) return;
-    noiseBurst(0.05, 5200, 0.10);
-    for (var k = 0; k < 2; k++) {
-      var o = AC.createOscillator(); o.type = "triangle";
-      o.frequency.value = 1900 + k * 640 + Math.random() * 90;
-      var g = AC.createGain();
-      g.gain.setValueAtTime(Math.min(0.30, 0.07 + 0.05 * mag), AC.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + 0.22);
-      o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime + 0.24);
-    }
+    [0, 0.13].forEach(function (t, i) {
+      var o = AC.createOscillator(), g = AC.createGain();
+      o.type = "triangle"; o.frequency.value = i ? 392 : 294;
+      g.gain.setValueAtTime(0.0001, AC.currentTime + t);
+      g.gain.exponentialRampToValueAtTime(0.16, AC.currentTime + t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, AC.currentTime + t + 0.34);
+      o.connect(g); g.connect(AC.destination); o.start(AC.currentTime + t);
+      o.stop(AC.currentTime + t + 0.36);
+    });
   }
-  function sting(win) {
-    if (!AC) return;
-    var notes = win ? [392, 494, 587, 784] : [220, 174, 147];
-    for (var i = 0; i < notes.length; i++) {
-      var o = AC.createOscillator(); o.type = "square"; o.frequency.value = notes[i];
-      var g = AC.createGain(); g.gain.value = 0.0001;
-      var t0 = AC.currentTime + i * 0.13;
-      g.gain.setValueAtTime(0.0001, t0);
-      g.gain.exponentialRampToValueAtTime(0.14, t0 + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.35);
-      o.connect(g); g.connect(AC.destination); o.start(t0); o.stop(t0 + 0.4);
-    }
+  function haptic(src, strength, ms) {
+    if (!src || !src.gamepad || !src.gamepad.hapticActuators) return;
+    var h = src.gamepad.hapticActuators[0];
+    if (h && h.pulse) { try { h.pulse(strength, ms); } catch (e) {} }
   }
-  function haptic(src2, strength, ms) {
-    try {
-      if (src2 && src2.gamepad && src2.gamepad.hapticActuators &&
-          src2.gamepad.hapticActuators[0])
-        src2.gamepad.hapticActuators[0].pulse(strength, ms);
-    } catch (e) {}
-  }
-  // Upper arm, forearm, attachment half-size — replaced with the engine's own
-  // figures once the machine is built.
-  var segLen = [UPPER_LEN, FORE_LEN, THICK * 1.3];
-  // Must match the hull in w_mech_create, or the drawn torso is not the torso.
-  var TORSO_HALF = [0.20, 0.22, 0.13];
 
-  // Where the torso sits relative to your eyes.
-  //
-  // The engine mounts the shoulders 0.17 m above the torso's centre, and a
-  // standing person's shoulder is about 0.23 m below their eyes — so the centre
-  // goes 0.40 m down. That also puts the top of the torso 0.18 m below eye
-  // level, which is below the chin: the machine is under your head, not around
-  // it.
-  var HEAD_TO_CHEST = 0.40;
-  var headY = 1.62;                                   // until a real pose arrives
-  function chestY() { return headY - HEAD_TO_CHEST; }
+  // --- the world ---------------------------------------------------------------
+  var E = null, built = false, AR = false;
+  var session = null, refSpace = null, failure = null;
+  var STEP = 1 / 72, acc = 0, lastT = 0;
+  var stature = 1.75, statureSeen = 0;
+  var MATCH = "BOOT";
+  var fistUp = 0, downHold = 0;
+  var shake = 0, shakeT = 0;
+  var totalHits = 0, totalBroke = 0, deepest = 0, tookHits = 0;
+  var figState = "WAIT";
+  var FIG_STATES = ["WAIT","STEP","WINDUP","STRIKE","RECOVER","FALLING","DOWN"];
 
-  var hpBase = { x: 0, z: 0 };
-  var memRef = { mem: null };
-  var wasi = {
-    fd_write: function (fd, iovs, iovcnt, pnum) {
-      try {
-        var dv = new DataView(memRef.mem.buffer), w = 0;
-        for (var i = 0; i < iovcnt; i++) w += dv.getUint32(iovs + i*8 + 4, true);
-        dv.setUint32(pnum, w, true);
-      } catch (e) {}
-      return 0;
-    },
-    fd_close: function(){return 0;}, fd_fdstat_get: function(){return 0;}, fd_seek: function(){return 0;}
-  };
+  // Your fists. Half a hand across, and the arm behind them counts: a punch
+  // does not arrive as a loose fist, and a bare fist mass craters one cell
+  // where a real blow should stave a panel in.
+  var FIST_HALF = 0.055;
+  var REACH_MASS = 4.0;
+  // 30 Hz is stiff enough that the gauntlet sits ON your hand rather than
+  // trailing it, which an implicit joint spring can do and an explicit force
+  // cannot. The force ceiling is what stops your fist driving through
+  // something it cannot move.
+  var FIST_HZ = 30, FIST_MAXF = 1200;
 
-  // BUILD is bumped on every engine deploy. It version-tags the wasm fetch so
-  // a cached page can never run a mismatched engine (the Quest browser and
-  // the Pages CDN both cache hard — a playtest once got the old game and,
-  // fairly, could not tell), and it is printed on the card so which build
-  // loaded is never a guess.
-  var BUILD = 31;
-  var bTag = document.getElementById("buildTag");
-  if (bTag) bTag.textContent = "(build " + BUILD + ")";
-  // The ladder's length lives in one place — the blurb reads it rather than
-  // claiming a number that goes stale the moment a machine is added.
-  var fTag = document.getElementById("fightCount");
-  if (fTag) {
-    var WORDS = ["No","One","Two","Three","Four","Five","Six","Seven","Eight","Nine","Ten"];
-    fTag.textContent = (WORDS[CAMPAIGN.length] || CAMPAIGN.length) + " fights.";
-  }
-  fetch("box3d.wasm?v=" + BUILD)
-    .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.arrayBuffer(); })
-    .then(function (b) { return WebAssembly.instantiate(b, { wasi_snapshot_preview1: wasi }); })
-    .then(function (res) {
-      memRef.mem = res.instance.exports.memory;
-      res.instance.exports._initialize();
-      E = res.instance.exports;
-      if (typeof E.w_mech_create !== "function") {
-        setStatus("The engine file is out of date — no mech support yet.", true);
-        E = null;
-      }
-    })
-    .catch(function (e) { setStatus("Could not load the engine: " + e.message, true); });
-
-  function buildWorld(hx, hz) {
-    // headY is set from the live pose each frame; use it here too.
-    E.w_reset(1, floorY);
-    sizeArm();                      // headY is live by now, so this fits you
-    hpBase.x = hx; hpBase.z = hz;
-    E.w_mech_create(hx, chestY(), hz, UPPER_LEN, FORE_LEN, THICK,
-                    DENSITIES[level], SHOULDER_TORQUE, ELBOW_TORQUE, CONE,
-                    SHOULDER_HALF);
-    var L = E.w_mech_lengths() >>> 2, lf = new Float32Array(E.memory.buffer);
-    segLen = [lf[L], lf[L + 1], lf[L + 2]];
-    // You wear steel; it wears stone. It starts across the arena.
-    var ch2 = CAMPAIGN[chapter];
-    playerGrid = E.w_player_plate(1);   // stone plate; your edge is skill
-    E.w_vox_hide(playerGrid, 1);        // simulated, damageable, NOT in your face
-    // Sized against the pilot, not against a constant — and told BEFORE
-    // creation, because the legs are built to fill exactly the gap the
-    // stature leaves to the floor. The engine default
-    // stands every torso around waist height — the playtest read that as
-    // fighting something half your size. From your real eye line (best
-    // head height seen, or the arm-span rule of thumb before that) the
-    // ladder lands on the body: the Dancer at your chin, the Warden eye
-    // to eye, the Juggernaut overhead, the God floating above all of it.
-    // The floor of the estimate errs TALL — a machine slightly too big is
-    // drama, one too small is a toy. The cockpit view proved the first
-    // stature pass wrong: eye-line parity with human bulk still reads as
-    // a toy from three metres away. Machines are MECHS now — EBULK
-    // widens every physical box, and the ladder starts ABOVE your eyes:
-    // even the Dancer looks slightly down at you, the Warden clearly
-    // down, the Juggernaut is close to three metres of iron, and the
-    // God hovers over all of it. Guarded: a stale cached engine without
-    // the export degrades to the old stature, never a fault loop.
-    // The ceiling came down on request: "I don't wanna be looking up the
-    // whole time I'm trying to fight a robot." The top of the ladder now
-    // sits ~25% above your eye line — big machine, level fight.
-    var eyeEst = Math.min(2.1, Math.max(1.55,
-        Math.max(eyeYMax, (armSpan || 1.75) - 0.12)));
-    var visorY = eyeEst * (0.55 + 0.55 * ch2.scale) + (ch2.hover ? 0.15 : 0);
-    if (E.w_enemy_stature) E.w_enemy_stature(floorY + visorY - 0.34 * ch2.scale * EBULK);
-    // Silhouette, told before creation like the stature. A chassis with `limbs`
-    // set is cut into that many cells per limb segment — same reach, thinner
-    // limb — and `head` reshapes the head in cells so it need not be a cube.
-    // This is what lets one machine be lanky and another stocky.
-    if (E.w_enemy_shape) {
-      E.w_enemy_shape(ch2.limbs || 0,
-                      ch2.head ? ch2.head[0] : 0,
-                      ch2.head ? ch2.head[1] : 0,
-                      ch2.head ? ch2.head[2] : 0);
-    }
-    // Torso proportions, per machine. Shoulders, hips and the chest plate all
-    // follow the width, so a narrow chassis is narrow all the way through
-    // instead of a slim box wearing a slab.
-    if (E.w_enemy_torso && ch2.torso) {
-      E.w_enemy_torso(ch2.torso[0], ch2.torso[1], ch2.torso[2]);
-    }
-    enemyGrid = E.w_enemy_create_ex(hx, hz - 3.2, ch2.mat, ch2.scale * EBULK,
-                                    ch2.core, ch2.hover,
-                                    ch2.tempo * (1 + lap * 0.15));
-    // Pillars: cover, scenery, wreckage-in-waiting. Each chapter lays its
-    // own ground — scattered heaps, the mill square, foundry aisles, and
-    // the High Dark strips the cover entirely: you, the God, the stars.
-    // (Not in passthrough — nobody wants foundry stacks in their lounge,
-    // and an undrawn collider is worse than none.)
-    if (!AR) for (var pP = 0; pP < ch2.pillars.length; pP++) {
-      E.w_vox_create(hx + ch2.pillars[pP][0], floorY, hz + ch2.pillars[pP][1],
-                     4, 16, 4, 0.10, ch2.pillarMat);
-    }
-    // The practice box — "one box that I can just beat on, and we'll see
-    // how it deforms." A hidden steel collider gives the punch its thump
-    // and reports every impact; what you SEE is the real mesh, caving
-    // vertex by vertex where you land. Behind your right shoulder at
-    // spawn, within arm's reach, in VR and passthrough alike.
-    // ONE piece, one life: a single-cell collider whose whole budget is
-    // dents. Nothing chips off along the way — when the budget is spent
-    // the piece breaks free and the crumpled mesh itself falls.
-    practiceGrid = E.w_vox_create(hx + 0.75, floorY + 0.85, hz + 0.35, 1, 1, 1, 0.34, 2);
-    if (E.w_vox_scale_hp) E.w_vox_scale_hp(practiceGrid, 16);
-    E.w_vox_hide(practiceGrid, 1);
-    if (defBox) { gl.deleteVertexArray(defBox.vao); gl.deleteBuffer(defBox.vbo); }
-    defBox = buildDeformMesh(hx + 0.75, floorY + 1.02, hz + 0.35, 0.17);
-    buildHarMeshes(ch2.hullC, enemyGrid);
-    heat = 0; overheated = false;
-    if (KNOB_GRIP !== 1)
-      E.w_mech_tune(5200 * KNOB_GRIP, 1.0, 7800 * KNOB_GRIP, 14000);
-    // The hull hardens with the campaign: each unlocked weight class buys
-    // the frame under you, and a one-hit collapse is a coin flip, not a
-    // fight. The scale rides EBULK cubed (mech-bulk machines land ~3.7x
-    // the momentum per club), and on top of that the base DOUBLED after
-    // the playtest went down in three hits — the fight should be lost
-    // over a beating you failed to block, not a combo you never saw.
-    playerCoreLimit = Math.round((260 + unlockedLevel * 90) * EBULK * EBULK * EBULK);
-    E.w_mech_joint_spring(18000 * KNOB_SPRING, 1.0);
-    E.w_mech_legs(1);
-    O.x = 0; O.y = 0; O.z = 0;
-    secondWind = false;
-    match = "READY";
-    lastCount = 11; lastTier = 0; alarmT = 0; dmgFlash = 0; lastPartsDead = 0;
-    prevStats = null; prevChunks = 0; prevEnemy = null;
-    sparks.length = 0; prevEPlate = null;
-    motes.length = 0; prevPlateFrac = null;
-    endTimer = 0;
+  function buildWorld() {
+    E.w_reset(0, floorY === null ? 0 : floorY);
+    E.w_hand_create(0, -0.3, floorY + 1.1, -0.3, FIST_HALF, 1100, FIST_HZ, 1.0, FIST_MAXF);
+    E.w_hand_create(1,  0.3, floorY + 1.1, -0.3, FIST_HALF, 1100, FIST_HZ, 1.0, FIST_MAXF);
+    E.w_hand_reach_mass(0, REACH_MASS * KNOB_POWER);
+    E.w_hand_reach_mass(1, REACH_MASS * KNOB_POWER);
+    releaseBoneMeshes();
     built = true;
+    MATCH = "READY";
+    totalHits = 0; totalBroke = 0; deepest = 0; tookHits = 0;
   }
 
-  // A limb hangs along its own -Z from its origin, so the drawn box sits half a
-  // length down that axis.
-  function limbItem(a, o, len, thick, col) {
-    var q = [a[o+3], a[o+4], a[o+5], a[o+6]];
-    var h = len * 0.5, vz = -h;
-    var tx = 2*(q[1]*vz), ty = 2*(-q[0]*vz), tz = 0;
-    var cx = q[3]*tx + (q[1]*tz - q[2]*ty);
-    var cy = q[3]*ty + (q[2]*tx - q[0]*tz);
-    var cz = vz + q[3]*tz + (q[0]*ty - q[1]*tx);
-    return { m: trs([a[o]+cx, a[o+1]+cy, a[o+2]+cz], q, [thick, thick, h]), c: col };
+  // Bring one in: two metres away, facing you, built to your height.
+  function spawnFigure(px, pz, hx, hz) {
+    var dx = px - hx, dz = pz - hz;
+    var d = Math.hypot(dx, dz) || 1;
+    E.w_fig_create(hx + dx / d * 2.0, hz + dz / d * 2.0, stature, 2);
+    E.w_fig_tempo(KNOB_TEMPO);
+    E.w_fig_hold(1);
+    buildBoneMeshes();
+    MATCH = "FIGHT";
+    arrive();
   }
 
-  // Anything that threw in the frame loop used to take the whole picture with
-  // it. The frame was cleared, the exception escaped before the draw call, and
-  // the headset showed nothing — a missing function looked exactly like a dead
-  // page. Now the simulation runs inside a guard and whatever was collected is
-  // drawn regardless, so a failure reads as a red grid and a message instead of
-  // blackness.
-  var failure = null;
+  function limbItem(a, b, thick, col, mat) {
+    var dx = b[0]-a[0], dy = b[1]-a[1], dz = b[2]-a[2];
+    var len = Math.hypot(dx, dy, dz) || 1e-4;
+    var ux = dx/len, uy = dy/len, uz = dz/len;
+    // Rotation carrying +Y onto the limb direction.
+    var cx = -uz, cy = 0, cz = ux, cw = 1 + uy;
+    var cl = Math.hypot(cx, cy, cz, cw) || 1;
+    var q = [cx/cl, cy/cl, cz/cl, cw/cl];
+    return { m: trs([(a[0]+b[0])/2, (a[1]+b[1])/2, (a[2]+b[2])/2], q, [thick, len/2, thick]),
+             c: col, mat: mat || 0 };
+  }
+
   function fail(e) {
-    var msg = (e && e.message) ? e.message : String(e);
-    if (msg === failure) return;         // once per distinct fault, not per frame
-    failure = msg;
-    setStatus("Broke in the frame loop: " + msg, true);
+    failure = (e && e.stack ? e.stack.split("\n")[0] : String(e));
+    setStatus("Fault: " + failure, true);
   }
 
-  // Fixed timestep with an accumulator. The old pages stepped the physics
-  // once per display frame, so a 90 or 120 Hz headset ran the world fast and
-  // every dropped frame stuttered it — that is the jank a playtest called
-  // out. Time now comes from the clock: however often the display refreshes,
-  // the world advances at exactly 72 steps a second, catching up by at most
-  // three steps after a hitch.
-  var lastT = 0, acc = 0;
-  var STEP = 1 / 72;
-
+  // --- the frame ---------------------------------------------------------------
   function onFrame(t, frame) {
-    session.requestAnimationFrame(onFrame);
+    try { simulate(t, frame); } catch (e) { fail(e); }
+    if (session) session.requestAnimationFrame(onFrame);
+  }
+
+  var HANDS = [null, null];
+
+  function simulate(t, frame) {
+    var pose = frame.getViewerPose(refSpace);
     var layer = session.renderState.baseLayer;
     gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
-    if (AR) gl.clearColor(0, 0, 0, 0);
-    else gl.clearColor(0.045, 0.06, 0.095, 1);
+    // Passthrough wants a transparent clear: your room is the background.
+    gl.clearColor(0, 0, 0, AR ? 0 : 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-    var pose = frame.getViewerPose(refSpace);
     if (!pose) return;
-    eyePos = [pose.transform.position.x + O.x, pose.transform.position.y + O.y, pose.transform.position.z + O.z];
-    var dtMs = lastT ? Math.min(t - lastT, 100) : STEP * 1000;
-    lastT = t;
-    frameDt = dtMs / 1000;
-    acc = Math.min(acc + dtMs / 1000, STEP * 3);
 
-    var items = [];
-    try { simulate(frame, pose, items); }
-    catch (e) { fail(e); }
+    var head = pose.transform.position;
+    eyePos = [head.x, head.y, head.z];
 
-    // A hit you take is felt in the view: a centimetre of shake, gone in a
-    // sixth of a second. Enough to read as impact, far too small to sicken.
-    var sh = [0, 0, 0];
-    if (shake > 0) {
-      shake -= 1 / 72;
-      var a2 = shake * 60;
-      // Travel sustains its rumble for five seconds, so it runs at half
-      // amplitude — comfort is physiology, not preference.
-      var shAmp = KNOB_CALM ? 0 : (match === "TRAVEL" ? 0.5 : 1);
-      sh = [Math.sin(a2 * 13.3) * 0.008 * shAmp, Math.cos(a2 * 17.1) * 0.006 * shAmp, 0];
+    // The floor. Until it is set, nothing is built — a figure standing at the
+    // wrong height is worse than no figure.
+    var srcs = session.inputSources;
+    HANDS[0] = null; HANDS[1] = null;
+    var ctrl = [null, null], trigger = [false, false];
+    for (var si = 0; si < srcs.length; si++) {
+      var src = srcs[si];
+      var idx = src.handedness === "left" ? 0 : 1;
+      var gp = frame.getPose(src.gripSpace, refSpace);
+      if (gp) ctrl[idx] = gp.transform;
+      HANDS[idx] = src;
+      if (src.gamepad && src.gamepad.buttons[0]) trigger[idx] = src.gamepad.buttons[0].pressed;
     }
-    var shiftM = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0,
-                                   sh[0] - O.x, sh[1] - O.y, sh[2] - O.z, 1]);
-    for (var v = 0; v < pose.views.length; v++) {
-      var view = pose.views[v];
+
+    if (floorY === null) {
+      if ((trigger[0] && ctrl[0]) || (trigger[1] && ctrl[1])) {
+        var c = trigger[0] && ctrl[0] ? ctrl[0] : ctrl[1];
+        setFloor(c.position.y);
+        setStatus("Floor set. Raise both fists above your head.");
+      }
+      reportOut(head, null);
+      return;
+    }
+
+    if (!built) buildWorld();
+
+    // Its height is yours. Eye level sits at 93.6% of standing height, and the
+    // tallest you have been since entering is the honest read — it self-corrects
+    // if you started seated and then stood up, without asking for a gesture.
+    var eyeAbove = head.y - floorY;
+    if (eyeAbove > statureSeen) statureSeen = eyeAbove;
+    stature = Math.min(2.1, Math.max(1.4, statureSeen / 0.936));
+
+    // Your fists follow your grips, and they are the only thing that can hurt it.
+    for (var h = 0; h < 2; h++) {
+      if (!ctrl[h]) continue;
+      var p = ctrl[h].position, q = ctrl[h].orientation;
+      E.w_hand_target(h, p.x, p.y, p.z,
+                      q ? q.x : 0, q ? q.y : 0, q ? q.z : 0, q ? q.w : 1);
+    }
+
+    var st = figState_read();
+
+    // Fists above your head, held: bring one in, or bring the next one.
+    if (MATCH === "READY" || MATCH === "DOWN") {
+      var up = 0;
+      for (var g2 = 0; g2 < 2; g2++)
+        if (ctrl[g2] && ctrl[g2].position.y > head.y + 0.10) up++;
+      fistUp = up === 2 ? fistUp + STEP : 0;
+      if (fistUp > 0.6) {
+        fistUp = 0;
+        if (MATCH === "DOWN") { E.w_fig_destroy(); releaseBoneMeshes(); }
+        spawnFigure(head.x, head.z - 1, head.x, head.z);
+      }
+    }
+
+    if (MATCH === "FIGHT") {
+      // It waits in guard until you have both hands up and in front — nothing
+      // starts swinging at somebody who has not squared up.
+      if (st.state === 0 && ctrl[0] && ctrl[1] &&
+          ctrl[0].position.y > floorY + stature * 0.55 &&
+          ctrl[1].position.y > floorY + stature * 0.55) E.w_fig_hold(0);
+    }
+
+    // Physics on a fixed-timestep accumulator: 72 steps a second whatever the
+    // display does. A page that steps once per display frame runs 25% fast on a
+    // 90 Hz headset and stutters on every dropped frame.
+    var dt = lastT ? Math.min(0.1, (t - lastT) / 1000) : STEP;
+    lastT = t;
+    acc += dt;
+    var steps = 0;
+    while (acc >= STEP && steps < 4) {
+      acc -= STEP; steps++;
+      if (MATCH === "FIGHT" || MATCH === "DOWN") {
+        E.w_fig_update(head.x, head.y, head.z, STEP);
+        E.w_fig_apply();
+      }
+      E.w_hand_apply();
+      E.w_step(STEP);
+      E.w_vox_post();
+      if (MATCH === "FIGHT" || MATCH === "DOWN") E.w_fig_post();
+      drainHits();
+    }
+
+    st = figState_read();
+    figState = FIG_STATES[st.state] || "WAIT";
+    if (MATCH === "FIGHT") {
+      if (st.broke > 0) { totalBroke += st.broke; crack(); haptic(HANDS[0], 0.5, 60); haptic(HANDS[1], 0.5, 60); }
+      if (st.reach > 0) {
+        tookHits++;
+        slam(st.reach * 0.15);
+        haptic(HANDS[0], 0.8, 90); haptic(HANDS[1], 0.8, 90);
+        if (!KNOB_CALM) { shake = Math.min(0.012, 0.004 + st.reach * 0.0008); shakeT = 0.16; }
+      }
+      if (st.state === 6) { MATCH = "DOWN"; downHold = 0; fell(); }
+    }
+    if (shakeT > 0) shakeT -= dt;
+
+    if (MATCH === "FIGHT" || MATCH === "DOWN") updateBoneMeshes();
+
+    // --- draw list ---
+    var items = [];
+    if (!AR) {
+      // A floor, only in VR. In your own room the floor is the floor.
+      items.push({ m: trs([head.x, floorY - 0.02, head.z], [0,0,0,1], [6, 0.02, 6]),
+                   c: [0.13, 0.15, 0.19], mat: 3 });
+    }
+
+    // Your gauntlets: a wrist guard and a knuckle block. The two boxes you look
+    // at more than anything else in this.
+    var hs = E.w_hand_state() >>> 2;
+    var hf = new Float32Array(E.memory.buffer);
+    for (var k = 0; k < 2; k++) {
+      var o = hs + k * 8;
+      var hp = [hf[o], hf[o+1], hf[o+2]], hq = [hf[o+3], hf[o+4], hf[o+5], hf[o+6]];
+      items.push({ m: trs(hp, hq, [FIST_HALF, FIST_HALF, FIST_HALF]), c: [0.42, 0.46, 0.54] });
+      items.push({ m: trs(hp, hq, [FIST_HALF * 0.82, FIST_HALF * 0.5, FIST_HALF * 1.5]),
+                   c: [0.30, 0.33, 0.40] });
+    }
+
+    // What the engine still draws as boxes: debris, and any loose chunk.
+    var runs = E.w_vox_run_count();
+    var rp = E.w_vox_runs() >>> 2, rf2 = new Float32Array(E.memory.buffer);
+    for (var r = 0; r < runs; r++) {
+      var q2 = rp + r * 12;
+      items.push({ m: trs([rf2[q2], rf2[q2+1], rf2[q2+2]],
+                          [rf2[q2+3], rf2[q2+4], rf2[q2+5], rf2[q2+6]],
+                          [rf2[q2+7], rf2[q2+8], rf2[q2+9]]),
+                   c: BONE_COL, mat: 1 });
+    }
+    var cn = E.w_count();
+    var cp = E.w_state() >>> 2;
+    for (var ci = 0; ci < cn; ci++) {
+      var co = cp + ci * 9;
+      var ch = rf2[co+7];
+      items.push({ m: trs([rf2[co], rf2[co+1], rf2[co+2]],
+                          [rf2[co+3], rf2[co+4], rf2[co+5], rf2[co+6]], [ch, ch, ch]),
+                   c: [0.34, 0.36, 0.42], mat: 1 });
+    }
+
+    // The ghosts: where your fists go to bring one in. They brighten as you
+    // hold, so the gesture teaches itself without a word of text.
+    if (MATCH === "READY" || MATCH === "DOWN") {
+      var glow = 0.25 + 0.75 * Math.min(1, fistUp / 0.6);
+      for (var gi = 0; gi < 2; gi++) {
+        items.push({ m: trs([head.x + (gi ? 0.24 : -0.24), head.y + 0.22, head.z - 0.15],
+                            [0,0,0,1], [0.045, 0.045, 0.045]),
+                     c: [0.35 * glow, 0.85 * glow, 0.95 * glow], mat: 2 });
+      }
+    }
+
+    // --- render both eyes ---
+    var sx = 0, sy = 0;
+    if (shakeT > 0) { sx = (Math.random() - 0.5) * shake; sy = (Math.random() - 0.5) * shake; }
+    for (var vi2 = 0; vi2 < pose.views.length; vi2++) {
+      var view = pose.views[vi2];
       var vp = layer.getViewport(view);
       gl.viewport(vp.x, vp.y, vp.width, vp.height);
-      draw(mul(mul(view.projectionMatrix, view.transform.inverse.matrix), shiftM), items);
+      var vm = new Float32Array(view.transform.inverse.matrix);
+      vm[12] += sx; vm[13] += sy;
+      draw(mul(view.projectionMatrix, vm), items);
     }
+    reportOut(head, st);
   }
 
-  function simulate(frame, pose, items) {
-    var hp = pose.transform.position;
-    if (floorY !== null && hp.y - floorY > eyeYMax) eyeYMax = hp.y - floorY;
+  function figState_read() {
+    var o = E.w_fig_state() >>> 2, m = new Float32Array(E.memory.buffer);
+    return { exists: m[o], state: m[o+1] | 0, bones: m[o+2], alive: m[o+3], total: m[o+4],
+             support: m[o+5], dist: m[o+10], wind: m[o+11], reach: m[o+13], broke: m[o+14] };
+  }
 
-    // Before the floor is set, the grid tracks the lower controller so you can
-    // see it following your hand — then the trigger pins it. Afterwards it sits
-    // at the height you set.
-    var calibrating = (floorY === null);
-    var gridY = floorY;
-    if (calibrating) {
-      gridY = hp.y - 1.2; // a placeholder until a controller is seen
-      var lowest = null;
-      var ss = session.inputSources;
-      for (var k = 0; k < ss.length; k++) {
-        var sp2 = ss[k].gripSpace || ss[k].targetRaySpace;
-        if (!sp2) continue;
-        var pp = frame.getPose(sp2, refSpace);
-        if (!pp) continue;
-        if (lowest === null || pp.transform.position.y < lowest) lowest = pp.transform.position.y;
-      }
-      if (lowest !== null) gridY = lowest;
-    }
-
-    for (var gx = -3; gx <= 3; gx++) {
-      for (var gz = -3; gz <= 3; gz++) {
-        items.push({
-          m: trs([gx * 0.4, gridY, gz * 0.4], [0,0,0,1], calibrating ? 0.035 : 0.028),
-          // Amber while it is following your hand, grey once it is set, red if
-          // something has thrown — a fault you can see without taking the
-          // headset off.
-          c: failure ? [0.95,0.22,0.20] : calibrating ? [0.98,0.72,0.25] : [0.35,0.38,0.45]
-        });
+  // Every impact the engine recorded this step, turned into a crater in the
+  // mesh, a thump, and a buzz in the hand that threw it.
+  function drainHits() {
+    var n = E.w_vox_hit_count();
+    if (!n) return;
+    var p = E.w_vox_hit_events() >>> 2, f = new Float32Array(E.memory.buffer);
+    for (var i = 0; i < n; i++) {
+      var o = p + i * 8;
+      var force = f[o+3], grid = f[o+4] | 0;
+      if (dentBone(grid, f[o], f[o+1], f[o+2], force, f[o+5], f[o+6], f[o+7])) {
+        totalHits++;
+        thud(Math.min(4, force * 0.06));
+        haptic(HANDS[0], 0.35, 40); haptic(HANDS[1], 0.35, 40);
       }
     }
-    items.push({ m: trs([hp.x, gridY, hp.z], [0,0,0,1], 0.06), c: [0.30,0.85,0.45] });
+    for (var b = 0; b < boneMeshes.length; b++)
+      if (boneMeshes[b].mesh.deepest > deepest) deepest = boneMeshes[b].mesh.deepest;
+  }
 
-    lines = [];
-    lines.push("space: " + spaceKind + (floorReal ? "" : "  (runtime gave no floor)"));
-    lines.push("floor: " + (floorY === null ? "NOT SET — put a controller on the ground and pull the trigger"
-                                            : floorY.toFixed(3) + "  (you set this)"));
-    lines.push("head:  x " + hp.x.toFixed(2) + "  y " + hp.y.toFixed(2) + "  z " + hp.z.toFixed(2));
-
-    var srcs = session.inputSources;
-    lines.push("controllers seen: " + srcs.length);
-
-    // Counted across all controllers this frame, then acted on once after the
-    // loop. Deciding inside the loop meant each controller overwrote the last.
-    var trigCount = 0;
-    var floorCandidate = null;
-    var handPos = [];
-
-    for (var i = 0; i < srcs.length; i++) {
-      var src = srcs[i];
-      var space = src.gripSpace || src.targetRaySpace;
-      var label = (src.handedness || "?") + " (" + (src.gripSpace ? "grip" : "ray") + ")";
-      if (!space) { lines.push("  " + label + ": no pose space"); continue; }
-      var p = frame.getPose(space, refSpace);
-      if (!p) { lines.push("  " + label + ": NOT TRACKED"); continue; }
-
-      var pos = p.transform.position, q = p.transform.orientation;
-      handPos.push(pos);
-      var gp = src.gamepad;
-      var grip = false, trig = false;
-      if (gp && gp.buttons) {
-        if (gp.buttons.length > 1) grip = gp.buttons[1].pressed || gp.buttons[1].value > 0.5;
-        if (gp.buttons.length > 0) trig = gp.buttons[0].pressed || gp.buttons[0].value > 0.5;
-      }
-
-      if (trig) {
-        trigCount++;
-        // The lower controller is the one on the ground.
-        if (floorCandidate === null || pos.y < floorCandidate) floorCandidate = pos.y;
-      }
-
-      // Hand targets ride the rig offset, and the grip is the grab — the
-      // engine only lets a fist hold ground it is actually touching.
-      if (E && built) {
-        var armIdx = src.handedness === "right" ? 1 : 0;
-        E.w_mech_hand(armIdx, pos.x + O.x, pos.y + O.y, pos.z + O.z,
-                      1, q.x, q.y, q.z, q.w);
-        E.w_mech_anchor(armIdx, grip ? 1 : 0);
-      }
-      // A cycles the arm material — and X mirrors it on the left controller,
-      // because a left-handed pilot's thumb lives there.
-      if (gp && gp.buttons && gp.buttons.length > 4) {
-        var cyDown = gp.buttons[4].pressed;
-        var cyKey = src.handedness === "right" ? "r" : "l";
-        if (cyDown && !prevCycle[cyKey] && E && built && match !== "FIGHT") {
-          level = (level + 1) % (unlockedLevel + 1);
-          saveCampaign();
-          built = false;   // material is baked into the bodies, so rebuild
-        }
-        prevCycle[cyKey] = cyDown;
-      }
-
-      // Small marker exactly on the controller — the truth your hand knows.
-      // Turns green while the arm span is being measured, so you can see the
-      // headset has both hands before you pull.
-      items.push({ m: trs([pos.x + O.x, pos.y + O.y, pos.z + O.z], [q.x,q.y,q.z,q.w],
-                          (!calibrating && armSpan === null) ? 0.05 : 0.022),
-                   c: (!calibrating && armSpan === null) ? [0.35,0.85,0.45] : [0.62,0.66,0.74] });
-
-      lines.push("  " + label + ": x " + pos.x.toFixed(2) + " y " + pos.y.toFixed(2) +
-                 " z " + pos.z.toFixed(2) + (gp ? ("  grip " + (grip?"YES":"no") +
-                 "  trigger " + (trig?"YES":"no")) : "  (no gamepad)"));
+  function reportOut(head, st) {
+    var lines = [];
+    lines.push("match: " + MATCH + "   figure: " + figState +
+               "   mode: " + (AR ? "passthrough" : "vr"));
+    lines.push("floor " + (floorY === null ? "NOT SET — controller on the ground, pull the trigger"
+                                           : floorY.toFixed(3) + " m (" + (spaceKind || "?") + ")"));
+    lines.push("your height " + stature.toFixed(2) + " m — it is built to match");
+    if (st && st.exists) {
+      lines.push("bones on " + st.bones + "/17   metal " + st.alive + "/" + st.total +
+                 " cells   legs " + Math.round(st.support * 100) + "%   " +
+                 st.dist.toFixed(2) + " m away");
     }
-    // Fingertip to fingertip, near enough — the controllers sit in your hands.
-    var handSpan = null;
-    if (handPos.length === 2) {
-      handSpan = Math.hypot(handPos[0].x - handPos[1].x,
-                            handPos[0].y - handPos[1].y,
-                            handPos[0].z - handPos[1].z);
-    }
-
-    // One decision per frame, after every controller has been read. Rising
-    // edge, so a held trigger acts once rather than every frame it stays down.
-    var pulled = (trigCount > 0 && !prevTrig);
-    if (calibrating) {
-      if (pulled && floorCandidate !== null) {
-        setFloor(floorCandidate);
-        setStatus("Floor set at " + floorCandidate.toFixed(2) +
-                  " m. Now hold your arms straight out and pull a trigger.");
-      }
-    } else if (armSpan === null) {
-      // Arms out, fingertip to fingertip. This is the measurement the machine
-      // is built from, so it is taken off you rather than guessed at.
-      lines.push("ARM SPAN NOT SET — hold both arms straight out to the sides "
-                 + "and pull a trigger");
-      if (handSpan !== null) lines.push("  measuring: " + handSpan.toFixed(2) + " m");
-      if (pulled && handSpan !== null) {
-        if (handSpan < 0.9) {
-          setStatus("That was only " + handSpan.toFixed(2) +
-                    " m — stretch both arms right out and pull again.", true);
-        } else {
-          setSpan(handSpan);
-          built = false;                 // rebuild the machine at your size
-          setStatus("Arm span set at " + handSpan.toFixed(2) +
-                    " m. Use Reset arm span on the page to redo it.");
-        }
-      }
-    }
-    prevTrig = trigCount > 0;
-
-    if (E && built) {
-      headY = hp.y;
-      E.w_mech_stand(hp.x + O.x, chestY(), hp.z + O.z);
-      // The shoulders turn with you: feed the head's facing so the torso's
-      // yaw spring brings the mounts around as you track the fight.
-      var hq = pose.transform.orientation;
-      if (hq && E.w_mech_face) {
-        var fwx = -2 * (hq.x * hq.z + hq.w * hq.y);
-        var fwz = -(1 - 2 * (hq.x * hq.x + hq.y * hq.y));
-        E.w_mech_face(Math.atan2(fwx, fwz));
-      }
-      if (hitStop > 0) { hitStop -= frameDt; acc = 0; }
-      var stepped = false;
-      while (acc >= STEP) {
-        acc -= STEP;
-        stepped = true;
-        // The enemy thinks during the fight, through your knockdown count
-        // (corner mode: it backs off, guards, and waits — a boxer, not a
-        // vulture, and nothing frozen to grind free damage into), and after
-        // it wins — the triumph stalk needs the brain running. During READY
-        // it gets the pose-only call (dt 0): guard up, feet planted — a
-        // fighter waiting, not a mannequin with dead arms.
-        if (match === "FIGHT" || match === "LOST" || match === "COLLAPSED") {
-          var msP = E.w_mech_state() >>> 2, fP0 = new Float32Array(E.memory.buffer);
-          E.w_enemy_update(fP0[msP], fP0[msP+1], fP0[msP+2], STEP);
-        } else if (match === "READY") {
-          var msR2 = E.w_mech_state() >>> 2, fR2 = new Float32Array(E.memory.buffer);
-          E.w_enemy_update(fR2[msR2], fR2[msR2+1], fR2[msR2+2], 0);
-        }
-        E.w_mech_apply();
-        E.w_step(STEP);
-        E.w_vox_post();
-        E.w_enemy_post();
-      }
-
-      // Seven bodies, seven floats each: torso, then upper / forearm /
-      // attachment for the left arm, then the same three for the right.
-      var ms = E.w_mech_state() >>> 2, fa = new Float32Array(E.memory.buffer);
-
-      // Ride the machine: the cockpit sinks if the hull drops, and while the
-      // machine drags itself the world moves past the player, not the player
-      // past their room.
-      var dsA = E.w_mech_drag_state() >>> 2;
-      O.y = fa[ms + 1] - chestY();
-      if (fa[dsA + 4] > 0.5) { O.x = fa[ms] - hp.x; O.z = fa[ms + 2] - hp.z; }
-      // The hull scrapes as it is hauled: short gravel bursts paced and
-      // scaled by how fast the machine is actually moving over the ground.
-      if (fa[dsA + 4] > 0.5 && AC) {
-        var crawlSpd = fa[dsA + 5];
-        scrapeT -= frameDt;
-        if (crawlSpd > 0.12 && scrapeT <= 0) {
-          noiseBurst(0.14, 210, Math.min(0.22, 0.06 + crawlSpd * 0.12));
-          scrapeT = 0.16 + Math.random() * 0.10;
-        }
-      }
-
-      // The pilot sits inside the machine, so the machine's own torso is not
-      // drawn — from the cockpit it was a wall across the bottom of the view,
-      // which a playtest called out immediately. Your arms are your body.
-
-      // Gunmetal, not toy colours — seen in the first screenshots the old
-      // blue and orange read as plastic. A thin tint difference survives on
-      // the joints so left and right still read apart.
-      var armCol = [[0.40,0.44,0.54],[0.46,0.44,0.50]];
-      var armMat = 3;
-      // The heat gauge lives on the metal itself — the DOM readout does not
-      // exist inside the headset. Past a third of the gauge the arms take on
-      // heat colour; past the redline the actuator housings glow outright.
-      var hg = Math.max(0, heat - 0.35) / 0.65;
-      var hot = function (c) {
-        return [c[0] + (1.00 - c[0]) * hg,
-                c[1] + (0.30 - c[1]) * hg * 0.9,
-                c[2] + (0.10 - c[2]) * hg * 0.9];
-      };
-      // Taking a hull hit burns your own metal red for a third of a second
-      // — the one part of your machine always in view is your arms, so
-      // that is where being hit is written.
-      if (dmgFlash > 0) dmgFlash -= frameDt;
-      var flashF = Math.max(0, Math.min(1, dmgFlash * 3));
-      var hitTint = function (c) {
-        return [c[0] + (1.0 - c[0]) * flashF,
-                c[1] * (1 - 0.78 * flashF),
-                c[2] * (1 - 0.78 * flashF)];
-      };
-      for (var aI = 0; aI < 2; aI++) {
-        var col = hitTint(hot(armCol[aI])), dim = [col[0]*0.75, col[1]*0.75, col[2]*0.75];
-        // Stride three, not two. Adding the attachment took the state from five
-        // bodies to seven and this was left behind, so the right arm was drawn
-        // from the left attachment and the right upper arm — the wrong bodies
-        // entirely, in the wrong places.
-        var up = ms + (1 + aI*3)*7, fo = ms + (2 + aI*3)*7, to = ms + (3 + aI*3)*7;
-        var liU = limbItem(fa, up, segLen[0], THICK, col); liU.mat = armMat; items.push(liU);
-        var liF = limbItem(fa, fo, segLen[1], THICK*0.9, dim); liF.mat = armMat; items.push(liF);
-        // The GAUNTLET: a wrist guard and a knuckle block, because these are
-        // the two boxes you look at most in the whole game. They read as a
-        // fist you would punch with, not a blunt instrument you carry.
-        var fq = [fa[to+3], fa[to+4], fa[to+5], fa[to+6]];
-        var fCol = overheated ? [1.0, 0.32, 0.14] : hitTint(hot([0.86,0.88,0.92]));
-        var fMat = overheated ? 5 : 3;
-        var gOff = function (d) {
-          return [d * 2 * (fq[0]*fq[2] + fq[3]*fq[1]),
-                  d * 2 * (fq[1]*fq[2] - fq[3]*fq[0]),
-                  d * (1 - 2 * (fq[0]*fq[0] + fq[1]*fq[1]))];
-        };
-        var wOf = gOff(-segLen[2] * 0.7), kOf = gOff(-segLen[2] * 1.75);
-        items.push({ m: trs([fa[to]+wOf[0], fa[to+1]+wOf[1], fa[to+2]+wOf[2]], fq,
-                            [segLen[2]*0.95, segLen[2]*0.95, segLen[2]*0.75]),
-                     c: fCol, mat: fMat });
-        items.push({ m: trs([fa[to]+kOf[0], fa[to+1]+kOf[1], fa[to+2]+kOf[2]], fq,
-                            [segLen[2]*0.80, segLen[2]*0.70, segLen[2]*0.45]),
-                     c: overheated ? [1.0, 0.40, 0.18] : hitTint(hot([0.72,0.75,0.82])),
-                     mat: fMat });
-        // Dark blocks on the shoulder, elbow and wrist, so the joints are
-        // things you can see rather than guess at from where two boxes meet.
-        items.push({ m: trs([fa[up], fa[up+1], fa[up+2]], [0,0,0,1], THICK*1.15), c: [0.15,0.17,0.23] });
-        items.push({ m: trs([fa[fo], fa[fo+1], fa[fo+2]], [0,0,0,1], THICK*1.05), c: [0.15,0.17,0.23] });
-        items.push({ m: trs([fa[to], fa[to+1], fa[to+2]], [0,0,0,1], THICK*0.85), c: [0.15,0.17,0.23] });
-      }
-
-      // ---- the arena floor: the world has a ground now ----
-      // The chapter decides the dressing from here down, so it is read once,
-      // ahead of everything that draws with it.
-      var chD = CAMPAIGN[Math.min(chapter, CAMPAIGN.length - 1)];
-      if (!AR)
-        items.push({ m: trs([hpBase.x, floorY - 0.06, hpBase.z], [0,0,0,1], [7.5, 0.06, 7.5]),
-                     c: chD.floorC, mat: 4 });
-
-      // ---- worn plates and anything torn off them ----
-      var MATC = [[0.55,0.42,0.26], [0.56,0.57,0.62], [0.62,0.66,0.74]];
-      var rn2 = E.w_vox_run_count(), rp2 = E.w_vox_runs() >>> 2;
-      var fbA = new Float32Array(E.memory.buffer);
-      for (var rA = 0; rA < rn2; rA++) {
-        var roA = rp2 + rA * 12;
-        var mcA = MATC[fbA[roA+11] | 0] || MATC[1];
-        // DENTS, graded: [10] is 0..1 damage. The engine already caves the
-        // cell toward the body's centre; here depth also shrinks it into
-        // the crater and crushes the colour toward beaten metal — every
-        // hit leaves a mark that stays.
-        var dD = fbA[roA+10];
-        var dIn = 1 - 0.30 * dD;
-        items.push({ m: trs([fbA[roA], fbA[roA+1], fbA[roA+2]],
-                            [fbA[roA+3], fbA[roA+4], fbA[roA+5], fbA[roA+6]],
-                            [fbA[roA+7]*dIn, fbA[roA+8]*dIn, fbA[roA+9]*dIn]),
-                     c: [mcA[0]*(1-0.52*dD)+0.09*dD,
-                         mcA[1]*(1-0.56*dD)+0.05*dD,
-                         mcA[2]*(1-0.58*dD)+0.04*dD],
-                     mat: (fbA[roA+11] | 0) + 1 });
-      }
-      var cn2 = E.w_vox_chunk_box_count(), cp2 = E.w_vox_chunk_boxes() >>> 2;
-      fbA = new Float32Array(E.memory.buffer);
-      for (var cA = 0; cA < cn2; cA++) {
-        var coA = cp2 + cA * 11;
-        var ccA = MATC[fbA[coA+10] | 0] || MATC[1];
-        items.push({ m: trs([fbA[coA], fbA[coA+1], fbA[coA+2]],
-                            [fbA[coA+3], fbA[coA+4], fbA[coA+5], fbA[coA+6]],
-                            [fbA[coA+7], fbA[coA+8], fbA[coA+9]]),
-                     c: [ccA[0]*0.85, ccA[1]*0.85, ccA[2]*0.85],
-                     mat: (fbA[coA+10] | 0) + 1 });
-      }
-
-      // ---- the enemy ----
-      var ep = E.w_enemy_state() >>> 2, ef = new Float32Array(E.memory.buffer);
-      var eState = ef[ep+7], coreFrac = ef[ep+8];
-      // The drawn machine matches the simulated one at every chapter scale —
-      // a God drawn small would land hits past its visible club tip.
-      var eS = chD.scale * EBULK;
-      var windupArm = -1;
-      if (eState === 2) windupArm = 1;      // drawing up: warn colour
-      // torso: each chapter's hull wears its own iron — rust, slate, black
-      // foundry iron, the Returned's violet dark — and the core glows
-      // through it as the machine weakens.
-      var hC = chD.hullC;
-      var tC = eState === 5 ? [0.15,0.15,0.17]
-                            : [hC[0] + 0.55*(1-coreFrac), hC[1], hC[2]];
-      var eQ = [ef[ep+3], ef[ep+4], ef[ep+5], ef[ep+6]];
-      // A trunk drawn as ONE box is a juice box with arms and legs, however
-      // well proportioned the box is. It is drawn as a stack now — shoulder
-      // yoke, chest, waist — so the body TAPERS, and the stack takes the same
-      // per-machine proportions the physics torso does instead of the constant
-      // it used to be built from (which also meant the drawn body had stopped
-      // matching the simulated one the moment torsos became per-machine).
-      var tW = chD.torso ? chD.torso[0] : 1.0,
-          tH = chD.torso ? chD.torso[1] : 1.0,
-          tD = chD.torso ? chD.torso[2] : 1.0;
-      // offset up the body's own Y, half width, half height, half depth
-      var TRUNK = [
-        [ 0.26*tH,  0.25*tW, 0.09*tH, 0.13*tD],   // shoulder yoke, widest
-        [ 0.04*tH,  0.20*tW, 0.19*tH, 0.14*tD],   // chest
-        [-0.24*tH,  0.13*tW, 0.13*tH, 0.10*tD]    // waist, narrowest
-      ];
-      for (var tSeg = 0; tSeg < TRUNK.length; tSeg++) {
-        var T = TRUNK[tSeg], dy = T[0] * eS;
-        // rotate (0,dy,0) into world by the torso's quaternion
-        var qx = eQ[0], qy = eQ[1], qz = eQ[2], qw = eQ[3];
-        var ox = 2*(qx*qy*dy) - 2*qw*qz*dy;
-        var oy = dy - 2*(qz*qz + qx*qx)*dy;
-        var oz = 2*qw*qx*dy + 2*(qy*qz*dy);
-        items.push({ m: trs([ef[ep] + ox, ef[ep+1] + oy, ef[ep+2] + oz], eQ,
-                            [T[1]*eS, T[2]*eS, T[3]*eS]),
-                     c: tC });
-      }
-      // The body is REAL now — head, pelvis, two-segment arms with fists,
-      // legs — fourteen individually smashable vox parts riding physics
-      // bodies, drawn by the same run renderer as every wall and plate.
-      // What the page still owns: the telegraph. During windup and swing an
-      // ember rides the striking fist, so the warn colour survived the move
-      // from painted arms to real ones.
-      var rotZ = function (q, d) {
-        return [d * 2 * (q[0]*q[2] + q[3]*q[1]),
-                d * 2 * (q[1]*q[2] - q[3]*q[0]),
-                d * (1 - 2 * (q[0]*q[0] + q[1]*q[1]))];
-      };
-      if (eState === 2 || eState === 3) {
-        var swA = ef[ep+27] >= 0 ? 0 : 0;   // arm index not exported; mark BOTH fists
-        for (var ai2 = 0; ai2 < 2; ai2++) {
-          var ao = ep + 9 + ai2*7;
-          var aq = [ef[ao+3], ef[ao+4], ef[ao+5], ef[ao+6]];
-          var fw = rotZ(aq, 0.31 * eS);
-          var wp2 = 0.6 + 0.4 * Math.sin(lastT * 0.03);
-          items.push({ m: trs([ef[ao] + fw[0], ef[ao+1] + fw[1], ef[ao+2] + fw[2]],
-                              aq, 0.05 * eS),
-                       c: [1.0 * wp2, 0.42 * wp2, 0.20 * wp2], mat: 5 });
-        }
-      }
-
-      // The BODY under the body: pelvis and legs. The machine walks on a
-      // force, but a fighter without legs reads as unfinished — so the legs
-      // are drawn from what the hull is actually doing: hips ride the
-      // torso, feet stride with its real velocity, knees solve in between.
-      // The hoverer gets down-thrust jets instead; it never stood on earth.
-      var eVelX = 0, eVelZ = 0;
-      if (prevEnemyPos) {
-        eVelX = (ef[ep] - prevEnemyPos[0]) / Math.max(frameDt, 1e-3);
-        eVelZ = (ef[ep+2] - prevEnemyPos[1]) / Math.max(frameDt, 1e-3);
-      }
-      prevEnemyPos = [ef[ep], ef[ep+2]];
-      var eSpd = Math.hypot(eVelX, eVelZ);
-      if (chD.hover) {
-        if (eState !== 5) {
-          for (var jI = -1; jI <= 1; jI += 2) {
-            var jGlow = 0.55 + 0.35 * Math.sin(lastT * 0.02 + jI * 2.1);
-            items.push({ m: trs([ef[ep] + jI * 0.10 * eS, ef[ep+1] - 0.44 * eS, ef[ep+2]],
-                                [ef[ep+3], ef[ep+4], ef[ep+5], ef[ep+6]],
-                                [0.05 * eS, 0.10 * eS, 0.05 * eS]),
-                         c: [0.55 * jGlow, 0.70 * jGlow, 1.0 * jGlow], mat: 5 });
-          }
-        }
-      } else {
-        // The legs are physics parts now, drawn by the run renderer; what
-        // remains here is the stride CLOCK — its phase paces the footstep
-        // sounds to the machine's real ground speed.
-        eStride += eSpd * frameDt * 3.2;
-      }
-      // Its face: an emissive visor slit on the HEAD PART that is also a
-      // telegraph — it burns brighter in the instant before a swing, dies
-      // with the machine, and goes dark for good when the head is smashed
-      // off (the engine exports head-alive at [28]).
-      if (ef[ep+28] > 0.5) (function () {
-        var q = [ef[ep+3], ef[ep+4], ef[ep+5], ef[ep+6]];
-        var vz = 0.13 * eS, vy = 0.46 * eS;
-        var tx3 = 2*(q[1]*vz), ty3 = 2*(-q[0]*vz);
-        var vx2 = ef[ep] + q[3]*tx3 + (q[1]*0 - q[2]*ty3);
-        var vy2 = ef[ep+1] + vy + q[3]*ty3 + (q[2]*tx3 - q[0]*0);
-        var vz2 = ef[ep+2] + vz + (q[0]*ty3 - q[1]*tx3);
-        var vc = eState === 5 ? [0.12,0.12,0.14]
-               : eState === 6 ? [1.0,0.30,0.14]
-               : (eState === 2 || eState === 3) ? [1.0,0.42,0.18]
-               : [0.85,0.20,0.16];
-        // Before the fight and through your count the visor breathes,
-        // slowly — waiting reads as alive, not as a hang.
-        if (match === "COLLAPSED" || match === "READY") {
-          var wp = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(lastT * 0.004));
-          vc = [0.85 * wp, 0.20 * wp, 0.16 * wp];
-        }
-        // Two eyes, not one slit — "he's got one visor for an eye. It's
-        // bad." Placed across the head's own x-axis so they turn with it.
-        // A machine can opt out: the Jaguar wears one wide band across the
-        // face instead, which is the thing that makes it read as a Jaguar.
-        var faceCh = CAMPAIGN[Math.min(chapter, CAMPAIGN.length - 1)];
-        var exx = 1 - 2*(q[1]*q[1] + q[2]*q[2]),
-            exy = 2*(q[0]*q[1] + q[3]*q[2]),
-            exz = 2*(q[0]*q[2] - q[3]*q[1]);
-        if (faceCh.visor) {
-          items.push({ m: trs([vx2, vy2, vz2], q,
-                              [0.074*eS, 0.017*eS, 0.015*eS]),
-                       c: vc, mat: eState === 5 ? 0 : 5 });
-        } else {
-          for (var eyeI = -1; eyeI <= 1; eyeI += 2) {
-            items.push({ m: trs([vx2 + exx * eyeI * 0.042 * eS,
-                                 vy2 + exy * eyeI * 0.042 * eS,
-                                 vz2 + exz * eyeI * 0.042 * eS], q,
-                                [0.026*eS, 0.020*eS, 0.015*eS]),
-                         c: vc, mat: eState === 5 ? 0 : 5 });
-          }
-        }
-      })();
-
-      // When the piece's budget is spent it breaks free: the crumpled
-      // mesh itself drops, tumbles, and rests on the floor — dents kept.
-      if (practiceGrid >= 0 && defBox && !defBox.busted) {
-        var pbs = E.w_vox_grid_stats(practiceGrid) >>> 2;
-        var pbf = new Float32Array(E.memory.buffer);
-        if (pbf[pbs + 2] > 0 && pbf[pbs] < 0.5) {
-          defBox.busted = true; defBox.vy = 0; defBox.fallA = 0;
-          clang(3); boom();
-        }
-      }
-      if (defBox && defBox.busted && !defBox.rested) {
-        defBox.vy -= 9.8 * frameDt;
-        defBox.cy += defBox.vy * frameDt;
-        defBox.fallA += frameDt * 2.4;
-        if (defBox.cy - defBox.half * 1.15 <= floorY) {
-          defBox.cy = floorY + defBox.half * 1.15;
-          defBox.rested = true;
-        }
-        var fx2 = 0.37, fz2 = 0.93, fa2 = defBox.fallA;
-        var ca2 = Math.cos(fa2), sa2 = Math.sin(fa2), tt2 = 1 - ca2;
-        var mm2 = defBox.m;
-        mm2[0] = tt2*fx2*fx2 + ca2; mm2[1] = fz2*sa2;        mm2[2] = tt2*fx2*fz2;
-        mm2[4] = -fz2*sa2;          mm2[5] = ca2;            mm2[6] = fx2*sa2;
-        mm2[8] = tt2*fx2*fz2;       mm2[9] = -fx2*sa2;       mm2[10] = tt2*fz2*fz2 + ca2;
-        mm2[13] = defBox.cy;
-      }
-
-      // The machine's parts follow their bodies every frame, and every impact
-      // into one crumples that part's own mesh where it landed.
-      updateHarMeshes();
-      if (harMeshes.length && stepped) {
-        var nH2 = E.w_vox_hit_count();
-        if (nH2 > 0) {
-          var hb2 = E.w_vox_hit_events() >>> 2, hf2 = new Float32Array(E.memory.buffer);
-          for (var h2 = 0; h2 < nH2; h2++) {
-            var o2 = hb2 + h2 * 8;
-            dentHarPart(hf2[o2+4] | 0, hf2[o2], hf2[o2+1], hf2[o2+2], hf2[o2+3],
-                        hf2[o2+5], hf2[o2+6], hf2[o2+7]);
-          }
-        }
-      }
-
-      // Impacts into the practice box crumple its mesh where they landed.
-      if (practiceGrid >= 0 && defBox && stepped) {
-        var nHits = E.w_vox_hit_count();
-        if (nHits > 0) {
-          var hb = E.w_vox_hit_events() >>> 2, hf = new Float32Array(E.memory.buffer);
-          for (var hE = 0; hE < nHits; hE++) {
-            var ho = hb + hE * 8;
-            if ((hf[ho+4] | 0) !== practiceGrid) continue;
-            deformAt(defBox, hf[ho], hf[ho+1], hf[ho+2], hf[ho+3],
-                     hf[ho+5], hf[ho+6], hf[ho+7]);
-            clang(Math.min(2, 0.6 + hf[ho+3] * 0.02));
-          }
-        }
-      }
-
-      // ---- the wearable state, read as deltas for sound and haptics ----
-      var vs0 = E.w_vox_stats() >>> 2, vf0 = new Float32Array(E.memory.buffer);
-      var killedNow = vf0[vs0+1], chunksNow = vf0[vs0+2];
-      if (prevStats !== null && AC) {
-        var dk = killedNow - prevStats;
-        if (dk > 0) { clang(Math.min(3, dk)); thud(Math.min(3, dk * 0.6)); }
-        if (chunksNow > prevChunks) boom();
-      }
-      // Only on frames that actually stepped: during hit-stop the engine's
-      // last-hit fields are stale, and re-arming hit-stop off a stale hit
-      // froze the whole fight solid at the first core strike.
-      if (prevEnemy !== null && stepped) {
-        if (ef[ep+23] > 1) {                                  // you hit its core
-          thud(2.5);
-          hitStop = Math.min(0.09, 0.03 + ef[ep+23] * 0.001); // the hit lands, time flinches
-        }
-        // A PART came off — the moment the per-part fight is made of.
-        // Severing a fist, a forearm, a leg is announced like the event it
-        // is: deep boom under a hard clang, a long beat of stopped time,
-        // both controllers slammed.
-        if (ef[ep+29] > lastPartsDead) {
-          boom(); clang(3);
-          hitStop = Math.max(hitStop, 0.07);
-          shake = Math.max(shake, 0.12);
-          for (var svI = 0; svI < srcs.length; svI++) haptic(srcs[svI], 1.0, 160);
-        }
-        lastPartsDead = ef[ep+29];
-        if (ef[ep+24] > 1) {                                  // it hit your hull
-          // Unmistakable, or it never happened: the playtest could not
-          // tell it was being hit. A hull hit now lands as metal-on-metal
-          // clang over the thud, a longer shake, both controllers kicking,
-          // and your own arms burning red for a third of a second.
-          thud(3); clang(2.2); shake = 0.22; dmgFlash = 0.35;
-          for (var hI = 0; hI < srcs.length; hI++) haptic(srcs[hI], 1.0, 120);
-        }
-        if (ef[ep+26] > 1.2) {                                // its club rang on your ARM
-          clang(1.4);                                         // the parry, working
-          for (var bH = 0; bH < srcs.length; bH++) haptic(srcs[bH], 0.55, 60);
-        }
-        // A parry that BROKE the swing (recover entered from swing with the
-        // block still ringing) announces the opening: two quick rising
-        // notes right behind the clang. Hear it, punch.
-        if (prevEnemy === 3 && eState === 4 && ef[ep+26] > 8 && AC) {
-          for (var pw = 0; pw < 2; pw++) {
-            (function (k5) {
-              var oP = AC.createOscillator(); oP.type = "triangle";
-              oP.frequency.value = k5 ? 1174 : 880;
-              var gP = AC.createGain(); gP.gain.value = 0.0001;
-              var tP = AC.currentTime + 0.05 + k5 * 0.09;
-              gP.gain.setValueAtTime(0.12, tP);
-              gP.gain.exponentialRampToValueAtTime(0.001, tP + 0.12);
-              oP.connect(gP); gP.connect(AC.destination);
-              oP.start(tP); oP.stop(tP + 0.14);
-            })(pw);
-          }
-        }
-        if (chunksNow > prevChunks) hitStop = Math.max(hitStop, 0.05);
-      }
-      // The damage arc, spoken: the hull calls out its own decline at one
-      // half, three quarters, and past nine tenths — a klaxon tier per
-      // threshold, the last one repeating with steam off both wrists. The
-      // playtest went to the floor without knowing it was in trouble;
-      // never again.
-      {
-        var hullFrac3 = match === "FIGHT" ? ef[ep+25] / playerCoreLimit : 0;
-        var tierNow = hullFrac3 > 0.9 ? 3 : hullFrac3 > 0.75 ? 2 : hullFrac3 > 0.5 ? 1 : 0;
-        if (tierNow >= 1 && lastTier < 1) klaxon(1);
-        if (tierNow >= 2 && lastTier < 2) klaxon(2);
-        lastTier = tierNow;
-        if (tierNow < 3) alarmT = 0;
-        else {
-          alarmT -= frameDt;
-          if (alarmT <= 0) {
-            klaxon(3); alarmT = 1.1;
-            for (var wS = 0; wS < 2 && sparks.length < 36; wS++) {
-              var wB = ms + (3 + wS*3)*7;
-              sparks.push({ x: fa[wB], y: fa[wB+1] + 0.04, z: fa[wB+2],
-                            vx: (Math.random()-0.5)*0.5, vy: 0.9 + Math.random()*0.5,
-                            vz: (Math.random()-0.5)*0.5, t: 0.5, st: 1 });
-            }
-          }
-        }
-      }
-      // The enemy is heard before it is felt: a servo catch as the club
-      // draws up, air as it comes down, and its tread while it closes.
-      if (prevEnemy !== null && stepped && AC) {
-        if (prevEnemy !== 2 && eState === 2) {
-          var wSt = ef[ep+27] | 0;
-          if (wSt === 2) noiseBurst(0.05, 3400, 0.11);        // jab: a tick
-          else if (wSt === 1) noiseBurst(0.16, 1200, 0.12);   // sweep: a drag
-          else noiseBurst(0.10, 2000, 0.10);                  // overhead: a knock
-        }
-        if (prevEnemy !== 3 && eState === 3) noiseBurst(0.24, 760, 0.20);
-        // RECOVER entered from anything but its own swing is the stagger —
-        // a slab just came off it. It groans like stressed metal.
-        if (eState === 4 && (prevEnemy === 1 || prevEnemy === 2)) {
-          noiseBurst(0.5, 130, 0.30); clang(0.8);
-        }
-        var chS = CAMPAIGN[Math.min(chapter, CAMPAIGN.length - 1)];
-        if (eState === 1 && !chS.hover) {
-          // a step sounds when a drawn foot PLANTS — the stride phase
-          // crossing each half-turn — so the sound is the walk you see
-          var stepNow = Math.floor(eStride / Math.PI);
-          if (stepNow !== lastStepN) {
-            lastStepN = stepNow;
-            var dS = Math.hypot(ef[ep] - (hp.x + O.x), ef[ep+2] - (hp.z + O.z));
-            thud(Math.max(0, 1.5 - dS * 0.35) * (0.6 + 0.4 * chS.scale));
-            // A heavy frame arrives through the floor: within a few
-            // metres each plant lands a sub-thump and a breath of view
-            // shake that grows as it closes — the Juggernaut is
-            // announced by the ground before the eye finds it.
-            if (chS.scale >= 1.2 && dS < 3.5) {
-              var close = 1 - dS / 3.5;
-              stomp(0.10 + 0.30 * close);
-              shake = Math.max(shake, 0.03 + 0.05 * close);
-            }
-          }
-        }
-      }
-      prevStats = killedNow; prevChunks = chunksNow; prevEnemy = eState;
-
-      // Arm speed, from attachment motion against real frame time. Feeds the
-      // servo hum and the heat model — the heat is gameplay, so it must not
-      // live behind the audio gate.
-      var msH = E.w_mech_state() >>> 2, fH = new Float32Array(E.memory.buffer);
-      var armSpd = 0;
-      if (window.__lastTool) {
-        var lt = window.__lastTool;
-        armSpd = Math.hypot(fH[msH+21]-lt[0], fH[msH+22]-lt[1], fH[msH+23]-lt[2])
-                 / Math.max(frameDt, 1e-3);
-      }
-      window.__lastTool = [fH[msH+21], fH[msH+22], fH[msH+23]];
-      if (AC && humGain) {
-        var target = Math.min(0.06, armSpd * 0.012);
-        if (hitStop > 0) target *= 0.25;   // the freeze is quiet too
-        humGain.gain.value += (target - humGain.gain.value) * 0.2;
-        humFilt.frequency.value = 120 + Math.min(900, armSpd * 260) + heat * 500;
-      }
-      if (AC && droneGain) {
-        var dTgt = (chD.hover && eState < 5 && match === "FIGHT") ? 0.055 : 0;
-        droneGain.gain.value += (dTgt - droneGain.gain.value) * 0.04;
-      }
-      // Your own punches cut the air: a whoosh on the fast ones, so a whiff
-      // still FEELS like a swing and not like nothing.
-      whooshT -= frameDt;
-      if (AC && armSpd > 3.4 && prevArmSpd <= 3.4 && whooshT <= 0) {
-        noiseBurst(0.13, 1500, Math.min(0.14, 0.05 + armSpd * 0.015));
-        whooshT = 0.24;
-      }
-      prevArmSpd = armSpd;
-      {
-        // Heat: work done by the actuators. Heavier arms cook faster; idling
-        // cools. Past the redline the actuators derate until they recover.
-        var heatRate = armSpd * armSpd * (DENSITIES[level] / 800) * 0.004;
-        heat = Math.min(1, Math.max(0, heat + (heatRate - 0.10) * frameDt * 4));
-        var wasOver = overheated;
-        if (heat > 0.92) overheated = true;
-        if (heat < 0.45) overheated = false;
-        var derate = overheated ? 0.22 : 1.0;
-        // A lost machine is dead: drives out, arms limp where they fell.
-        // (COLLAPSED keeps them — down, you still guard with your arms.)
-        E.w_mech_joint_spring(match === "LOST" ? 0 : 18000 * KNOB_SPRING * derate, 1.0);
-        if (overheated && !wasOver) {
-          // vent: steam off both arms — the derate explains itself
-          for (var vA = 0; vA < 2; vA++) {
-            var vO = ms + (3 + vA*3)*7;
-            for (var vs2 = 0; vs2 < 5 && sparks.length < 36; vs2++) {
-              sparks.push({ x: fa[vO] + (Math.random()-0.5)*0.08,
-                            y: fa[vO+1] + 0.03, z: fa[vO+2] + (Math.random()-0.5)*0.08,
-                            vx: (Math.random()-0.5)*0.5, vy: 0.9 + Math.random()*0.6,
-                            vz: (Math.random()-0.5)*0.5, t: 0.55 + Math.random()*0.25,
-                            st: 1 });
-            }
-          }
-        }
-        if (overheated && !wasOver && AC) {
-          for (var wq2 = 0; wq2 < 3; wq2++) {
-            (function (k2) {
-              var o2 = AC.createOscillator(); o2.type = "square"; o2.frequency.value = 880;
-              var g2 = AC.createGain(); g2.gain.value = 0.0001;
-              var t02 = AC.currentTime + k2 * 0.18;
-              g2.gain.setValueAtTime(0.12, t02);
-              g2.gain.exponentialRampToValueAtTime(0.001, t02 + 0.12);
-              o2.connect(g2); g2.connect(AC.destination); o2.start(t02); o2.stop(t02 + 0.14);
-            })(wq2);
-          }
-        }
-      }
-
-      // ---- match flow ----
-      var fistsUp = false;
-      if (srcs.length >= 2) {
-        var up = 0;
-        for (var fI = 0; fI < srcs.length; fI++) {
-          var fsp = srcs[fI].gripSpace || srcs[fI].targetRaySpace;
-          var fps = fsp ? frame.getPose(fsp, refSpace) : null;
-          if (fps && fps.transform.position.y > hp.y + 0.05) up++;
-        }
-        fistsUp = up >= 2;
-      }
-      if (match === "READY") {
-        fistTimer = fistsUp ? fistTimer + frameDt : 0;
-        if (fistTimer > 0.9) {
-          match = "FIGHT"; fistTimer = 0;
-          if (AC && AC.state === "suspended") AC.resume();
-          sting(true);
-        }
-      } else if (match === "FIGHT") {
-        // The plate protects by absorbing hits, not by postponing the loss —
-        // clubs reach the hull around its edges, and those hits count.
-        var hullDmg = ef[ep+25];
-        if (eState === 5) { match = "WON"; endTimer = 0; sting(true); boom(); }
-        else if (hullDmg > playerCoreLimit) {
-          if (!secondWind) {
-            // Knocked down. A boxing count: the legs cut out, the machine
-            // drops where it stands, the opponent breaks to a neutral
-            // corner, and a bell strikes each second away. Both fists
-            // above your head — the game's one gesture — bring it back up.
-            secondWind = true;
-            match = "COLLAPSED"; padTimer = 10; lastCount = 11;
-            E.w_mech_legs(0);
-            if (E.w_enemy_corner) E.w_enemy_corner(1);
-            boom(); shake = 0.2;
-          } else {
-            // No third chance. The machine dies the way the enemy's does:
-            // the drives cut and it drops where it stands — and the victor
-            // stalks over to raise both clubs above the wreck.
-            match = "LOST"; endTimer = 0; sting(false);
-            E.w_mech_legs(0);
-            E.w_enemy_triumph();
-            boom(); shake = 0.2;
-          }
-        }
-      } else if (match === "WON" || match === "LOST") {
-        endTimer += frameDt;
-        if (endTimer > 2.0) {
-          fistTimer = fistsUp ? fistTimer + frameDt : 0;
-          if (fistTimer > 0.9) {
-            fistTimer = 0;
-            if (match === "LOST") { built = false; }        // same fight again
-            else if (chapter + 1 < CAMPAIGN.length) {
-              // Win pay-off: the next weight class, and the road there.
-              chapter++;
-              if (unlockedLevel < DENSITIES.length - 1) unlockedLevel++;
-              saveCampaign();
-              match = "TRAVEL"; travelTimer = 5; rumbleT = 0;
-            } else {
-              if (unlockedLevel < DENSITIES.length - 1) unlockedLevel++;
-              saveCampaign();
-              match = "ENDING"; endTimer = 0;
-              // The long resolve: the win sting's shape, stretched and
-              // climbing further — the campaign's last note.
-              if (AC) {
-                var endNotes = [262, 330, 392, 523, 659, 784];
-                for (var eN = 0; eN < endNotes.length; eN++) {
-                  (function (k3) {
-                    var oE = AC.createOscillator(); oE.type = "triangle";
-                    oE.frequency.value = endNotes[k3];
-                    var gE = AC.createGain(); gE.gain.value = 0.0001;
-                    var tE = AC.currentTime + k3 * 0.22;
-                    gE.gain.setValueAtTime(0.16, tE);
-                    gE.gain.exponentialRampToValueAtTime(0.001, tE + 0.9);
-                    oE.connect(gE); gE.connect(AC.destination);
-                    oE.start(tE); oE.stop(tE + 1.0);
-                  })(eN);
-                }
-              }
-            }
-          }
-        }
-      } else if (match === "TRAVEL") {
-        // Strapped to a hauler between fights. The world shakes, the road
-        // thumps by underneath; nothing else asks anything of you.
-        travelTimer -= frameDt; rumbleT += frameDt;
-        if (shake < 0.02) shake = 0.02;
-        travelThump -= frameDt;
-        if (travelThump <= 0) {
-          thud(0.7 + Math.random() * 0.5);
-          travelThump = 0.34 + Math.random() * 0.22;
-        }
-        if (travelTimer <= 0) {
-          built = false;                       // rebuild -> READY, new chapter
-          sting(true);                         // arrival
-        }
-      } else if (match === "ENDING") {
-        endTimer += frameDt;
-        fistTimer = (fistsUp && endTimer > 3.0) ? fistTimer + frameDt : 0;
-        if (fistTimer > 0.9) {
-          chapter = 0; lap = Math.min(lap + 1, 3);
-          saveCampaign();
-          built = false; fistTimer = 0;
-        }
-      } else if (match === "COLLAPSED") {
-        padTimer -= frameDt;
-        // A win from the floor still counts — a harness run once killed
-        // the God from its knees, and the rule it minted stays.
-        if (eState === 5) { match = "WON"; endTimer = 0; sting(true); boom(); }
-        else {
-          // The count, struck: one bell per second, climbing in pitch as
-          // the time runs out — audible arithmetic, no numbers anywhere.
-          var cN = Math.ceil(Math.max(0, padTimer));
-          if (cN !== lastCount) { lastCount = cN; bell(1 - cN / 10); }
-          // The rise is the gesture the game already taught for
-          // everything else: both fists above your head, held. Legs,
-          // plate and hull come back — the second wind, standing up.
-          fistTimer = fistsUp ? fistTimer + frameDt : 0;
-          if (fistTimer > 1.1) {
-            fistTimer = 0;
-            E.w_mech_legs(1);
-            E.w_vox_heal(playerGrid);
-            E.w_player_repair();
-            if (E.w_enemy_corner) E.w_enemy_corner(0);
-            match = "FIGHT";
-            sting(true);
-          } else if (padTimer <= 0) {
-            match = "LOST"; endTimer = 0; sting(false);
-            if (E.w_enemy_corner) E.w_enemy_corner(0);
-            E.w_enemy_triumph();
-          }
-        }
-      }
-
-      // Wherever a fists-up gesture is wanted, two ghost markers float where
-      // the fists need to go — the gesture taught without a word of text —
-      // and they brighten as the hold progresses, so holding visibly works.
-      var wantFists = match === "READY" || match === "COLLAPSED" ||
-        ((match === "WON" || match === "LOST") && endTimer > 2.0) ||
-        (match === "ENDING" && endTimer > 3.0);
-      if (wantFists) {
-        var gp2 = (0.40 + 0.30 * Math.sin(lastT * 0.006)) *
-                  (0.6 + 1.4 * Math.min(1, fistTimer / 0.9));
-        for (var gI = -1; gI <= 1; gI += 2) {
-          items.push({ m: trs([hp.x + O.x + gI * 0.22, hp.y + O.y + 0.24,
-                               hp.z + O.z - 0.12], [0,0,0,1], 0.032),
-                       c: [0.30 * gp2, 0.62 * gp2, 0.85 * gp2], mat: 5 });
-        }
-      }
-
-      // The count, visible: while you are down, an amber column drains
-      // between you and the machine that put you there — the height is the
-      // time, the pulse quickens as it runs out, and it stands in the one
-      // direction you are already looking. No numbers anywhere.
-      if (match === "COLLAPSED") {
-        var padFrac = Math.max(0, padTimer) / 10;
-        var pulse = 0.5 + 0.5 * Math.sin(lastT * (0.010 + (1 - padFrac) * 0.028));
-        var cCx = hp.x + O.x + (ef[ep] - hp.x - O.x) * 0.45;
-        var cCz = hp.z + O.z + (ef[ep+2] - hp.z - O.z) * 0.45;
-        var bH = 0.15 + 1.05 * padFrac;
-        items.push({ m: trs([cCx, floorY + bH, cCz], [0,0,0,1],
-                            [0.04, bH, 0.04]),
-                     c: [0.95 * pulse, 0.55 * pulse, 0.12 * pulse], mat: 5 });
-      }
-
-      // ---- arena dressing ----
-      // None of it in passthrough: your room is the arena there, and the
-      // only things drawn are the machines and what the fight itself needs
-      // (nameplate, count, markers, sparks).
-      if (!AR) {
-      // glow posts marking the ring, and a far skyline swallowed by the fog
-      for (var rI = 0; rI < 14; rI++) {
-        var ang = rI / 14 * Math.PI * 2;
-        // The ring answers the match: green for a win, red for a loss, and
-        // when the last god is down, gold — running the circle like a lap.
-        var endP = 0.55 + 0.45 * Math.sin(lastT * 0.006 - rI * 0.9);
-        // Completed laps live on the ring itself: one post turns gold for
-        // each finished campaign — the record, standing where you fight.
-        var lapPost = rI < lap && match !== "WON" && match !== "LOST" && match !== "ENDING";
-        items.push({ m: trs([hpBase.x + Math.cos(ang) * 3.4, floorY + 0.22,
-                             hpBase.z + Math.sin(ang) * 3.4], [0,0,0,1], [0.035, 0.22, 0.035]),
-                     c: match === "ENDING" ? [0.95*endP, 0.80*endP, 0.25*endP]
-                       : match === "WON" ? [0.25,0.85,0.42]
-                       : match === "LOST" ? [0.85,0.25,0.20]
-                       : lapPost ? [0.85,0.68,0.22] : [0.28,0.45,0.75], mat: 5 });
-      }
-      if (match === "TRAVEL") {
-        // Being carried: the destination's skyline streams past on both
-        // sides of the road while the hauler thumps along under you.
-        for (var kT = 0; kT < 12; kT++) {
-          var sideT = (kT % 2) ? 8.5 : -8.5;
-          var zT = ((kT * 6.1 + rumbleT * 9) % 40) - 20;
-          var hT = (0.9 + ((kT * 29) % 4) * 0.8) * chD.skyH;
-          items.push({ m: trs([hpBase.x + sideT + ((kT * 13) % 3), floorY + hT,
-                               hpBase.z + zT], [0,0,0,1], [1.0, hT, 1.0]),
-                       c: chD.skyC, mat: 0 });
-        }
-      } else {
-        // The standing skyline wears the chapter: scrap heaps low and rusty,
-        // mill rows, foundry stacks with embers, and the High Dark's spires.
-        for (var kI = 0; kI < chD.skyN; kI++) {
-          var ka = kI / chD.skyN * Math.PI * 2 + 0.35;
-          var kh = (1.0 + ((kI * 37) % 5) * 0.55) * chD.skyH + 0.6;
-          var kw = chD.skyH > 2 ? 0.6 : 1.4;
-          var kx = hpBase.x + Math.cos(ka) * 14, kz = hpBase.z + Math.sin(ka) * 14;
-          items.push({ m: trs([kx, floorY + kh, kz], [0,0,0,1], [kw, kh, kw * 0.85]),
-                       c: chD.skyC, mat: 0 });
-          if (chD.ember && kI % 4 === 0) {
-            var eGlow = 0.55 + 0.45 * Math.sin(lastT * 0.002 + kI * 2.1);
-            items.push({ m: trs([kx, floorY + kh * 2 + 0.25, kz], [0,0,0,1],
-                                [0.22, 0.22, 0.22]),
-                         c: [0.95 * eGlow, 0.38 * eGlow, 0.10 * eGlow], mat: 5 });
-          }
-        }
-        // The High Dark has a sky: a fixed scatter of stars, faintly
-        // twinkling, so the last fight happens under something.
-        if (chD.stars) {
-          for (var stI = 0; stI < 26; stI++) {
-            var sh1 = Math.sin(stI * 12.9898) * 43758.5453; sh1 -= Math.floor(sh1);
-            var sh2 = Math.sin(stI * 78.2330) * 12543.2100; sh2 -= Math.floor(sh2);
-            var sh3 = Math.sin(stI * 39.4250) * 26437.8700; sh3 -= Math.floor(sh3);
-            var sAng = sh1 * Math.PI * 2, sRad = 10 + sh2 * 8, sHgt = 5 + sh3 * 7;
-            var tw = 0.5 + 0.5 * Math.sin(lastT * 0.001 + stI * 3.7);
-            items.push({ m: trs([hpBase.x + Math.cos(sAng) * sRad, floorY + sHgt,
-                                 hpBase.z + Math.sin(sAng) * sRad], [0,0,0,1], 0.05),
-                         c: [0.60*tw + 0.15, 0.65*tw + 0.15, 0.85*tw + 0.18], mat: 5 });
-          }
-        }
-      }
-      }
-      // verdict pillar
-      if (match === "WON" || match === "LOST") {
-        items.push({ m: trs([ef[ep], floorY + 1.5, ef[ep+2]], [0,0,0,1], [0.05, 1.5, 0.05]),
-                     c: match === "WON" ? [0.30,0.95,0.45] : [0.95,0.30,0.22], mat: 5 });
-      }
-      // The campaign, written where you can see it: while both machines
-      // wait, the opponent's name stands in block letters over its head
-      // and your place on the ladder under it — chapter N of V, in the
-      // machine's own hull colour. The first thing you read in every
-      // arena is who you are about to fight.
-      if (match === "READY") {
-        var chIdx = Math.min(chapter, CAMPAIGN.length - 1);
-        var nmC = [Math.min(1, chD.hullC[0] * 1.6 + 0.30),
-                   Math.min(1, chD.hullC[1] * 1.6 + 0.30),
-                   Math.min(1, chD.hullC[2] * 1.6 + 0.30)];
-        var nmY = ef[ep+1] + 0.34 * eS + 0.42;
-        var nmP = 0.75 + 0.25 * Math.sin(lastT * 0.004);
-        drawText(items, chD.name, ef[ep], nmY + 0.26, ef[ep+2],
-                 0.055, [nmC[0] * nmP, nmC[1] * nmP, nmC[2] * nmP]);
-        drawText(items, ["I","II","III","IV","V"][chIdx] + " OF V",
-                 ef[ep], nmY, ef[ep+2], 0.030,
-                 [0.55 * nmP, 0.58 * nmP, 0.62 * nmP]);
-      }
-      // enemy status pips: its plate first, its core once bared. The stats
-      // export reuses one static buffer, so the values are copied out before
-      // anyone calls it again — reading lazily showed the PLAYER's numbers on
-      // the enemy's line.
-      var eg2 = E.w_vox_grid_stats(enemyGrid) >>> 2, egf = new Float32Array(E.memory.buffer);
-      var ePlateAlive = egf[eg2], ePlateTotal = egf[eg2+2];
-      var plateFrac = ePlateTotal > 0 ? ePlateAlive / ePlateTotal : 0;
-      // The moment the plate stops counting, the kill window opens — and it
-      // is announced: two quick rising notes, the hunt's change of key.
-      if (prevPlateFrac !== null && prevPlateFrac >= 0.06 && plateFrac < 0.06 && AC) {
-        for (var kb = 0; kb < 2; kb++) {
-          (function (k4) {
-            var oK = AC.createOscillator(); oK.type = "square";
-            oK.frequency.value = k4 ? 988 : 659;
-            var gK = AC.createGain(); gK.gain.value = 0.0001;
-            var tK = AC.currentTime + k4 * 0.12;
-            gK.gain.setValueAtTime(0.10, tK);
-            gK.gain.exponentialRampToValueAtTime(0.001, tK + 0.15);
-            oK.connect(gK); gK.connect(AC.destination); oK.start(tK); oK.stop(tK + 0.18);
-          })(kb);
-        }
-      }
-      prevPlateFrac = plateFrac;
-      // Sparks where the armour gives: emissive chips thrown off the enemy's
-      // plate as cells die, gone in a third of a second. Its death burst
-      // showers them, for free, from the same delta.
-      if (prevEPlate !== null && ePlateAlive < prevEPlate && sparks.length < 36) {
-        // Your landed hit kicks back through the controller — short and
-        // sharp, scaled by how many cells just died under the fist — and a
-        // real bite (two cells or more) stops time for a heartbeat: the
-        // per-punch CONNECT that boxing feel lives on.
-        for (var lh = 0; lh < srcs.length; lh++)
-          haptic(srcs[lh], Math.min(0.7, 0.3 + (prevEPlate - ePlateAlive) * 0.12), 45);
-        if (prevEPlate - ePlateAlive >= 2) hitStop = Math.max(hitStop, 0.03);
-        if (prevEPlate - ePlateAlive >= 3 && AC) {
-          // the weight under the clang: a sub thump only big bites earn
-          var oS = AC.createOscillator(); oS.type = "sine"; oS.frequency.value = 58;
-          var gS = AC.createGain(); gS.gain.value = 0.0001;
-          gS.gain.setValueAtTime(0.30, AC.currentTime);
-          gS.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + 0.16);
-          oS.connect(gS); gS.connect(AC.destination);
-          oS.start(); oS.stop(AC.currentTime + 0.18);
-        }
-        var burst = Math.min(6, 2 + (prevEPlate - ePlateAlive) * 2);
-        for (var sI = 0; sI < burst; sI++) {
-          sparks.push({ x: ef[ep] + (Math.random()-0.5)*0.2, y: ef[ep+1] + 0.05,
-                        z: ef[ep+2] + 0.16,
-                        vx: (Math.random()-0.5)*2.2, vy: 1.2 + Math.random()*1.6,
-                        vz: 0.8 + Math.random()*1.4, t: 0.28 + Math.random()*0.14 });
-        }
-      }
-      // The ending's air: slow gold motes rising over the arena while the
-      // ring runs its lap — and over any fresh wreck, grey smoke instead.
-      var mSmoke = (match === "WON" || match === "TRAVEL") && eState === 5;
-      if (match === "ENDING" || mSmoke) {
-        moteT -= frameDt;
-        if (moteT <= 0 && motes.length < 14) {
-          var mR = mSmoke ? 0.5 : 5;
-          var mOx = mSmoke ? ef[ep] : hpBase.x, mOz = mSmoke ? ef[ep+2] : hpBase.z;
-          motes.push({ x: mOx + (Math.random() - 0.5) * mR, y: floorY + 0.2,
-                       z: mOz + (Math.random() - 0.5) * mR, t: 0, s: mSmoke ? 1 : 0 });
-          moteT = mSmoke ? 0.7 : 0.4;
-        }
-      }
-      for (var mJ = motes.length - 1; mJ >= 0; mJ--) {
-        var mo = motes[mJ];
-        mo.t += frameDt; mo.y += (mo.s ? 0.18 : 0.25) * frameDt;
-        if (mo.t > 6 || (match !== "ENDING" && !mSmoke)) { motes.splice(mJ, 1); continue; }
-        var mg = Math.min(1, mo.t) * Math.min(1, (6 - mo.t) / 1.5);
-        items.push({ m: trs([mo.x, mo.y, mo.z], [0,0,0,1], mo.s ? 0.022 : 0.014),
-                     c: mo.s ? [0.16*mg + 0.05, 0.16*mg + 0.05, 0.17*mg + 0.05]
-                             : [0.95*mg, 0.78*mg, 0.30*mg],
-                     mat: mo.s ? 0 : 5 });
-      }
-      prevEPlate = ePlateAlive;
-      for (var sJ = sparks.length - 1; sJ >= 0; sJ--) {
-        var sp2 = sparks[sJ];
-        sp2.t -= frameDt;
-        if (sp2.t <= 0) { sparks.splice(sJ, 1); continue; }
-        sp2.vy -= 9.8 * frameDt;
-        sp2.x += sp2.vx * frameDt; sp2.y += sp2.vy * frameDt; sp2.z += sp2.vz * frameDt;
-        var sg2 = Math.min(1, sp2.t / 0.18);
-        items.push({ m: trs([sp2.x, sp2.y, sp2.z], [0,0,0,1], sp2.st ? 0.024 : 0.016),
-                     c: sp2.st ? [0.55*sg2 + 0.15, 0.57*sg2 + 0.15, 0.60*sg2 + 0.16]
-                               : [Math.min(1, 1.0*sg2 + 0.2), 0.55*sg2, 0.12*sg2],
-                     mat: sp2.st ? 0 : 5 });
-      }
-      // (No pip rows anywhere — the playtest called them out. The machine's
-      // state IS its body: plates visibly missing, the core glowing through
-      // the gaps, the kill-window notes when the armour stops counting.)
-
-      // Debris wears the material it broke from — wood browns, stone greys,
-      // steel pales. The toy palette belongs to the spike pages, not here.
-      var DEBC = { 1: [0.47,0.36,0.23], 2: [0.50,0.51,0.56], 4: [0.58,0.62,0.70] };
-      var n = E.w_count(), sp3 = E.w_state() >>> 2;
-      for (var ci = 0; ci < n; ci++) {
-        var co = sp3 + ci*9, ch = fa[co+7];
-        items.push({ m: trs([fa[co], fa[co+1], fa[co+2]],
-                            [fa[co+3], fa[co+4], fa[co+5], fa[co+6]], ch),
-                     c: DEBC[fa[co+8]|0] || [0.45,0.46,0.50] });
-      }
-
-      if (KNOB_GRIP !== 1 || KNOB_SPRING !== 1)
-        lines.push("FEEL KNOBS  grip x" + KNOB_GRIP.toFixed(2) +
-                   "  spring x" + KNOB_SPRING.toFixed(2));
-      lines.push("arm material " + (level+1) + " of " + DENSITIES.length +
-                 "  (density " + DENSITIES[level] + ")");
-      var NAMES = ["IDLE","APPROACH","WINDUP","SWING","RECOVER","DEAD","TRIUMPH"];
-      var pg3 = E.w_vox_grid_stats(playerGrid) >>> 2, pf3 = new Float32Array(E.memory.buffer);
-      var pAlive2 = pf3[pg3], pTot2 = pf3[pg3 + 2];
-      var chNow = CAMPAIGN[Math.min(chapter, CAMPAIGN.length - 1)];
-      lines.push("build " + BUILD + " — if this number is old, force-refresh the page");
-      lines.push("sizing: your eye " + eyeYMax.toFixed(2) + " m, floor " +
-                 (floorY === null ? "unset" : floorY.toFixed(2)) +
-                 ", span " + (armSpan === null ? "unset" : armSpan.toFixed(2)) +
-                 " — its torso at " + (ef ? ef[ep+1].toFixed(2) : "?") + " m");
-      lines.push("chapter " + (Math.min(chapter, CAMPAIGN.length - 1) + 1) + " of " +
-                 CAMPAIGN.length + ": " + chNow.name + " — " + chNow.place +
-                 (lap ? "   (lap " + (lap + 1) + " — they remember you)" : ""));
-      if (match === "READY") lines.push("  \"" + chNow.story + "\"");
-      lines.push("match: " + match + (match === "READY" ? "  — RAISE BOTH FISTS TO FIGHT" :
-                 match === "WON" ? "  — fists up to travel on" :
-                 match === "TRAVEL" ? "  — travelling to " + CAMPAIGN[Math.min(chapter, CAMPAIGN.length-1)].place :
-                 match === "ENDING" ? "  — THE SKY IS YOURS. Fists up to begin again." :
-                 match === "COLLAPSED" ? "  — DOWN. RAISE BOTH FISTS TO STAND. " +
-                   Math.max(0, padTimer).toFixed(0) + " s" +
-                   (fistTimer > 0 ? "  hold " + fistTimer.toFixed(2) : "") :
-                 match === "LOST" ? "  — fists up to try again" : ""));
-      if (defBox && defBox.hits > 0)
-        lines.push("practice box: " + defBox.hits + " hits, deepest dent " +
-                   (defBox.deepest * 1000).toFixed(0) + " mm" +
-                   (defBox.busted ? "  — BUSTED OFF, on the floor" : ""));
-      lines.push("heat: " + Math.round(heat * 100) + "%" +
-                 (overheated ? "  OVERHEATED — actuators derated, let them cool" : "") +
-                 "   arms unlocked: " + (unlockedLevel + 1) + " of " + DENSITIES.length);
-      lines.push("enemy: " + NAMES[ef ? ef[ep+7] : 0] +
-                 ((ef && ef[ep+27] > 0.5 && (ef[ep+7] === 2 || ef[ep+7] === 3)) ? " (sweep)" : "") +
-                 "   its plate " +
-                 ePlateAlive + "/" + ePlateTotal +
-                 "   its core " + Math.round((ef ? ef[ep+8] : 1) * 100) + "%" +
-                 (ef && ef[ep+29] > 0 ? "   parts torn off: " + ef[ep+29] : ""));
-      lines.push("you: plate " + pf3[pg3] + "/" + pf3[pg3+2] + "   hull damage " +
-                 Math.round(ef ? ef[ep+25] : 0) + " of " + playerCoreLimit);
-    } else if (E && floorY !== null && armSpan !== null && !built) {
-      // Take the head height before building, or the first frame constructs the
-      // machine around a guess and only corrects on the next one.
-      headY = hp.y;
-      buildWorld(hp.x, hp.z);
-    }
-
+    lines.push("you landed " + totalHits + " blows, broke " + totalBroke +
+               " bones, deepest dent " + Math.round(deepest * 1000) + " mm");
+    lines.push("it landed " + tookHits + " on you");
+    var knobs = [];
+    if (KNOB_POWER !== 1) knobs.push("power=" + KNOB_POWER);
+    if (KNOB_TEMPO !== 1) knobs.push("tempo=" + KNOB_TEMPO);
+    if (KNOB_CALM) knobs.push("calm");
+    if (knobs.length) lines.push("knobs: " + knobs.join(" "));
     if (failure) lines.push("FAULT: " + failure);
     report(lines.join("\n"));
   }
 
-  // One start path for both realities. "immersive-vr" is the arena;
-  // "immersive-ar" is PASSTHROUGH — your real room, the robot standing in
-  // it, and nothing else drawn. The world rebuilds on entry because the
-  // two modes furnish it differently (no pillars in your living room).
+  // --- boot --------------------------------------------------------------------
+  fetch("box3d.wasm?v=" + BUILD).then(function (r) {
+    if (!r.ok) throw new Error("wasm " + r.status);
+    return r.arrayBuffer();
+  }).then(function (buf) {
+    var wasi = {
+      fd_write: function () { return 0; }, fd_close: function () { return 0; },
+      fd_fdstat_get: function () { return 0; }, fd_seek: function () { return 0; },
+      proc_exit: function () {}, environ_get: function () { return 0; },
+      environ_sizes_get: function () { return 0; }, random_get: function () { return 0; },
+      clock_time_get: function () { return 0; }
+    };
+    return WebAssembly.instantiate(buf, { wasi_snapshot_preview1: wasi });
+  }).then(function (res) {
+    E = res.instance.exports;
+    if (E._initialize) E._initialize();
+    E.w_init();
+    if (!navigator.xr) { setStatus("No WebXR in this browser. Open it in the Quest browser.", true); return; }
+    navigator.xr.isSessionSupported("immersive-ar").then(function (ok) {
+      if (ok) { arBtn.disabled = false; arBtn.textContent = "Start — in your room"; }
+      else { arBtn.textContent = "No passthrough here"; }
+    });
+    navigator.xr.isSessionSupported("immersive-vr").then(function (ok) {
+      enterBtn.disabled = !ok;
+      enterBtn.textContent = ok ? "In VR instead" : "No VR here";
+      setStatus(ok ? (floorY === null
+          ? "Ready. First time in: rest a controller on the floor and pull the trigger."
+          : "Ready. Raise both fists above your head to bring one in.")
+        : "This headset reports no immersive session support.", !ok);
+      if (FLAT) flatStart();
+    });
+  }).catch(function (e) { setStatus("Load failed: " + e.message, true); });
+
+  // One start path for both realities. "immersive-ar" is PASSTHROUGH — your
+  // real room, the figure standing in it, and nothing else drawn.
   function startXR(mode) {
     audioInit();
     if (AC && AC.state === "suspended") AC.resume();
@@ -2304,8 +835,8 @@
         AR = mode === "immersive-ar";
         if (AR !== wasAR) built = false;   // refurnish for the new reality
         s.addEventListener("end", function () {
-          enterBtn.textContent = "Enter VR";
-          if (arBtn) arBtn.textContent = "Passthrough";
+          arBtn.textContent = "Start — in your room";
+          enterBtn.textContent = "In VR instead";
           setStatus("Left the headset view. The report above is what it reported.");
         });
         return gl.makeXRCompatible().then(function () {
@@ -2319,27 +850,113 @@
             });
         }).then(function (sp) {
           refSpace = sp;
+          lastT = 0; acc = 0;
           s.requestAnimationFrame(onFrame);
-          setStatus(AR ? "Passthrough: the robot is in your room." : "In VR.");
+          setStatus(AR ? "It is in your room." : "In VR.");
         });
       })
       .catch(function (e) {
-        enterBtn.textContent = "Enter VR";
-        if (arBtn) arBtn.textContent = "Passthrough";
+        arBtn.textContent = "Start — in your room";
+        enterBtn.textContent = "In VR instead";
         setStatus("Could not start: " + (e && e.message ? e.message : e), true);
       });
   }
-  enterBtn.addEventListener("click", function () {
-    enterBtn.textContent = "Starting…";
-    // Audio must be born on a browser gesture — a controller gesture in VR
-    // does not count, and a context created in the frame loop stays suspended
-    // and silent. This click is the one browser gesture we get.
-    startXR("immersive-vr");
-  });
-  if (arBtn) arBtn.addEventListener("click", function () {
+  arBtn.addEventListener("click", function () {
     arBtn.textContent = "Starting…";
+    // Audio must be born on a browser gesture — a controller gesture in the
+    // headset does not count, and a context created in the frame loop stays
+    // suspended and silent. This click is the one browser gesture we get.
     startXR("immersive-ar");
   });
+  enterBtn.addEventListener("click", function () {
+    enterBtn.textContent = "Starting…";
+    startXR("immersive-vr");
+  });
+
+  // The scripted pilot, for ?flat=1: stand, raise both fists, then work the
+  // figure over — body, then a leg, then the other leg.
+  function flatStart() {
+    floorY = 0; statureSeen = 1.638;
+    var frames = 0;
+    var W = 1280, H = 720;
+    var proj = perspective(1.05, W / H, 0.05, 60);
+    var fake = {
+      renderState: { baseLayer: {
+        framebuffer: null,
+        getViewport: function () { return { x: 0, y: 0, width: W, height: H }; } } },
+      inputSources: [],
+      requestAnimationFrame: function (cb) { requestAnimationFrame(function (ts) { cb(ts, fakeFrame); }); }
+    };
+    var CT = [{ position: { x: -0.28, y: 1.15, z: -0.35 } },
+              { position: { x:  0.28, y: 1.15, z: -0.35 } }];
+    var HEAD = { x: 0, y: 1.638, z: 0 };
+    var fakeFrame = {
+      getViewerPose: function () {
+        return { transform: { position: HEAD },
+                 views: [{ projectionMatrix: proj,
+                           transform: { inverse: { matrix: lookAt([1.7, 1.45, 1.5], [0, 1.05, -0.75]) } } }] };
+      },
+      getPose: function (space) { return { transform: CT[space.which] }; }
+    };
+    fake.inputSources = [
+      { handedness: "left",  gripSpace: { which: 0 }, gamepad: { buttons: [{ pressed: false }] } },
+      { handedness: "right", gripSpace: { which: 1 }, gamepad: { buttons: [{ pressed: false }] } }
+    ];
+    session = fake; refSpace = {}; AR = false;
+    setStatus("Flat preview: the scripted pilot is fighting it.");
+    (function loop(ts) {
+      frames++;
+      script(frames);
+      try { simulate(ts || frames * (1000 / 72), fakeFrame); } catch (e) { fail(e); }
+      requestAnimationFrame(loop);
+    })(0);
+    function script(f) {
+      if (f < 60) {                       // fists up, bring one in
+        CT[0].position.x = -0.24; CT[1].position.x = 0.24;
+        CT[0].position.y = CT[1].position.y = HEAD.y + 0.22;
+        CT[0].position.z = CT[1].position.z = -0.15;
+        return;
+      }
+      // Then guard, and let it come. This stretch exists so a screenshot can
+      // catch it STANDING — the preview is for looking at the figure, and a
+      // preview that is punching from the first frame never shows you one.
+      if (f < 260) {
+        CT[0].position.x = -0.22; CT[1].position.x = 0.22;
+        CT[0].position.y = CT[1].position.y = 1.20;
+        CT[0].position.z = CT[1].position.z = -0.30;
+        return;
+      }
+      // Punch: a cycle of draw back and drive through, working down the body.
+      var g = f - 260, cyc = 34, c = g % cyc, phase = Math.floor(g / cyc);
+      var aimY = [1.30, 1.30, 1.05, 0.62, 0.62, 0.40][phase % 6];
+      var drive = c < 20 ? 0 : (c - 20) / 14;
+      var z = -0.55 - drive * 0.85;
+      CT[0].position.x = -0.22; CT[1].position.x = 0.20;
+      CT[0].position.y = 1.20; CT[1].position.y = aimY;
+      CT[0].position.z = -0.45; CT[1].position.z = z;
+    }
+  }
+  function perspective(fovy, aspect, n, f) {
+    var t = 1 / Math.tan(fovy / 2);
+    return new Float32Array([t/aspect,0,0,0, 0,t,0,0, 0,0,(f+n)/(n-f),-1, 0,0,2*f*n/(n-f),0]);
+  }
+  function lookAt(eye, at) {
+    var zx = eye[0]-at[0], zy = eye[1]-at[1], zz = eye[2]-at[2];
+    var zl = Math.hypot(zx,zy,zz); zx/=zl; zy/=zl; zz/=zl;
+    // right = up x back. Getting this sign backwards flips x and, through the
+    // cross product that follows, y as well — a clean 180 degree roll. The
+    // preview drew the floor across the ceiling and the figure hanging off it,
+    // and nothing errored, because an upside-down camera is a perfectly valid
+    // camera.
+    var xx = zz, xy = 0, xz = -zx;
+    var xl = Math.hypot(xx,xy,xz) || 1; xx/=xl; xy/=xl; xz/=xl;
+    var yx = zy*xz - zz*xy, yy = zz*xx - zx*xz, yz = zx*xy - zy*xx;
+    return new Float32Array([
+      xx, yx, zx, 0, xy, yy, zy, 0, xz, yz, zz, 0,
+      -(xx*eye[0]+xy*eye[1]+xz*eye[2]),
+      -(yx*eye[0]+yy*eye[1]+yz*eye[2]),
+      -(zx*eye[0]+zy*eye[1]+zz*eye[2]), 1]);
+  }
 })();
 </script>
 </body>
