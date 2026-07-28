@@ -22,3 +22,6 @@ wasm/box3d.wasm
 
 # Local tooling for the screenshot loop (playwright-core)
 node_modules/
+
+# Box3D source, fetched at the pinned revision for local wasm rebuilds
+wasm/box3d-src/
