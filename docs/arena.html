@@ -751,7 +751,11 @@
       // whatever gap the trunk leaves to the floor, so a SHORT trunk is what
       // buys long legs — at 0.92 this was a fridge on stilts. 0.55 puts the hip
       // near half the standing height, which is roughly where a person's is.
-      limbs: 3, head: [3,1,2], torso: [0.62, 0.55, 0.72], visor: 1,
+      // Height stays near stock. Cutting the trunk to 0.55 changed the torso's
+      // inertia enough that the upright spring — tuned for the stock body —
+      // could not hold it, and the machine floated on its face. Narrowing is
+      // safe because it does not fight that spring; shortening is not.
+      limbs: 3, head: [3,1,2], torso: [0.66, 0.98, 0.74], visor: 1,
       pillars: [[-2.5,-1.5],[2.4,-1.9],[-2.0,1.5],[2.2,1.3]] },
     { name: "SCRAPPER", place: "The Scrapfields",
       story: "An old harvester frame, re-armed. It remembers being told to dig.",
@@ -978,7 +982,7 @@
   // the Pages CDN both cache hard — a playtest once got the old game and,
   // fairly, could not tell), and it is printed on the card so which build
   // loaded is never a guess.
-  var BUILD = 29;
+  var BUILD = 30;
   var bTag = document.getElementById("buildTag");
   if (bTag) bTag.textContent = "(build " + BUILD + ")";
   // The ladder's length lives in one place — the blurb reads it rather than
