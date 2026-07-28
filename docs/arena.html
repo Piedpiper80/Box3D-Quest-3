@@ -32,7 +32,7 @@
 <body>
 <div class="wrap">
   <h1>CORE BREAKER</h1>
-  <p class="sub">Five fights. Another machine wants your core. Strip its armour, smash what's underneath — before it does the same to you. <span id="buildTag"></span></p>
+  <p class="sub"><span id="fightCount">Six fights.</span> Another machine wants your core. Strip its armour, smash what's underneath — before it does the same to you. <span id="buildTag"></span></p>
 
   <div class="card">
     <button id="enter" disabled>Checking headset…</button>
@@ -266,6 +266,100 @@
              hits: 0, deepest: 0, busted: false, rested: false, vy: 0, fallA: 0,
              m: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, cx, cy, cz, 1]) };
   }
+  // ---- the opponent's body, in deformable mesh -------------------------------
+  // Every part of the machine is a vox grid in the engine. Hidden from the
+  // engine's box renderer, each is drawn here as a subdivided mesh that caves
+  // where it is hit — the practice piece's treatment, on the thing you fight.
+  // The mesh lives in the part's LOCAL frame (centre 0,0,0) and the part's world
+  // pose goes into its model matrix, so it follows a swinging limb for free.
+  var harMeshes = [];
+
+  function releaseHarMeshes() {
+    for (var i = 0; i < harMeshes.length; i++) {
+      var m = harMeshes[i].mesh;
+      if (m) { gl.deleteVertexArray(m.vao); gl.deleteBuffer(m.vbo); }
+    }
+    harMeshes = [];
+  }
+
+  function buildHarMeshes(hullC, plateGrid) {
+    releaseHarMeshes();
+    if (!E.w_enemy_part_grid || !E.w_vox_grid_pose) return;
+    var n = E.w_enemy_part_count ? E.w_enemy_part_count() : 14;
+    // The fourteen parts AND the chest plate. The plate is a separate 7x7 grid
+    // and it is the biggest thing on the machine — leaving it on the engine's
+    // box renderer meant the one surface you punch most was the one surface
+    // that still broke into chunks instead of caving.
+    var grids = [];
+    for (var q = 0; q < n; q++) grids.push(E.w_enemy_part_grid(q));
+    if (plateGrid !== undefined && plateGrid !== null && plateGrid >= 0) grids.push(plateGrid);
+    for (var p = 0; p < grids.length; p++) {
+      var g = grids[p];
+      if (g < 0) continue;
+      var f = new Float32Array(E.memory.buffer);
+      var o = E.w_vox_grid_pose(g) >>> 2;
+      var ex = f[o+7], ey = f[o+8], ez = f[o+9];
+      var big = Math.max(ex, Math.max(ey, ez));
+      if (!(big > 0)) continue;
+      // One cube mesh at the part's largest half extent; the model matrix
+      // squashes it to the real proportions, so a 1x1x4 limb reads as a limb.
+      var mesh = buildDeformMesh(0, 0, 0, big);
+      mesh.cx = 0; mesh.cy = 0; mesh.cz = 0;
+      harMeshes.push({ grid: g, mesh: mesh, alive: 1,
+                       sx: ex/big, sy: ey/big, sz: ez/big,
+                       q: [0,0,0,1], wx: 0, wy: 0, wz: 0,
+                       color: hullC || [0.55,0.58,0.64] });
+      E.w_vox_hide(g, 1);     // the engine stops drawing boxes for it
+    }
+  }
+
+  // Follow the parts. Called every frame the enemy exists.
+  function updateHarMeshes() {
+    if (!harMeshes.length) return;
+    var f = new Float32Array(E.memory.buffer);
+    for (var i = 0; i < harMeshes.length; i++) {
+      var h = harMeshes[i];
+      var o = E.w_vox_grid_pose(h.grid) >>> 2;
+      h.alive = f[o+10];
+      var qx = f[o+3], qy = f[o+4], qz = f[o+5], qw = f[o+6];
+      h.q[0]=qx; h.q[1]=qy; h.q[2]=qz; h.q[3]=qw;
+      h.wx = f[o]; h.wy = f[o+1]; h.wz = f[o+2];
+      var xx=qx*qx, yy=qy*qy, zz=qz*qz, xy=qx*qy, xz=qx*qz, yz=qy*qz,
+          wx=qw*qx, wy=qw*qy, wz=qw*qz, m = h.mesh.m;
+      m[0]=(1-2*(yy+zz))*h.sx; m[1]=(2*(xy+wz))*h.sx;   m[2]=(2*(xz-wy))*h.sx;   m[3]=0;
+      m[4]=(2*(xy-wz))*h.sy;   m[5]=(1-2*(xx+zz))*h.sy; m[6]=(2*(yz+wx))*h.sy;   m[7]=0;
+      m[8]=(2*(xz+wy))*h.sz;   m[9]=(2*(yz-wx))*h.sz;   m[10]=(1-2*(xx+yy))*h.sz; m[11]=0;
+      m[12]=h.wx; m[13]=h.wy; m[14]=h.wz; m[15]=1;
+    }
+  }
+
+  // Rotate a world vector into a part's local frame (conjugate rotation).
+  function intoLocal(q, x, y, z, out) {
+    var ix=-q[0], iy=-q[1], iz=-q[2], w=q[3];
+    var tx = 2*(iy*z - iz*y), ty = 2*(iz*x - ix*z), tz = 2*(ix*y - iy*x);
+    out[0] = x + w*tx + (iy*tz - iz*ty);
+    out[1] = y + w*ty + (iz*tx - ix*tz);
+    out[2] = z + w*tz + (ix*ty - iy*tx);
+    return out;
+  }
+
+  var HL = [0,0,0], HD = [0,0,0];
+  // Route one engine impact to the part it landed on and crumple it there.
+  function dentHarPart(grid, wx, wy, wz, force, svx, svy, svz) {
+    for (var i = 0; i < harMeshes.length; i++) {
+      var h = harMeshes[i];
+      if (h.grid !== grid || h.alive <= 0) continue;
+      intoLocal(h.q, wx - h.wx, wy - h.wy, wz - h.wz, HL);
+      intoLocal(h.q, svx || 0, svy || 0, svz || 0, HD);
+      // The mesh is drawn squashed, so undo that squash on the way in or the
+      // crater lands off the spot on any part that is not a cube.
+      deformAt(h.mesh, HL[0]/(h.sx||1), HL[1]/(h.sy||1), HL[2]/(h.sz||1),
+               force, HD[0], HD[1], HD[2]);
+      return true;
+    }
+    return false;
+  }
+
   // An impact: cave every vertex near the contact point inward along the
   // hit direction, with a raised rim around the crater. Permanent.
   function deformAt(mesh, wx, wy, wz, force, svx, svy, svz) {
@@ -345,6 +439,20 @@
       gl.uniform3fv(uC, [0.62, 0.66, 0.74]);
       gl.uniform1f(uMat, 3);
       gl.drawElements(gl.TRIANGLES, defBox.n, gl.UNSIGNED_SHORT, 0);
+      gl.bindVertexArray(vao);
+    }
+    // The opponent's own body, part by part, in the same deforming mesh as the
+    // practice piece — so punches CRUMPLE the machine you are fighting instead
+    // of chipping cells off it.
+    for (var hm = 0; hm < harMeshes.length; hm++) {
+      var HM = harMeshes[hm];
+      if (HM.alive <= 0) continue;              // torn off: the engine drew it away
+      if (HM.mesh.dirty) refreshDeformMesh(HM.mesh);
+      gl.bindVertexArray(HM.mesh.vao);
+      gl.uniformMatrix4fv(uM, false, HM.mesh.m);
+      gl.uniform3fv(uC, HM.color);
+      gl.uniform1f(uMat, 3);
+      gl.drawElements(gl.TRIANGLES, HM.mesh.n, gl.UNSIGNED_SHORT, 0);
       gl.bindVertexArray(vao);
     }
     gl.bindVertexArray(null);
@@ -611,6 +719,44 @@
   // from three metres — a machine you box has to be BUILT like a machine.
   var EBULK = 1.55;
   var CAMPAIGN = [
+    // The JAGUAR opens the ladder. In One Must Fall it is the chassis every
+    // pilot starts on — a lean security machine, the fastest thing of its
+    // size, light enough that a clean hit tells. It teaches the fight: quick
+    // enough to punish standing still, thin enough in the core to reward
+    // stripping armour properly. Ochre plate over a gunmetal frame.
+    { name: "JAGUAR", place: "The Owner's Yard",
+      story: "A rich man's bodyguard, off its leash. Fast, and it knows it.",
+      // Durability is set for a pilot carrying UNLOCKED arms into chapter 1 on
+      // a later lap, not for the starting set — at mat 0 and core 150 it died
+      // to a single punch, which is not a fight. Stone plate and a fuller core;
+      // still the lightest machine on the ladder, just no longer a formality.
+      // Still dying in three punches at core 260 on stone. Steel plate and a
+      // core past the Juggernaut's: a narrow machine has less plate area to
+      // strip, so it needs the metal to be worth stripping.
+      mat: 2, scale: 0.82, core: 420, hover: 0, tempo: 1.20, pillarMat: 0,
+      skyC: [0.135,0.12,0.145], skyH: 0.7, skyN: 10, floorC: [0.175,0.17,0.205],
+      // Blue, from the game's own HAR-select sprite — NOT the ochre this was
+      // first built in, which was invented out of nothing. The sprite reads:
+      // saturated blue plate, RED joint dots at every articulation, and a gold
+      // cat-face emblem across the chest, which is the one feature that says
+      // Jaguar from any distance. Limbs are thin and lanky, the head is small.
+      // jointC and crestC are the pieces the renderer cannot use yet — the
+      // enemy's part geometry is shared across the whole roster, so a per-
+      // machine head shape and chest crest is the next job, not a colour tweak.
+      hullC: [0.16,0.28,0.78], jointC: [0.85,0.13,0.13], crestC: [0.86,0.72,0.16],
+      // The silhouette is the whole point: the Jaguar is lanky. Four cells to
+      // a limb segment makes every limb a quarter of the stock thickness at
+      // the same reach, and a 3x1x2 head is wide and flat instead of a cube.
+      // Human proportions, and the height is the half that matters. Legs fill
+      // whatever gap the trunk leaves to the floor, so a SHORT trunk is what
+      // buys long legs — at 0.92 this was a fridge on stilts. 0.55 puts the hip
+      // near half the standing height, which is roughly where a person's is.
+      // Height stays near stock. Cutting the trunk to 0.55 changed the torso's
+      // inertia enough that the upright spring — tuned for the stock body —
+      // could not hold it, and the machine floated on its face. Narrowing is
+      // safe because it does not fight that spring; shortening is not.
+      limbs: 3, head: [3,1,2], torso: [0.66, 0.98, 0.74], visor: 1,
+      pillars: [[-2.5,-1.5],[2.4,-1.9],[-2.0,1.5],[2.2,1.3]] },
     { name: "SCRAPPER", place: "The Scrapfields",
       story: "An old harvester frame, re-armed. It remembers being told to dig.",
       mat: 0, scale: 0.85, core: 170, hover: 0, tempo: 1.15, pillarMat: 0,
@@ -836,9 +982,16 @@
   // the Pages CDN both cache hard — a playtest once got the old game and,
   // fairly, could not tell), and it is printed on the card so which build
   // loaded is never a guess.
-  var BUILD = 20;
+  var BUILD = 30;
   var bTag = document.getElementById("buildTag");
   if (bTag) bTag.textContent = "(build " + BUILD + ")";
+  // The ladder's length lives in one place — the blurb reads it rather than
+  // claiming a number that goes stale the moment a machine is added.
+  var fTag = document.getElementById("fightCount");
+  if (fTag) {
+    var WORDS = ["No","One","Two","Three","Four","Five","Six","Seven","Eight","Nine","Ten"];
+    fTag.textContent = (WORDS[CAMPAIGN.length] || CAMPAIGN.length) + " fights.";
+  }
   fetch("box3d.wasm?v=" + BUILD)
     .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.arrayBuffer(); })
     .then(function (b) { return WebAssembly.instantiate(b, { wasi_snapshot_preview1: wasi }); })
@@ -891,6 +1044,22 @@
         Math.max(eyeYMax, (armSpan || 1.75) - 0.12)));
     var visorY = eyeEst * (0.55 + 0.55 * ch2.scale) + (ch2.hover ? 0.15 : 0);
     if (E.w_enemy_stature) E.w_enemy_stature(floorY + visorY - 0.34 * ch2.scale * EBULK);
+    // Silhouette, told before creation like the stature. A chassis with `limbs`
+    // set is cut into that many cells per limb segment — same reach, thinner
+    // limb — and `head` reshapes the head in cells so it need not be a cube.
+    // This is what lets one machine be lanky and another stocky.
+    if (E.w_enemy_shape) {
+      E.w_enemy_shape(ch2.limbs || 0,
+                      ch2.head ? ch2.head[0] : 0,
+                      ch2.head ? ch2.head[1] : 0,
+                      ch2.head ? ch2.head[2] : 0);
+    }
+    // Torso proportions, per machine. Shoulders, hips and the chest plate all
+    // follow the width, so a narrow chassis is narrow all the way through
+    // instead of a slim box wearing a slab.
+    if (E.w_enemy_torso && ch2.torso) {
+      E.w_enemy_torso(ch2.torso[0], ch2.torso[1], ch2.torso[2]);
+    }
     enemyGrid = E.w_enemy_create_ex(hx, hz - 3.2, ch2.mat, ch2.scale * EBULK,
                                     ch2.core, ch2.hover,
                                     ch2.tempo * (1 + lap * 0.15));
@@ -916,6 +1085,7 @@
     E.w_vox_hide(practiceGrid, 1);
     if (defBox) { gl.deleteVertexArray(defBox.vao); gl.deleteBuffer(defBox.vbo); }
     defBox = buildDeformMesh(hx + 0.75, floorY + 1.02, hz + 0.35, 0.17);
+    buildHarMeshes(ch2.hullC, enemyGrid);
     heat = 0; overheated = false;
     if (KNOB_GRIP !== 1)
       E.w_mech_tune(5200 * KNOB_GRIP, 1.0, 7800 * KNOB_GRIP, 14000);
@@ -1330,11 +1500,35 @@
       // foundry iron, the Returned's violet dark — and the core glows
       // through it as the machine weakens.
       var hC = chD.hullC;
-      items.push({ m: trs([ef[ep], ef[ep+1], ef[ep+2]],
-                          [ef[ep+3], ef[ep+4], ef[ep+5], ef[ep+6]],
-                          [0.24*eS, 0.34*eS, 0.14*eS]),
-                   c: eState === 5 ? [0.15,0.15,0.17]
-                     : [hC[0] + 0.55*(1-coreFrac), hC[1], hC[2]] });
+      var tC = eState === 5 ? [0.15,0.15,0.17]
+                            : [hC[0] + 0.55*(1-coreFrac), hC[1], hC[2]];
+      var eQ = [ef[ep+3], ef[ep+4], ef[ep+5], ef[ep+6]];
+      // A trunk drawn as ONE box is a juice box with arms and legs, however
+      // well proportioned the box is. It is drawn as a stack now — shoulder
+      // yoke, chest, waist — so the body TAPERS, and the stack takes the same
+      // per-machine proportions the physics torso does instead of the constant
+      // it used to be built from (which also meant the drawn body had stopped
+      // matching the simulated one the moment torsos became per-machine).
+      var tW = chD.torso ? chD.torso[0] : 1.0,
+          tH = chD.torso ? chD.torso[1] : 1.0,
+          tD = chD.torso ? chD.torso[2] : 1.0;
+      // offset up the body's own Y, half width, half height, half depth
+      var TRUNK = [
+        [ 0.26*tH,  0.25*tW, 0.09*tH, 0.13*tD],   // shoulder yoke, widest
+        [ 0.04*tH,  0.20*tW, 0.19*tH, 0.14*tD],   // chest
+        [-0.24*tH,  0.13*tW, 0.13*tH, 0.10*tD]    // waist, narrowest
+      ];
+      for (var tSeg = 0; tSeg < TRUNK.length; tSeg++) {
+        var T = TRUNK[tSeg], dy = T[0] * eS;
+        // rotate (0,dy,0) into world by the torso's quaternion
+        var qx = eQ[0], qy = eQ[1], qz = eQ[2], qw = eQ[3];
+        var ox = 2*(qx*qy*dy) - 2*qw*qz*dy;
+        var oy = dy - 2*(qz*qz + qx*qx)*dy;
+        var oz = 2*qw*qx*dy + 2*(qy*qz*dy);
+        items.push({ m: trs([ef[ep] + ox, ef[ep+1] + oy, ef[ep+2] + oz], eQ,
+                            [T[1]*eS, T[2]*eS, T[3]*eS]),
+                     c: tC });
+      }
       // The body is REAL now — head, pelvis, two-segment arms with fists,
       // legs — fourteen individually smashable vox parts riding physics
       // bodies, drawn by the same run renderer as every wall and plate.
@@ -1410,15 +1604,24 @@
         }
         // Two eyes, not one slit — "he's got one visor for an eye. It's
         // bad." Placed across the head's own x-axis so they turn with it.
+        // A machine can opt out: the Jaguar wears one wide band across the
+        // face instead, which is the thing that makes it read as a Jaguar.
+        var faceCh = CAMPAIGN[Math.min(chapter, CAMPAIGN.length - 1)];
         var exx = 1 - 2*(q[1]*q[1] + q[2]*q[2]),
             exy = 2*(q[0]*q[1] + q[3]*q[2]),
             exz = 2*(q[0]*q[2] - q[3]*q[1]);
-        for (var eyeI = -1; eyeI <= 1; eyeI += 2) {
-          items.push({ m: trs([vx2 + exx * eyeI * 0.042 * eS,
-                               vy2 + exy * eyeI * 0.042 * eS,
-                               vz2 + exz * eyeI * 0.042 * eS], q,
-                              [0.026*eS, 0.020*eS, 0.015*eS]),
+        if (faceCh.visor) {
+          items.push({ m: trs([vx2, vy2, vz2], q,
+                              [0.074*eS, 0.017*eS, 0.015*eS]),
                        c: vc, mat: eState === 5 ? 0 : 5 });
+        } else {
+          for (var eyeI = -1; eyeI <= 1; eyeI += 2) {
+            items.push({ m: trs([vx2 + exx * eyeI * 0.042 * eS,
+                                 vy2 + exy * eyeI * 0.042 * eS,
+                                 vz2 + exz * eyeI * 0.042 * eS], q,
+                                [0.026*eS, 0.020*eS, 0.015*eS]),
+                         c: vc, mat: eState === 5 ? 0 : 5 });
+          }
         }
       })();
 
@@ -1447,6 +1650,21 @@
         mm2[4] = -fz2*sa2;          mm2[5] = ca2;            mm2[6] = fx2*sa2;
         mm2[8] = tt2*fx2*fz2;       mm2[9] = -fx2*sa2;       mm2[10] = tt2*fz2*fz2 + ca2;
         mm2[13] = defBox.cy;
+      }
+
+      // The machine's parts follow their bodies every frame, and every impact
+      // into one crumples that part's own mesh where it landed.
+      updateHarMeshes();
+      if (harMeshes.length && stepped) {
+        var nH2 = E.w_vox_hit_count();
+        if (nH2 > 0) {
+          var hb2 = E.w_vox_hit_events() >>> 2, hf2 = new Float32Array(E.memory.buffer);
+          for (var h2 = 0; h2 < nH2; h2++) {
+            var o2 = hb2 + h2 * 8;
+            dentHarPart(hf2[o2+4] | 0, hf2[o2], hf2[o2+1], hf2[o2+2], hf2[o2+3],
+                        hf2[o2+5], hf2[o2+6], hf2[o2+7]);
+          }
+        }
       }
 
       // Impacts into the practice box crumple its mesh where they landed.

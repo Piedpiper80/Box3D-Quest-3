@@ -783,6 +783,33 @@ const wasi = new WASI({ version: "preview1" });
         lowest < upY - 0.14 && est()[1] > upY - 0.15,
         `stood ${upY.toFixed(2)}, dropped to ${lowest.toFixed(2)}, back at ${est()[1].toFixed(2)}`);
 
+  // A hidden grid is drawn by the page as its own deformed mesh, and that mesh
+  // falls when the piece breaks free. Bursting debris for it as well dropped a
+  // second, undented cube beside the crumpled one — which a playtest spotted.
+  {
+    const killGrid = (hide) => {
+      const g = E.w_vox_create(6.0, 1.0, 6.0, 1, 1, 1, 0.34, 2);
+      if (hide) E.w_vox_hide(g, 1);
+      const before = E.w_count();
+      for (let s = 0; s < 400; s++) {
+        E.w_vox_blast(6.0, 1.17, 6.0, 60);
+        E.w_step(1 / 72);
+        if (new Float32Array(E.memory.buffer)[(E.w_vox_grid_stats(g) >>> 2)] < 0.5) break;
+      }
+      const st = E.w_vox_grid_stats(g) >>> 2;
+      return { dead: new Float32Array(E.memory.buffer)[st] < 0.5,
+               added: E.w_count() - before };
+    };
+    const hiddenKill = killGrid(true);
+    check("a destroyed HIDDEN piece drops no stray cube",
+          hiddenKill.dead && hiddenKill.added === 0,
+          `dead=${hiddenKill.dead}, ${hiddenKill.added} extra bodies`);
+    const shownKill = killGrid(false);
+    check("a destroyed visible cell still sheds its debris",
+          shownKill.dead && shownKill.added > 0,
+          `dead=${shownKill.dead}, ${shownKill.added} debris`);
+  }
+
   console.log(`\n${pass} passed, ${fail} failed, ${gaps} known gaps`);
   process.exit(fail === 0 ? 0 : 1);
 })().catch((e) => { console.error("HARNESS ERROR:", e); process.exit(2); });

@@ -1804,6 +1804,12 @@ static void vxWorldReset(void)
 static void vxDebris(const VoxGrid* g, float x, float y, float z,
                      float vx, float vy, float vz)
 {
+    // A hidden grid is simulated here but drawn by the page — the practice
+    // piece IS its deformed mesh, and that mesh falls on its own when the
+    // budget is spent. Bursting a debris cube as well drops a second,
+    // undented box beside it, which is the one thing the piece is not.
+    if (g->hidden) return;
+
     const float half = g->size * 0.42f;
     const float color = VOX_MATS[g->material].debrisColor;
     if (s_vxDebrisCount < VOX_DEBRIS_CAP && s_count < MAX_CUBES)
@@ -2442,6 +2448,38 @@ void w_vox_scale_hp(int grid, float mul)
     g->cellHpMax *= mul;
 }
 
+// Where a grid is in the world and how big it is, so a page that draws a grid
+// ITSELF — a deforming mesh in place of the engine's boxes — can follow it.
+// This is what lets the machine's own body crumple the way the practice piece
+// does, instead of shedding cells whole.
+// 11 floats: centre x,y,z, rotation qx,qy,qz,qw, half extents hx,hy,hz, and the
+// fraction of the grid still alive.
+WASM_EXPORT("w_vox_grid_pose")
+float* w_vox_grid_pose(int grid)
+{
+    static float out[11];
+    for (int i = 0; i < 11; i++) out[i] = 0.0f;
+    out[6] = 1.0f;
+    if (grid < 0 || grid >= VOX_GRIDS || !s_vxG[grid].used) return out;
+
+    const VoxGrid* g = &s_vxG[grid];
+    const b3Transform t = vxPose(g);
+    b3Vec3 gc;
+    gc.x = g->local.x + 0.5f * (float)g->n[0] * g->size;
+    gc.y = g->local.y + 0.5f * (float)g->n[1] * g->size;
+    gc.z = g->local.z + 0.5f * (float)g->n[2] * g->size;
+    const b3Vec3 w = b3TransformPoint(t, gc);
+
+    out[0] = w.x; out[1] = w.y; out[2] = w.z;
+    out[3] = t.q.v.x; out[4] = t.q.v.y; out[5] = t.q.v.z; out[6] = t.q.s;
+    out[7] = 0.5f * (float)g->n[0] * g->size;
+    out[8] = 0.5f * (float)g->n[1] * g->size;
+    out[9] = 0.5f * (float)g->n[2] * g->size;
+    const int total = g->n[0] * g->n[1] * g->n[2];
+    out[10] = total > 0 ? (float)g->alive / (float)total : 0.0f;
+    return out;
+}
+
 WASM_EXPORT("w_vox_hit_count")
 int w_vox_hit_count(void) { return s_vxHitEvCount; }
 
@@ -2665,6 +2703,33 @@ enum {
 static int s_ePart[PART_COUNT];
 static float s_ePendStature = 0.0f;       // stature told before creation
 
+// Per-machine SILHOUETTE. Every opponent used to be built from one set of box
+// dimensions, so every opponent had the same body. These say how a chassis is
+// proportioned, told before creation like the stature.
+//
+// Limb segments are cut into `s_eLimbCells` cells along their length rather
+// than made of one lump: the segment keeps its length, so the cells get
+// THINNER as the count goes up, and a lanky machine falls out of the same code
+// that builds a stocky one. More cells also means more of it dents before any
+// of it dies.
+//
+// The head is given as cell counts on each axis, which is the only way to get a
+// head that is not a cube — wide and flat, say.
+static int s_eLimbCells = 0;              // 0 = the stock build
+static int s_eHeadW = 0, s_eHeadH = 0, s_eHeadD = 0;
+
+// Torso proportions, as multipliers on the stock box. The shoulders, the hips
+// and the chest plate all follow the width, so a narrow machine gets narrow
+// shoulders and a narrow plate rather than a slim box wearing a wide slab.
+static float s_eTorsoW = 1.0f, s_eTorsoH = 1.0f, s_eTorsoD = 1.0f;
+
+static void eResetShape(void)
+{
+    s_eLimbCells = 0;
+    s_eHeadW = s_eHeadH = s_eHeadD = 0;
+    s_eTorsoW = s_eTorsoH = s_eTorsoD = 1.0f;
+}
+
 static int ePartDead(int p)
 {
     const int g = s_ePart[p];
@@ -2724,7 +2789,48 @@ int w_enemy_create_ex(float x, float z, int material, float scale,
     // A stature told before creation wins over the default — the legs are
     // built to fill exactly the gap it leaves to the floor.
     if (s_ePendStature > 0.0f) { s_eStandY = s_ePendStature; s_ePendStature = 0.0f; }
-    return w_enemy_create_inner(x, z, material);
+    const int made = w_enemy_create_inner(x, z, material);
+    eResetShape();   // a silhouette belongs to one machine, not the next
+    return made;
+}
+
+// How this chassis is PROPORTIONED, told before creation like the stature.
+// limbCells cuts every limb segment into that many cells along its length —
+// the segment keeps its reach and gets thinner, so 3 builds a lanky machine
+// out of the same code that builds a stocky one at 1. headW/H/D shape the head
+// in cells, so it can be wide and flat rather than a cube. Any argument <= 0
+// keeps the stock build. Cleared after each create, so it cannot leak into the
+// next machine.
+// The grid behind each of the fourteen parts, so the page can hide the engine's
+// boxes and draw (and crumple) the part itself. -1 if the part does not exist.
+WASM_EXPORT("w_enemy_part_grid")
+int w_enemy_part_grid(int part)
+{
+    if (part < 0 || part >= PART_COUNT) return -1;
+    return s_ePart[part];
+}
+
+WASM_EXPORT("w_enemy_part_count")
+int w_enemy_part_count(void) { return PART_COUNT; }
+
+// Torso proportions for this chassis, as multipliers on the stock box
+// (width, height, depth). Shoulders, hips and the chest plate follow the width.
+// Cleared after creation with the rest of the silhouette.
+WASM_EXPORT("w_enemy_torso")
+void w_enemy_torso(float w, float h, float d)
+{
+    s_eTorsoW = w > 0.3f ? (w > 2.5f ? 2.5f : w) : 1.0f;
+    s_eTorsoH = h > 0.3f ? (h > 2.5f ? 2.5f : h) : 1.0f;
+    s_eTorsoD = d > 0.3f ? (d > 2.5f ? 2.5f : d) : 1.0f;
+}
+
+WASM_EXPORT("w_enemy_shape")
+void w_enemy_shape(int limbCells, int headW, int headH, int headD)
+{
+    s_eLimbCells = limbCells > 0 ? (limbCells > 6 ? 6 : limbCells) : 0;
+    s_eHeadW = headW > 0 ? (headW > 6 ? 6 : headW) : 0;
+    s_eHeadH = headH > 0 ? (headH > 6 ? 6 : headH) : 0;
+    s_eHeadD = headD > 0 ? (headD > 6 ? 6 : headD) : 0;
 }
 
 WASM_EXPORT("w_enemy_create")
@@ -2732,7 +2838,9 @@ int w_enemy_create(float x, float z, int material)
 {
     s_eScale = 1.0f; s_eTempo = 1.0f; s_eHover = 0;
     s_eCoreHpMax = 260.0f; s_eStandY = 1.15f;
-    return w_enemy_create_inner(x, z, material);
+    const int made = w_enemy_create_inner(x, z, material);
+    eResetShape();   // a silhouette belongs to one machine, not the next
+    return made;
 }
 
 // How tall it stands. The default stature parks every torso around waist
@@ -2784,7 +2892,8 @@ static int w_enemy_create_inner(float x, float z, int material)
     tsd.filter.categoryBits = ENEMY_CATEGORY;
     tsd.filter.maskBits = ~ENEMY_CATEGORY;
     const float sc = s_eScale;
-    b3BoxHull thull = b3MakeBoxHull(0.24f * sc, 0.34f * sc, 0.14f * sc);
+    b3BoxHull thull = b3MakeBoxHull(0.24f * sc * s_eTorsoW, 0.34f * sc * s_eTorsoH,
+                                    0.14f * sc * s_eTorsoD);
     b3CreateHullShape(s_eTorso, &tsd, &thull.base);
 
     // HUMANOID arms: two segments a side — upper arm from the shoulder,
@@ -2796,7 +2905,7 @@ static int w_enemy_create_inner(float x, float z, int material)
     for (int i = 0; i < 2; i++)
     {
         const float side = i == 0 ? -1.0f : 1.0f;
-        const float shX = side * 0.36f * sc, shY = 0.16f * sc;
+        const float shX = side * 0.36f * sc * s_eTorsoW, shY = 0.16f * sc * s_eTorsoH;
 
         b3BodyDef ud = b3DefaultBodyDef();
         ud.type = b3_dynamicBody;
@@ -2870,17 +2979,25 @@ static int w_enemy_create_inner(float x, float z, int material)
         // human-proportioned machine would throw — the first pass wore
         // half-metre cubes for hands ("way too big"). Two cells also means
         // a segment DENTS before it dies.
-        b3Vec3 upLoc = { -0.05f * sc, -0.05f * sc, 0.06f * sc };
+        // Segment length is fixed at 0.20*sc; the cell count decides how thin
+        // it is. Two cells is the stock arm; a lanky chassis asks for more and
+        // gets a slimmer one for free.
+        const int   aC  = s_eLimbCells > 0 ? s_eLimbCells : 2;
+        const float aSz = (0.20f * sc) / (float)aC;
+        b3Vec3 upLoc = { -0.5f * aSz, -0.5f * aSz, 0.06f * sc };
         s_ePart[PART_L_UPARM + i * 3] =
-            vxBuild(s_eUpArm[i], upLoc, 1, 1, 2, 0.10f * sc, material, 2, ENEMY_CATEGORY);
+            vxBuild(s_eUpArm[i], upLoc, 1, 1, aC, aSz, material, 2, ENEMY_CATEGORY);
         vxMakePart(s_ePart[PART_L_UPARM + i * 3], 10.0f);
-        b3Vec3 foLoc = { -0.05f * sc, -0.05f * sc, 0.03f * sc };
+        b3Vec3 foLoc = { -0.5f * aSz, -0.5f * aSz, 0.03f * sc };
         s_ePart[PART_L_FOREARM + i * 3] =
-            vxBuild(s_eArm[i], foLoc, 1, 1, 2, 0.10f * sc, material, 2, ENEMY_CATEGORY);
+            vxBuild(s_eArm[i], foLoc, 1, 1, aC, aSz, material, 2, ENEMY_CATEGORY);
         vxMakePart(s_ePart[PART_L_FOREARM + i * 3], 9.0f);
-        b3Vec3 fiLoc = { -0.065f * sc, -0.065f * sc, 0.24f * sc };
+        // The fist tracks the forearm's thickness, or it hangs off the end of a
+        // slim arm like a boxing glove on a wire.
+        const float fiSz = s_eLimbCells > 0 ? aSz * 1.30f : 0.13f * sc;
+        b3Vec3 fiLoc = { -0.5f * fiSz, -0.5f * fiSz, 0.24f * sc };
         s_ePart[PART_L_FIST + i * 3] =
-            vxBuild(s_eArm[i], fiLoc, 1, 1, 1, 0.13f * sc, material, 2, ENEMY_CATEGORY);
+            vxBuild(s_eArm[i], fiLoc, 1, 1, 1, fiSz, material, 2, ENEMY_CATEGORY);
         vxMakePart(s_ePart[PART_L_FIST + i * 3], 12.0f);
     }
 
@@ -2888,11 +3005,20 @@ static int w_enemy_create_inner(float x, float z, int material)
     // exactly fill the gap the stature leaves to the floor — which is why
     // stature must be told BEFORE creation (s_ePendStature).
     {
-        b3Vec3 hdLoc = { -0.08f * sc, 0.36f * sc, -0.08f * sc };
+        // A head given as cell counts can be wide and flat instead of a cube.
+        // Cell size shrinks as the counts grow so the head keeps its volume
+        // rather than ballooning off the shoulders.
+        const int hW = s_eHeadW > 0 ? s_eHeadW : 1;
+        const int hH = s_eHeadH > 0 ? s_eHeadH : 1;
+        const int hD = s_eHeadD > 0 ? s_eHeadD : 1;
+        const int hMax = hW > hH ? (hW > hD ? hW : hD) : (hH > hD ? hH : hD);
+        const float hSz = (0.16f * sc) / (float)hMax;
+        b3Vec3 hdLoc = { -0.5f * hW * hSz, 0.36f * sc * s_eTorsoH, -0.5f * hD * hSz };
         s_ePart[PART_HEAD] =
-            vxBuild(s_eTorso, hdLoc, 1, 1, 1, 0.16f * sc, material, 2, ENEMY_CATEGORY);
+            vxBuild(s_eTorso, hdLoc, hW, hH, hD, hSz, material, 2, ENEMY_CATEGORY);
         vxMakePart(s_ePart[PART_HEAD], 20.0f);
-        b3Vec3 pvLoc = { -0.09f * sc, -0.56f * sc, -0.09f * sc };
+        b3Vec3 pvLoc = { -0.09f * sc * s_eTorsoW, -0.56f * sc * s_eTorsoH,
+                         -0.09f * sc * s_eTorsoD };
         s_ePart[PART_PELVIS] =
             vxBuild(s_eTorso, pvLoc, 1, 1, 1, 0.18f * sc, material, 2, ENEMY_CATEGORY);
         vxMakePart(s_ePart[PART_PELVIS], 26.0f);
@@ -2907,19 +3033,29 @@ static int w_enemy_create_inner(float x, float z, int material)
         // get nobody anywhere.
         float legLen = (ENEMY_STAND_Y - s_worldFloorY) - 0.56f * sc - 0.10f;
         if (legLen < 0.12f) legLen = 0.12f;
-        float uSz = legLen * 0.40f; if (uSz > 0.13f * sc) uSz = 0.13f * sc;
+        // The cap keeps a leg from becoming a tree trunk, but it has to
+        // scale with the TORSO: shorten the trunk and the legs must be
+        // free to grow into the gap, or the machine hangs its feet above
+        // the floor and reads as a box on stubs.
+        const float legCap = 0.13f * sc / (s_eTorsoH > 0.2f ? s_eTorsoH : 1.0f);
+        float uSz = legLen * 0.40f; if (uSz > legCap) uSz = legCap;
         float lSz = uSz;
         float fSz = legLen * 0.20f; if (fSz > 0.10f * sc) fSz = 0.10f * sc;
         for (int L = 0; L < 2; L++)
         {
-            const float lx = (L == 0 ? -1.0f : 1.0f) * 0.16f * sc;
+            const float lx = (L == 0 ? -1.0f : 1.0f) * 0.16f * sc * s_eTorsoW;
             const int base = L == 0 ? PART_L_UPLEG : PART_R_UPLEG;
-            float yTop = -0.65f * sc;
-            b3Vec3 ul = { lx - uSz * 0.5f, yTop - uSz, -uSz * 0.5f };
-            s_ePart[base] = vxBuild(s_eTorso, ul, 1, 1, 1, uSz, material, 2, ENEMY_CATEGORY);
+            float yTop = -0.65f * sc * s_eTorsoH;
+            // Same trick as the arms: cut the segment into cells along its
+            // LENGTH, so the leg keeps reaching the floor but gets thinner.
+            const int   lC   = s_eLimbCells > 0 ? s_eLimbCells : 1;
+            const float uCel = uSz / (float)lC;
+            const float lCel = lSz / (float)lC;
+            b3Vec3 ul = { lx - uCel * 0.5f, yTop - uSz, -uCel * 0.5f };
+            s_ePart[base] = vxBuild(s_eTorso, ul, 1, lC, 1, uCel, material, 2, ENEMY_CATEGORY);
             vxMakePart(s_ePart[base], 26.0f);
-            b3Vec3 ll = { lx - lSz * 0.5f, yTop - uSz - lSz, -lSz * 0.5f };
-            s_ePart[base + 1] = vxBuild(s_eTorso, ll, 1, 1, 1, lSz, material, 2, ENEMY_CATEGORY);
+            b3Vec3 ll = { lx - lCel * 0.5f, yTop - uSz - lSz, -lCel * 0.5f };
+            s_ePart[base + 1] = vxBuild(s_eTorso, ll, 1, lC, 1, lCel, material, 2, ENEMY_CATEGORY);
             vxMakePart(s_ePart[base + 1], 26.0f);
             b3Vec3 fl = { lx - fSz * 0.5f, yTop - uSz - lSz - fSz, -fSz * 0.5f + 0.05f };
             s_ePart[base + 2] = vxBuild(s_eTorso, fl, 1, 1, 1, fSz, material, 2, ENEMY_CATEGORY);
@@ -2928,8 +3064,13 @@ static int w_enemy_create_inner(float x, float z, int material)
     }
 
     // Its armour: a plate over the chest, facing the player side (+z).
-    b3Vec3 local = { -0.245f * sc, -0.245f * sc, 0.14f * sc };
-    s_eGrid = vxBuild(s_eTorso, local, 7, 7, 1, 0.07f * sc, material, 2, ENEMY_CATEGORY);
+    // The plate is cut to the chest it covers. Sized to a constant, a narrow
+    // machine wore a slab wider than its own body — which is exactly what a
+    // playtest kept seeing instead of a robot.
+    const float plW = 0.07f * sc * s_eTorsoW, plH = 0.07f * sc * s_eTorsoH;
+    const float plCell = plW < plH ? plW : plH;
+    b3Vec3 local = { -3.5f * plCell, -3.5f * plCell, 0.14f * sc * s_eTorsoD };
+    s_eGrid = vxBuild(s_eTorso, local, 7, 7, 1, plCell, material, 2, ENEMY_CATEGORY);
 
     s_eCoreHp = s_eCoreHpMax;
     s_eState = E_APPROACH;
