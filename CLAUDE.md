@@ -56,24 +56,27 @@ Nothing goes to the headset unverified. The rule that produced this codebase:
 *machine-check everything except feel.*
 
 ```bash
-node wasm/test.js                    # engine suite — physics, mech IK, voxel damage
-node wasm/page-test.js arena.html    # per-page: runs the real page headlessly
-node wasm/page-test.js mech.html     #   with a scripted pilot, checks it draws
-node wasm/page-test.js vox.html      #   and behaves. also: dummy, drag, handtrack
+node wasm/test.js                    # engine suite — solver, matter, the skeleton
+node wasm/page-test.js arena.html    # runs the real page headlessly with a
+                                     # scripted pilot; checks it draws and behaves
 ```
 
-Both suites run in CI on every push. The four jobs are:
+Both suites run in CI on every push. The two jobs are:
 
 | job | what it proves |
 |---|---|
-| `apk` | the native Quest app actually compiles (Android NDK + CMake) |
-| `wasm` | rebuilds `docs/box3d.wasm` from `wasm/bridge.c` and runs the engine suite |
-| `pages` | every page still draws and behaves |
-| `bench` | headless physics benchmark, for regression detection |
+| `wasm` | rebuilds `docs/box3d.wasm` from `wasm/bridge.c` and runs the engine suite against the fresh build |
+| `pages` | the page still draws and behaves, using the committed wasm |
 
 A page can crash on its first frame and look identical to a page that didn't
 load — black, no error. That happened three times in a row here. The page
-suite exists because of it; keep pages in it.
+suite exists because of it.
+
+**And look at it.** `arena.html?flat=1` renders the whole thing to an ordinary
+canvas with a scripted pilot. Screenshot it in Chromium and actually look
+before shipping a visual change — the render has caught defects (a limb with no
+knee in its silhouette, a camera rolled 180 degrees) that every measurement
+passed straight through.
 
 When you add a fix, add the check that fails without it. When a check is
 measuring something known to be wrong, use `gap()` rather than deleting it or
@@ -82,16 +85,19 @@ loosening it until it passes — the number stays visible and honest.
 ## Where things are
 
 ```
-docs/arena.html          the game — five-chapter campaign, WebXR
-docs/*.html              single-purpose test pages (mech, vox, dummy, drag, handtrack)
+docs/arena.html          the game — one page, WebXR, passthrough first
+docs/index.html          the front door
 docs/box3d.wasm          built artifact, rebuilt by CI from bridge.c — don't hand-edit
-wasm/bridge.c            the engine: mech IK, voxel armour, enemy AI, campaign exports
+wasm/bridge.c            the engine: destructible matter, the skeleton, its will
 wasm/build.md            how the wasm is built (Zig toolchain, pinned Box3D revision)
 wasm/test.js             engine suite
 wasm/page-test.js        page harness
-app/src/main/cpp/        the native OpenXR Quest app (separate from the browser build)
 docs/design/ROADMAP.md   the record: every system, measured number, and known limitation
 ```
+
+There is one page. It was nine, and eight of them were spikes for systems that
+have since been superseded or cut. Don't add another without a reason that
+outlives the spike.
 
 The live game is the `gh-pages` branch, served at
 <https://piedpiper80.github.io/Box3D-Quest-3/arena.html>. Deploying is a push to

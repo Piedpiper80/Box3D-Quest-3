@@ -1,221 +1,95 @@
-# Box3D Quest VR
+# THE FIGURE
 
-A **standalone Meta Quest 3 VR game** built around the brand-new
-[**Box3D**](https://github.com/erincatto/box3d) physics engine (from Erin
-Catto, creator of Box2D). This repo is the complete home for the project: a
-**playable browser build** and the **native OpenXR app** source.
+**Play it: <https://piedpiper80.github.io/Box3D-Quest-3/arena.html>** — open it in
+the Quest browser and hit **Start — in your room**.
 
-## ▶ Play it right now — headset only, nothing to install
+One opponent, standing on your real floor, built on a human skeleton. Hit it and
+the metal caves in where you land. Hit the same place enough and the bone comes
+off, and everything below it goes too.
 
-**The game is [CORE BREAKER](https://piedpiper80.github.io/Box3D-Quest-3/arena.html).**
-Open **<https://piedpiper80.github.io/Box3D-Quest-3/arena.html>** in the Meta
-Quest Browser and tap **Enter VR**. Your arms are the machine's arms. A
-six-chapter campaign: strip the other machine's armour, smash the core
-underneath, and take the road to the next fight — through heat that cooks
-your actuators, a collapse you can crawl back from, and an ending.
-
-First time: set the floor (controller on the ground, pull the trigger), then
-your arm span (arms straight out, pull the trigger) — both remembered. Raise
-both fists above your head to start each fight.
-
-The spike pages that built it are live too:
-[`mech.html`](https://piedpiper80.github.io/Box3D-Quest-3/mech.html)
-(piloting feel),
-[`drag.html`](https://piedpiper80.github.io/Box3D-Quest-3/drag.html)
-(the knuckle-haul),
-[`handtrack.html`](https://piedpiper80.github.io/Box3D-Quest-3/handtrack.html)
-(bare hands),
-[`vox.html`](https://piedpiper80.github.io/Box3D-Quest-3/vox.html)
-(the destructible wall),
-[`dummy.html`](https://piedpiper80.github.io/Box3D-Quest-3/dummy.html)
-(armour on a moving target), and the original physics hello-world at
-[`index.html`](https://piedpiper80.github.io/Box3D-Quest-3/) (tumbling
-boxes).
-
-No headset handy? Add `?flat=1` to the arena URL for a flat in-browser
-preview with a scripted pilot, and `&ch=2` (0–5) to drop straight into a
-later chapter's arena. In VR, `?grip=` and `?spring=` (0.3–3) tune the
-punch feel live, and `?calm=1` removes all view shake.
-
-### What it looks like
-
-Flat-preview captures from the screenshot loop that reviews every visual
-change (the in-headset view is first-person from the cockpit):
-
-| The Owner's Yard | The Scrapfields |
-| --- | --- |
-| ![Chapter 1 — the ochre JAGUAR, visor lit, armour coming off it in plates](docs/design/shots/ch1-jaguar.png) | ![Chapter 2 — the rust-hulled SCRAPPER at close quarters](docs/design/shots/ch1-scrapper.png) |
-
-| Milltown | Saltyard Row |
-| --- | --- |
-| ![Chapter 3 — a gauntlet landing in the WARDEN's face, sparks flying](docs/design/shots/ch2-warden.png) | ![Chapter 4 — the salt-green DANCER mid-stride in its crowded yard](docs/design/shots/ch3-dancer.png) |
-
-| The Foundry | The High Dark |
-| --- | --- |
-| ![Chapter 5 — the JUGGERNAUT looming over a collapsed hull between foundry aisles](docs/design/shots/ch4-juggernaut.png) | ![Chapter 6 — the Returned, hovering, steel-plated, arena stripped bare](docs/design/shots/ch5-thereturned.png) |
-
-| Victory | |
-| --- | --- |
-| ![The wreck, the green ring, fists raised](docs/design/shots/victory.png) |
-
-All of it is the **real Box3D engine compiled to WebAssembly** (~360 KB,
-scalar, single-threaded) — see [`wasm/`](wasm/) for the C bridge, build
-command, and the headless test harnesses that drive every page in CI.
-Published via GitHub Pages from the `gh-pages` branch.
-
-## The native app (this repo's C/C++ source)
-
-The rest of this repo is the full native version: a real installed Quest app
-written against OpenXR in C/C++ with genuine Box3D physics. It installs onto
-the headset and runs entirely on-device — no PC, no cable, no browser — but
-**building it requires a computer** with Android Studio (steps below).
-
-> **Status: foundation / vertical slice.** Real Box3D physics rendered in
-> stereo VR, plus controller interaction. Built to grow into a full game.
-
-Where that full game is going — a voxel mech fighter you pilot with your own
-arms — is laid out in [`docs/design/ROADMAP.md`](docs/design/ROADMAP.md), with
-the current milestone detailed in
-[`docs/design/phase-0-foundations.md`](docs/design/phase-0-foundations.md).
-
-## What you'll see
-
-- A floor (aligned to your real floor via the VR guardian/stage) and a **tower
-  of colored cubes** that topples and settles under Box3D gravity — real 3D
-  rigid-body physics, collisions, and stacking.
-- **Pull either trigger to throw a new cube** out of your controller. Bury the
-  scene in boxes and watch them pile up.
-
-## Controls
-
-| Input | Action |
-|-------|--------|
-| Move / look | Walk around physically (roomscale) |
-| Left or Right **Trigger** | Throw a cube in the direction you're pointing |
+There is no core, no reactor, nothing to detonate. There is a body, and what
+happens to a body when you hit it.
 
 ---
 
-## Requirements
+## What it is
 
-- A **Meta Quest 3** (also works on Quest 2 / Pro / 3S) with **Developer Mode**
-  enabled (see below).
-- **[Android Studio](https://developer.android.com/studio)** (latest stable).
-- Android **NDK** and **CMake** (installed from inside Android Studio — steps
-  below). No manual OpenXR SDK download is needed; the loader comes from Maven.
-- A USB-C cable to connect the headset for installing.
-- Internet on the build machine the first time (Gradle downloads the OpenXR
-  loader; CMake downloads the Box3D source).
+Passthrough VR. Your room, your floor, and one figure in it, sized to you.
 
----
+- **Seventeen bones, sixteen joints, laid out on real anthropometry.** Every
+  length is a fraction of standing height, and the height is yours — taken from
+  your head the moment you put it on, so it stands eye to eye with you.
+- **The joints are the joints you have.** Ball shoulders and hips, hinge elbows
+  and knees that bend the way yours bend, a spine in three parts, a neck. That
+  is most of why it reads as a body rather than as a rig.
+- **Every bone dents.** Not a texture swap and not repositioned blocks — a real
+  subdivided mesh whose vertices cave in around each contact point, with a
+  raised rim, permanently. Lighting is recomputed from the crumpled triangles,
+  so a dent catches the light like a dent.
+- **Every bone breaks.** Beaten past a third of itself, a bone loses the joint
+  holding it and falls, taking everything below it with it. Break an elbow and
+  the forearm and the hand go together. Nothing in the code says so; the
+  skeleton does.
+- **The legs are the way down.** Take one and it drops to that knee and stops
+  walking. Take both and it goes down for good. Take both arms and it can no
+  longer throw anything at you.
+- **It fights back.** It closes, weaves on the way in, draws an arm back — that
+  is the whole telegraph — and throws. When it has thrown one, it is open.
+- **Every sound is synthesised from the physics** as it happens. Nothing here is
+  a recording.
 
-## Build & install (recommended: Android Studio)
+## How to play
 
-1. **Get the code onto your computer**
-   ```bash
-   git clone <this-repo-url>
-   cd box3d-quest3-vr
-   ```
+1. Open the link in the Quest browser and press **Start — in your room**.
+2. First time only: rest a controller on the floor and pull the trigger. That is
+   the entire calibration, and it is remembered.
+3. **Raise both fists above your head** to bring one in. Two glowing markers show
+   you where, and they brighten as you hold.
+4. Fight. Same gesture afterwards for the next one.
 
-2. **Open it in Android Studio** — `File ▸ Open` and select the
-   `box3d-quest3-vr` folder. Let it finish the initial Gradle sync. If it offers
-   to create a Gradle wrapper or use a bundled Gradle, accept.
+Plays seated. Motion-sensitive? Add `?calm=1` for no view shake at all.
 
-3. **Install the NDK + CMake** (one time): `Tools ▸ SDK Manager ▸ SDK Tools`,
-   tick **NDK (Side by side)** and **CMake**, click Apply. Android Studio will
-   also download the Box3D source and the OpenXR loader during the next build.
+Two knobs, live from the address bar: `?power=` (0.3–3) scales how much of your
+arm goes into a punch, `?tempo=` (0.3–2) how fast it fights. The report on the
+page names any knob you set.
 
-4. **Enable Developer Mode on the Quest** (one time):
-   - In the **Meta Horizon** phone app: `Menu ▸ Devices ▸` your headset `▸
-     Headset Settings ▸ Developer Mode ▸ On`. (Creating a free Meta developer
-     account/organization at <https://developer.meta.com> is required.)
-   - Put the headset on, plug it into the computer, and **Allow USB debugging**
-     when the prompt appears inside the headset (check "Always allow").
+## What is measured, and what is not
 
-5. **Build & run**: pick your Quest in the device dropdown at the top of Android
-   Studio and press **▶ Run** (or `Build ▸ Build App Bundle(s) / APK(s) ▸ Build
-   APK(s)` to just produce the file). The app installs and launches on the
-   headset.
-
-6. **Find it later on the headset**: it appears in your app library under
-   **Unknown Sources** (the dropdown filter in the Quest's app grid), named
-   **Box3D Quest VR**.
-
-### Alternative: command line
-
-If you prefer the terminal (requires a local Gradle or the wrapper, plus
-`adb` from Android platform-tools):
+Everything except feel. Two suites run in CI on every push:
 
 ```bash
-./gradlew assembleDebug          # build the APK
-adb install -r app/build/outputs/apk/debug/app-debug.apk   # install to the connected Quest
+node wasm/test.js                     # 46 engine checks
+node wasm/page-test.js arena.html     # 15 page checks — runs the real page
+                                      # headlessly with a scripted pilot
 ```
 
----
+The engine suite covers the solver, the destructible-matter system, and the
+figure: that it stands, that its head is where a head goes, that its knees do
+not bend forwards, that it turns to face you, that walking bends its knees, that
+a broken forearm takes the hand with it, that both legs gone puts it down, and
+that a step of the whole fight fits inside the frame budget. The page suite runs
+the real page in Node with stubbed GL and XR, driven by a scripted pilot who
+calibrates the floor, squares up, watches it come, and then takes it apart.
 
-## Project structure
+`arena.html?flat=1` runs the whole thing without a headset on an ordinary
+canvas, with that same scripted pilot — so the way it looks can be seen and
+reviewed without putting the headset on.
+
+**What no test can answer is how it feels**, and that is the only thing a
+headset is ever asked for.
+
+## Where things are
 
 ```
-box3d-quest3-vr/
-├── app/
-│   ├── build.gradle                 # Android module config, OpenXR loader dependency
-│   └── src/main/
-│       ├── AndroidManifest.xml      # Quest/OpenXR VR app manifest
-│       ├── res/values/strings.xml
-│       └── cpp/
-│           ├── CMakeLists.txt        # fetches Box3D, links OpenXR + GLES
-│           ├── main.cpp              # OpenXR session, EGL/GLES render loop, input
-│           ├── physics.cpp / .h      # Box3D world, ground, boxes, throw logic
-│           ├── gl_helpers.h          # shader + cube-mesh helpers
-│           └── math3d.h              # VR projection / view matrix math
-├── build.gradle                     # top-level, plugin versions
-├── settings.gradle
-└── gradle.properties
+docs/arena.html          the game
+docs/box3d.wasm          built artifact, rebuilt by CI from bridge.c — don't hand-edit
+wasm/bridge.c            the engine: destructible matter, the skeleton, its will
+wasm/build.md            how the wasm is built (Zig toolchain, pinned Box3D revision)
+wasm/test.js             the engine suite
+wasm/page-test.js        the page harness
+docs/design/ROADMAP.md   the record: every system, measured number, known limitation
 ```
 
-## How it works
-
-Box3D and the renderer are two separate jobs:
-
-- **Box3D** (`physics.cpp`) owns the *simulation*: it creates a world with
-  gravity, a static ground box, and dynamic box bodies, steps them each frame,
-  and reports every body's position + orientation. It draws nothing.
-- **OpenXR + OpenGL ES** (`main.cpp`) owns the *headset and the picture*: it
-  opens a VR session, renders each eye, and each frame asks Box3D for the
-  current transforms and draws a cube for each body.
-
-Boxes in Box3D are convex **hull** shapes — `b3MakeBoxHull(hx,hy,hz)` builds one,
-and its embedded `b3HullData base` is handed to `b3CreateHullShape`.
-
-## Tuning & next steps
-
-- **The scene** lives in `Physics_Init()` in `physics.cpp` — change the tower
-  height, cube sizes, colors, or gravity there.
-- **Throw force / cube size** for the trigger are in `handleInput()` in
-  `main.cpp` (`speed` and the `0.06f` half-extent).
-- Natural next features: grab & hold boxes, spawn different shapes (Box3D also
-  has spheres and capsules), targets/scoring, sound.
-
-## Troubleshooting
-
-- **Gradle can't resolve `openxr_loader_for_android:1.1.43`** — bump the version
-  in `app/build.gradle` to the latest on
-  [Maven Central](https://central.sonatype.com/artifact/org.khronos.openxr/openxr_loader_for_android).
-- **Box3D fails to compile (SIMD/intrinsics errors)** — SIMD is already disabled
-  by default (`BOX3D_DISABLE_SIMD ON` in `CMakeLists.txt`) for exactly this
-  reason. If you see a different Box3D error, note that it's fetched from the
-  `main` branch; you can pin a specific commit via `GIT_TAG` in `CMakeLists.txt`.
-- **CMake error: unknown target `box3d`** — the Box3D library target is `box3d`;
-  if a future version renames it, check `third_party` build output / the
-  fetched `box3d/src/CMakeLists.txt` and update the name in `target_link_libraries`.
-- **App installs but shows a black screen** — check `adb logcat -s Box3DQuest`
-  for the `OpenXR failed (...)` lines; they pinpoint which call failed.
-- **Triggers don't spawn boxes** — make sure the controllers are on and tracked;
-  the app binds both the simple-controller `select` and Touch `trigger` inputs.
-- **Can't see the headset in Android Studio** — confirm Developer Mode is on,
-  the USB cable carries data, and you accepted the USB-debugging prompt inside
-  the headset. `adb devices` should list it.
-
-## Credits
-
-- Physics: [Box3D](https://github.com/erincatto/box3d) by Erin Catto (MIT).
-- VR: [OpenXR](https://www.khronos.org/openxr/) with the Khronos Android loader.
+Built on [Box3D](https://github.com/erincatto/box3d) (Erin Catto, creator of
+Box2D), compiled to WebAssembly with the Zig toolchain. The live site is the
+`gh-pages` branch.

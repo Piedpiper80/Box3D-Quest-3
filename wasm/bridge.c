@@ -1,48 +1,23 @@
 // bridge.c — flat JS-facing API over the real Box3D engine (wasm build).
 //
-// Exports (called from the WebXR page):
-//   w_init()                       create world, ground, cube tower + scatter
-//   w_step(dt)                     advance the simulation (4 sub-steps)
-//   w_spawn(px,py,pz,vx,vy,vz,h,c) throw a new cube; recycles oldest when full
-//   w_count()                      number of dynamic cubes
-//   w_reset(sleep, groundY)        empty world + ground at groundY (default 0)
-//   w_fill(n)                      drop n cubes into a pile (benchmark scenes)
-//   w_state()                      pointer to packed floats, 9 per cube:
-//                                  [x,y,z, qx,qy,qz,qw, halfExtent, colorIdx]
-//   w_hand_create(i,...)           follow test: one free body chasing your hand
-//   w_hand_target(i,x,y,z)         drive body i toward the controller
-//   w_hand_limits(i,k,c,maxF)      retune body i's spring constant
-//   w_hand_apply()                 apply the follow forces (call before w_step)
-//   w_hand_state()                 8 floats per body: [x,y,z, qx,qy,qz,qw, half]
-//   w_mech_create(...)             the real machine: torso + two jointed arms
-//                                  last arg is half the shoulder width, measured
-//   w_mech_stand(x,y,z)            where the machine tries to stand
-//   w_mech_hand(i,x,y,z,active,q)  haul attachment i to the controller, and aim it
-//   w_mech_apply()                 apply leg + arm forces (call before w_step)
-//   w_mech_state()                 7 bodies x 7 floats: torso, then upper /
-//                                  forearm / attachment for each arm
-//   w_mech_lengths()               upper length, forearm length, attachment half
-//   w_mech_joints()                shoulder cone, elbow angle, wrist cone, per arm
-//   w_mech_tune(k,zeta,maxF,footF) how hard the hand hauls the arm
-//   w_mech_upright(period,zeta,max) how the legs hold the machine up
-//   w_mech_aim(period,zeta,max)    how the attachment holds the angle you point
-//   w_mech_pin(on)                 bolt the torso down, to study an arm alone
-//   w_torso_create(...)            piloting spike: the body the arms hang from
-//   w_torso_update(x,y,z,yaw)      move the torso with the head, every frame
-//   w_arm_create(i,...)            an arm pivoting at a shoulder on the torso
-//   w_arm_target(i,x,y,z)          swing arm i toward the hand
-//   w_arm_relax(i)                 let arm i hang slack (grip released)
-//   w_arm_limits(i,torque)         retune arm i's actuator (the upgrade slider)
-//   w_arm_state()                  8 floats per arm: [x,y,z, qx,qy,qz,qw, length]
+// This is the whole engine behind one page: a room, your two fists, a
+// destructible-matter system, and one opponent built on a human skeleton.
 //
-// Coordinates: right-handed, Y-up, meters — matches WebXR local-floor space.
+// Nothing here knows about chapters, campaigns, upgrades, weight classes or
+// a core you break to win. There is no engine to explode. What there is:
+// bone, and what happens to bone when you hit it.
+//
+//   world      w_init, w_step, w_reset, w_spawn, w_count, w_state
+//   fists      w_hand_*      one body per controller, held at your grip
+//   matter     w_vox_*       cells in a grid: dent, break, tear off, fall
+//   opponent   w_fig_*       seventeen bones, sixteen joints, no core
+//
+// Coordinates: right-handed, Y-up, metres — matches WebXR local-floor space.
 #include <box3d/box3d.h>
 
 #define WASM_EXPORT(name) __attribute__((export_name(name)))
 
 #define MAX_CUBES 2048
-#define TOWER_COUNT 12
-#define SCATTER_COUNT 8
 
 typedef struct
 {
@@ -53,22 +28,18 @@ typedef struct
 
 static b3WorldId s_world;
 static int s_worldCreated = 0;
-static b3BodyId s_groundBody;
+static b3BodyId s_groundBody;      // the fists' motor joints anchor to it
 static float s_groundY = 0.0f;
-static int s_mExists = 0;
-// The world is being torn down; forget every voxel grid that lived in it.
-static void vxWorldReset(void);
-static int s_dummyExists = 0;
-static int s_eExists = 0;
-static float s_eScale = 1.0f;      // body size multiplier
-static float s_eTempo = 1.0f;      // how fast its will runs
-static int s_eHover = 0;           // the God does not stand on the ground
-static float s_eStandY = 1.15f;
 static Cube s_cubes[MAX_CUBES];
 static int s_count = 0;
 static int s_ambient = 0;      // initial cubes are never recycled
 static int s_nextRecycle = 0;  // round-robin index among thrown cubes
 static float s_state[MAX_CUBES * 9];
+
+// The world is being torn down; forget every voxel grid and bone in it.
+static void vxWorldReset(void);
+static void figWorldReset(void);
+static void handWorldReset(void);
 
 // tiny deterministic PRNG for spawn jitter (no libc rand needed)
 static unsigned s_rng = 0x9e3779b9u;
@@ -81,10 +52,7 @@ static float frnd(float lo, float hi)
 static void addCube(float x, float y, float z, float half, float vx, float vy, float vz,
                     float color, float angVel)
 {
-    if (s_count >= MAX_CUBES)
-    {
-        return;
-    }
+    if (s_count >= MAX_CUBES) return;
 
     b3BodyDef bd = b3DefaultBodyDef();
     bd.type = b3_dynamicBody;
@@ -114,96 +82,18 @@ static void addCube(float x, float y, float z, float half, float vx, float vy, f
     s_count++;
 }
 
-WASM_EXPORT("w_init")
-void w_init(void)
-{
-    // Reachable a second time when the benchmark hands the page back to the
-    // normal scene, so the previous world has to go or it leaks.
-    if (s_worldCreated)
-    {
-        b3DestroyWorld(s_world);
-    }
-    s_worldCreated = 1;
-    s_count = 0;
-    s_rng = 0x9e3779b9u;
-
-    b3WorldDef wd = b3DefaultWorldDef();
-    wd.gravity.x = 0.0f;
-    wd.gravity.y = -9.81f;
-    wd.gravity.z = 0.0f;
-    s_world = b3CreateWorld(&wd);
-
-    // Static ground slab, top surface exactly at y = 0 (the player's floor).
-    {
-        b3BodyDef bd = b3DefaultBodyDef();
-        bd.type = b3_staticBody;
-        bd.position.x = 0.0f;
-        bd.position.y = -0.1f;
-        bd.position.z = 0.0f;
-        b3BodyId ground = b3CreateBody(s_world, &bd);
-
-        b3ShapeDef sd = b3DefaultShapeDef();
-        sd.baseMaterial.friction = 0.7f;
-        b3BoxHull hull = b3MakeBoxHull(8.0f, 0.1f, 8.0f);
-        b3CreateHullShape(ground, &sd, &hull.base);
-    }
-
-    // A tower ~1.2 m in front of the player that topples as it settles.
-    const float half = 0.10f;
-    for (int i = 0; i < TOWER_COUNT; i++)
-    {
-        float lean = 0.013f * (float)i;
-        addCube(lean, half + (2.0f * half + 0.005f) * (float)i, -1.2f,
-                half, 0.0f, 0.0f, 0.0f, (float)(i % 6), 0.0f);
-    }
-
-    // A loose scatter of smaller cubes dropping around the room.
-    for (int i = 0; i < SCATTER_COUNT; i++)
-    {
-        addCube(frnd(-1.4f, 1.4f), frnd(0.8f, 2.6f), frnd(-1.4f, 1.4f),
-                frnd(0.06f, 0.13f), frnd(-0.5f, 0.5f), 0.0f, frnd(-0.5f, 0.5f),
-                (float)(i % 6), 2.0f);
-    }
-
-    s_ambient = s_count;
-    s_nextRecycle = s_ambient;
-}
-
-WASM_EXPORT("w_step")
-void w_step(float dt)
-{
-    b3World_Step(s_world, dt, 4);
-}
-
 // ---------------------------------------------------------------------------
-// Benchmark support
-//
-// The browser build is the only way to measure Box3D on real Quest hardware
-// without a PC: no sideloading, no adb, no cable — just a URL in the headset
-// browser. These two exports let the page build controlled scenes that mirror
-// bench/bench.c, so its numbers describe the same thing.
-//
-// Caveat worth remembering when reading the results: this build is scalar and
-// single-threaded (wasm has neither SSE2 nor Neon, and SharedArrayBuffer is
-// unavailable on plain static hosting), so it measures the engine's *slowest*
-// configuration. The native app runs SIMD with four workers, which CI measured
-// at roughly 3.6x faster. Web numbers are therefore a floor, not a ceiling.
+// The world
 // ---------------------------------------------------------------------------
+
+static float s_worldFloorY = 0.0f;   // where the ground plane actually is
 
 // Tear the world down and rebuild it with only the ground.
 //
-// `enableSleep` selects the regime: with sleep on, settled bodies leave the
-// solver and cost almost nothing — the flattering number. With it off, every
-// body is solved every step whether or not it has come to rest, which is what a
-// fight looks like and the number that matters.
-// `groundY` is the top surface of the floor slab. Defaults to 0 when omitted
-// (JS passes 0 for missing numeric args), which is the old behaviour.
-//
-// It is a parameter because the page cannot assume Y=0 is the floor: if the
-// runtime declines a local-floor reference space and falls back to local, the
-// origin sits at the viewer instead, and a floor built at 0 ends up at head
-// height with the whole scene stacked above it.
-static float s_worldFloorY = 0.0f;   // where the ground plane actually is
+// `groundY` is the top surface of the floor slab, and it is a parameter
+// because the page cannot assume Y=0 is the floor. In passthrough the floor
+// is wherever the player's real floor is, and they measure it themselves;
+// a figure built against the wrong one stands buried to the shins.
 WASM_EXPORT("w_reset")
 void w_reset(int enableSleep, float groundY)
 {
@@ -211,10 +101,7 @@ void w_reset(int enableSleep, float groundY)
     // Tracked with an explicit flag rather than by inspecting the id: the id is
     // zero-initialised at load, and a zeroed id is not guaranteed to compare
     // equal to the library's null id.
-    if (s_worldCreated)
-    {
-        b3DestroyWorld(s_world);
-    }
+    if (s_worldCreated) b3DestroyWorld(s_world);
     s_worldCreated = 1;
     s_count = 0;
     s_ambient = 0;
@@ -237,23 +124,35 @@ void w_reset(int enableSleep, float groundY)
 
     b3ShapeDef sd = b3DefaultShapeDef();
     sd.baseMaterial.friction = 0.7f;
-    // Wide enough that the largest pile cannot roll off the edge and fall
-    // forever, which would quietly flatter the measurement.
+    // Wide enough that a severed limb sliding away cannot reach the edge and
+    // fall forever.
     b3BoxHull hull = b3MakeBoxHull(20.0f, 0.1f, 20.0f);
     b3CreateHullShape(ground, &sd, &hull.base);
 
-    // Kept for the locomotion spike: planting a fist means jointing the arm's
-    // tip to this body, so the world itself is what the machine hauls against.
     s_groundBody = ground;
     s_groundY = groundY;
-    s_mExists = 0;
-    s_dummyExists = 0;
-    s_eExists = 0;
     vxWorldReset();
+    figWorldReset();
+    // The fists live in the world too, and their body ids died with it. Left
+    // set, the next w_hand_apply drives two handles into a destroyed world.
+    handWorldReset();
 }
 
-// Drop `n` cubes in a loose jittered cuboid, high enough that they fall,
-// collide and pile up. Mirrors Physics_SpawnPile and bench.c's addCubes.
+WASM_EXPORT("w_init")
+void w_init(void)
+{
+    w_reset(1, 0.0f);
+}
+
+WASM_EXPORT("w_step")
+void w_step(float dt)
+{
+    if (!s_worldCreated) return;
+    b3World_Step(s_world, dt, 4);
+}
+
+// Drop `n` cubes in a loose jittered cuboid. Kept because it is the cheapest
+// possible proof that the solver in this build is alive and behaving.
 WASM_EXPORT("w_fill")
 void w_fill(int n)
 {
@@ -268,7 +167,7 @@ void w_fill(int n)
         const int cy = i / (perRow * perRow);
 
         addCube(((float)cx - perRow * 0.5f) * spacing + frnd(-0.01f, 0.01f),
-                0.5f + (float)cy * spacing,
+                s_worldFloorY + 0.5f + (float)cy * spacing,
                 ((float)cz - perRow * 0.5f) * spacing + frnd(-0.01f, 0.01f) - 2.0f,
                 half, 0.0f, 0.0f, 0.0f, (float)(i % 6), 0.0f);
     }
@@ -283,156 +182,196 @@ void w_spawn(float px, float py, float pz, float vx, float vy, float vz,
     if (s_count >= MAX_CUBES)
     {
         // Recycle the oldest thrown cube (never the ambient scene).
-        if (s_nextRecycle >= s_count)
-        {
-            s_nextRecycle = s_ambient;
-        }
+        if (s_nextRecycle >= s_count) s_nextRecycle = s_ambient;
         b3DestroyBody(s_cubes[s_nextRecycle].id);
-        for (int i = s_nextRecycle; i < s_count - 1; i++)
-        {
-            s_cubes[i] = s_cubes[i + 1];
-        }
+        for (int i = s_nextRecycle; i < s_count - 1; i++) s_cubes[i] = s_cubes[i + 1];
         s_count--;
     }
     addCube(px, py, pz, half, vx, vy, vz, color, 4.0f);
 }
 
 WASM_EXPORT("w_count")
-int w_count(void)
-{
-    return s_count;
-}
+int w_count(void) { return s_count; }
 
-// Maximum bodies this build can hold. Exported so callers and tests can derive
-// the limit rather than hard-coding it — the previous hard-coded 96 in test.js
-// silently went stale the moment the cap was raised.
+// Maximum bodies this build can hold. Exported so callers and tests derive
+// the limit rather than hard-coding it — a hard-coded copy in test.js went
+// stale the moment the cap moved.
 WASM_EXPORT("w_capacity")
-int w_capacity(void)
+int w_capacity(void) { return MAX_CUBES; }
+
+// 9 floats per cube: [x,y,z, qx,qy,qz,qw, halfExtent, colorIdx]
+WASM_EXPORT("w_state")
+float* w_state(void)
 {
-    return MAX_CUBES;
+    for (int i = 0; i < s_count; i++)
+    {
+        b3Pos p = b3Body_GetPosition(s_cubes[i].id);
+        b3Quat q = b3Body_GetRotation(s_cubes[i].id);
+        float* o = &s_state[i * 9];
+        o[0] = (float)p.x; o[1] = (float)p.y; o[2] = (float)p.z;
+        o[3] = q.v.x; o[4] = q.v.y; o[5] = q.v.z; o[6] = q.s;
+        o[7] = s_cubes[i].half;
+        o[8] = s_cubes[i].color;
+    }
+    return s_state;
 }
 
 // ---------------------------------------------------------------------------
-// Follow test — one physics body chasing your hand
+// Your fists
 //
-// The layer below the arm, and the one that should have been proven first. No
-// shoulder, no joint chain: a single free box driven toward the controller by a
-// motor with a force ceiling. If this feels wrong, nothing built on top of it
-// could feel right, and the arm rig was never the problem.
+// No mech, no jointed arm chain, no IK, no torque curve, no upgrade slider.
+// Your hand is where the game says it is: one body per controller, held at
+// your grip pose by a motor joint against the world.
 //
-// Uses the same motor-joint mechanism the arm does — velocity request, capped by
-// maxVelocityForce — so what is learned here transfers directly.
+// It is a JOINT and not a force, and that distinction is the whole section.
+// The first cut applied an explicit spring — F = k*(target - p) - c*v — every
+// step, which is how the rest of this project has always driven things. At
+// 72 Hz that spring is only stable while c*dt/m stays under 2, and a fist
+// crisp enough to feel like your own hand needs stiffness far past it: the
+// numbers that felt right measured 2.5, and the fist crept 58 mm downward
+// through a target it was supposed to be sitting on. Softening it until the
+// arithmetic was safe capped the tracking at about 5 cm of lag per metre per
+// second, which is a mushy fist, and mush is exactly the verdict this
+// project already collected once.
+//
+// Box3D solves joint springs implicitly, so a motor joint has no such
+// ceiling — it can be as stiff as you like and it cannot blow up. The force
+// cap stays, and now it does something honest: press your fist into
+// something immovable and it stops at the cap instead of driving through.
 // ---------------------------------------------------------------------------
 
 #define HAND_COUNT 2
 static b3BodyId s_handBody[HAND_COUNT];
+static b3JointId s_handJoint[HAND_COUNT];
 static float s_handHalf[HAND_COUNT];
 static int s_handExists[HAND_COUNT] = {0, 0};
+static float s_handReachMass[HAND_COUNT] = {0.0f, 0.0f};
+static b3Transform s_handTarget[HAND_COUNT];
 
-// Fixed-stiffness force, applied directly. No joint at all.
-//
-// Two mechanisms were tried and measured before this one, and both turned out to
-// be blind to mass:
-//
-//   Velocity motor with a force cap — a cliff, not a curve. A 3 kg body tracked
-//   identically at 50 N and 1500 N, and below the threshold simply fell to the
-//   floor. Nothing usable in between.
-//
-//   Spring specified in hertz — mass-normalised by design. 3 kg and 27 kg lagged
-//   by exactly the same amount at every stiffness, ratio 1.00. A frequency-based
-//   constraint behaves at that frequency whatever it is pulling; that is the
-//   point of expressing stiffness that way.
-//
-// A spring constant in newtons per metre is not normalised, so F = ma does the
-// work: the same pull on twice the mass gives half the acceleration, so it
-// trails further, overshoots more and takes longer to settle. That is what
-// weight feels like, and it grades continuously.
-static float s_handStiffness[HAND_COUNT];
-static float s_handDamping[HAND_COUNT];
-static float s_handMaxForce[HAND_COUNT];
-static b3Vec3 s_handTarget[HAND_COUNT];
+static void handWorldReset(void)
+{
+    for (int i = 0; i < HAND_COUNT; i++) { s_handExists[i] = 0; s_handReachMass[i] = 0.0f; }
+}
 
+// `hertz` and `zeta` describe the spring the way Box3D wants it — a frequency
+// and a damping ratio — rather than as newtons per metre picked by eye. A gain
+// that looks reasonable and is fifty times too large behaves like a physics
+// bug rather than a tuning problem, and naming it as a frequency makes that
+// impossible to write by accident.
 WASM_EXPORT("w_hand_create")
 void w_hand_create(int i, float x, float y, float z, float half, float density,
-                   float stiffness, float damping, float maxForce)
+                   float hertz, float zeta, float maxForce)
 {
-    if (i < 0 || i >= HAND_COUNT)
-    {
-        return;
-    }
+    if (i < 0 || i >= HAND_COUNT || !s_worldCreated) return;
     s_handHalf[i] = half;
-    s_handStiffness[i] = stiffness;
-    s_handDamping[i] = damping;
-    s_handMaxForce[i] = maxForce;
-    s_handTarget[i].x = x; s_handTarget[i].y = y; s_handTarget[i].z = z;
+    s_handTarget[i] = b3Transform_identity;
+    s_handTarget[i].p.x = x; s_handTarget[i].p.y = y; s_handTarget[i].p.z = z;
 
     b3BodyDef bd = b3DefaultBodyDef();
     bd.type = b3_dynamicBody;
     bd.position.x = x; bd.position.y = y; bd.position.z = z;
-    // Gravity would drag it down and mask the effect being measured; the mech
-    // arm will want gravity back, but this test is about tracking alone.
+    // Gravity would drag it out of your hand. The spring is meant to hold a
+    // pose, not to fight weight.
     bd.gravityScale = 0.0f;
+    bd.angularDamping = 4.0f;
+    // A punch is FAST, and a fist that is only tested where it happens to land
+    // at the end of a step is a fist that goes straight through a forearm. At
+    // 20 m/s it covers 28 cm in one step and a limb is 14 cm thick; measured,
+    // the whole damage suite went silent the moment the fists got stiff enough
+    // to keep up with a hand. Continuous collision is exactly what this flag
+    // is for.
+    bd.isBullet = true;
     s_handBody[i] = b3CreateBody(s_world, &bd);
 
     b3ShapeDef sd = b3DefaultShapeDef();
     sd.density = density;
     sd.baseMaterial.friction = 0.6f;
     sd.baseMaterial.restitution = 0.05f;
+    sd.enableHitEvents = true;
     b3BoxHull hull = b3MakeBoxHull(half, half, half);
     b3CreateHullShape(s_handBody[i], &sd, &hull.base);
 
+    b3MotorJointDef mj = b3DefaultMotorJointDef();
+    mj.base.bodyIdA = s_groundBody;
+    mj.base.bodyIdB = s_handBody[i];
+    mj.base.localFrameA = b3Transform_identity;
+    mj.base.localFrameB = b3Transform_identity;
+    // The fist must still meet the floor and everything on it, so the two
+    // bodies of this joint are NOT excluded from each other.
+    mj.base.collideConnected = true;
+    mj.linearHertz = hertz;
+    mj.linearDampingRatio = zeta;
+    mj.maxSpringForce = maxForce;
+    mj.angularHertz = hertz * 0.5f;
+    mj.angularDampingRatio = 1.0f;
+    mj.maxSpringTorque = maxForce * 0.02f;
+    mj.maxVelocityForce = 0.0f;
+    mj.maxVelocityTorque = 0.0f;
+    s_handJoint[i] = b3CreateMotorJoint(s_world, &mj);
+
     s_handExists[i] = 1;
+    s_handReachMass[i] = 0.0f;
 }
 
-WASM_EXPORT("w_hand_target")
-void w_hand_target(int i, float x, float y, float z)
+// The effective striking mass of the arm BEHIND the fist.
+//
+// A punch does not arrive as a loose fist: shoulder, arm and a braced body are
+// driving it, and a bare fist mass craters one cell where a real blow should
+// stave a panel in. This is that arm, as one honest number rather than a fudge
+// factor buried in the damage maths. Zero means "just the fist".
+WASM_EXPORT("w_hand_reach_mass")
+void w_hand_reach_mass(int i, float kg)
 {
-    if (i < 0 || i >= HAND_COUNT || !s_handExists[i])
+    if (i < 0 || i >= HAND_COUNT) return;
+    s_handReachMass[i] = kg > 0.0f ? kg : 0.0f;
+}
+
+// Where your grip is, and how it is turned — a gauntlet that never rolls with
+// your wrist reads as a floating block rather than as your hand.
+WASM_EXPORT("w_hand_target")
+void w_hand_target(int i, float x, float y, float z,
+                   float qx, float qy, float qz, float qw)
+{
+    if (i < 0 || i >= HAND_COUNT || !s_handExists[i]) return;
+    s_handTarget[i].p.x = x; s_handTarget[i].p.y = y; s_handTarget[i].p.z = z;
+    const float l2 = qx*qx + qy*qy + qz*qz + qw*qw;
+    if (l2 > 1e-6f)
     {
-        return;
+        const float inv = 1.0f / __builtin_sqrtf(l2);
+        s_handTarget[i].q.v.x = qx * inv; s_handTarget[i].q.v.y = qy * inv;
+        s_handTarget[i].q.v.z = qz * inv; s_handTarget[i].q.s = qw * inv;
     }
-    s_handTarget[i].x = x; s_handTarget[i].y = y; s_handTarget[i].z = z;
 }
 
 WASM_EXPORT("w_hand_limits")
-void w_hand_limits(int i, float stiffness, float damping, float maxForce)
+void w_hand_limits(int i, float hertz, float zeta, float maxForce)
 {
-    if (i < 0 || i >= HAND_COUNT || !s_handExists[i])
-    {
-        return;
-    }
-    s_handStiffness[i] = stiffness;
-    s_handDamping[i] = damping;
-    s_handMaxForce[i] = maxForce;
+    if (i < 0 || i >= HAND_COUNT || !s_handExists[i]) return;
+    b3MotorJoint_SetLinearHertz(s_handJoint[i], hertz);
+    b3MotorJoint_SetLinearDampingRatio(s_handJoint[i], zeta);
+    b3MotorJoint_SetMaxSpringForce(s_handJoint[i], maxForce);
 }
 
-// Applied every step, before b3World_Step.
+// Applied every step, before b3World_Step. The joint's frame on the world side
+// IS the target, so driving the fists is moving that frame.
 WASM_EXPORT("w_hand_apply")
 void w_hand_apply(void)
 {
+    if (!s_worldCreated) return;
     for (int i = 0; i < HAND_COUNT; i++)
     {
         if (!s_handExists[i]) continue;
-
-        b3Pos p = b3Body_GetPosition(s_handBody[i]);
-        b3Vec3 v = b3Body_GetLinearVelocity(s_handBody[i]);
-
-        float fx = (s_handTarget[i].x - (float)p.x) * s_handStiffness[i] - v.x * s_handDamping[i];
-        float fy = (s_handTarget[i].y - (float)p.y) * s_handStiffness[i] - v.y * s_handDamping[i];
-        float fz = (s_handTarget[i].z - (float)p.z) * s_handStiffness[i] - v.z * s_handDamping[i];
-
-        // Cap the magnitude so a large snap of the hand cannot fling the body
-        // across the room; well above the working range, so it rarely binds.
-        float sq = fx*fx + fy*fy + fz*fz;
-        float mx = s_handMaxForce[i];
-        if (sq > mx * mx)
-        {
-            float k = mx / __builtin_sqrtf(sq);
-            fx *= k; fy *= k; fz *= k;
-        }
-
-        b3Vec3 f; f.x = fx; f.y = fy; f.z = fz;
-        b3Body_ApplyForceToCenter(s_handBody[i], f, true);
+        // The frame is expressed in the ground body's local space, and the
+        // ground slab does not sit at the origin — it sits half its thickness
+        // below the floor the player measured. It never rotates, so the
+        // conversion is a subtraction.
+        b3Transform fa = b3Transform_identity;
+        fa.p.x = s_handTarget[i].p.x;
+        fa.p.y = s_handTarget[i].p.y - (s_groundY - 0.1f);
+        fa.p.z = s_handTarget[i].p.z;
+        fa.q = s_handTarget[i].q;
+        b3Joint_SetLocalFrameA(s_handJoint[i], fa);
+        b3Body_SetAwake(s_handBody[i], true);
     }
 }
 
@@ -461,1225 +400,18 @@ float* w_hand_state(void)
     return out;
 }
 
-// ---------------------------------------------------------------------------
-// The mech — an actual jointed machine, not a feel that was tuned
-//
-// Everything before this faked weight: a spring constant chosen so that lag
-// looked right, a damping dial chosen so that impacts looked right. That is what
-// you do when you have no physics engine. With one, you build the machine and
-// the feel is whatever the machine does.
-//
-//   torso (dynamic, held up by a limited spring — the legs)
-//     |
-//     +-- spherical joint (shoulder, cone-limited)
-//           |
-//           upper arm (dynamic)
-//             |
-//             +-- revolute joint (elbow, angle-limited)
-//                   |
-//                   forearm (dynamic)
-//
-// The player's hand is not a target the arm is told to match. A force pulls the
-// *wrist* toward it, capped, exactly as if you had hold of the wrist and were
-// dragging it. Every other behaviour is a consequence:
-//
-//   - weight comes from the segments' mass, not a tuned constant
-//   - lag comes from having to accelerate that mass through joints
-//   - reach limits come from the arm's length and its cone limit
-//   - overshoot has nowhere to go but the torso, so a committed punch drags the
-//     whole machine forward and off balance
-//   - joint strength is a real quantity: the motors' torque ceiling, and what
-//     the joint gives way under
-// ---------------------------------------------------------------------------
-
-#define MECH_ARMS 2
-static b3BodyId s_mTorso;
-static b3BodyId s_mUpper[MECH_ARMS];
-static b3BodyId s_mFore[MECH_ARMS];
-// The attachment at the end of the arm. Not a hand — a mount. Today it is a
-// blunt block; the point is that it is a separate articulated body on a wrist,
-// so a sword, a gripper or a wrecking ball can be bolted there later and will
-// aim, swing and hit on its own terms.
-static b3BodyId s_mTool[MECH_ARMS];
-static b3JointId s_mWristJ[MECH_ARMS];
-static b3Quat s_mToolAim[MECH_ARMS];
-static b3JointId s_mShoulder[MECH_ARMS];
-static b3JointId s_mElbow[MECH_ARMS];
-static b3Vec3 s_mWrist[MECH_ARMS];      // wrist offset in forearm local space
-// How far the mount can turn away from the forearm before the joint stops it.
-static float s_mWristCone = 1.35f;
-static float s_mShoulderHalf = 0.20f;   // set from the player's measured span
-
-// Every part of the machine carries this. It accepts collisions from everything
-// except its own category, so the arms still hit blocks, the ground and another
-// mech — they just cannot jam against their own torso.
-#define MECH_CATEGORY 0x2ull
-#define ENEMY_CATEGORY 0x4ull
-#define MECH_FILTER ((b3Filter){ .categoryBits = MECH_CATEGORY, \
-                                 .maskBits = ~MECH_CATEGORY, \
-                                 .groupIndex = 0 })
-
-static float s_mJointHertz = 4.0f;
-
-// The actuator's stiffness, in newton metres per radian.
-//
-// Box3D's springs are mass-normalised by design: a 3 kg arm and a 26 kg arm
-// given the same hertz track a punch identically, measured at 19.1 cm against
-// 17.9 cm. That is correct for a spring and useless for this game, where the
-// whole point is that a heavy arm is harder to swing.
-//
-// A real actuator has a torque, not a frequency. Holding stiffness fixed and
-// solving k = I*w^2 for each joint's own inertia gives a heavy limb a lower
-// natural frequency for free — which is exactly what being heavy means.
-static float s_mActStiffness = 18000.0f;
-// The elbow's spring pushes back on the upper arm, so the shoulder has to be
-// the stiffer of the two or the pair settles on a compromise pose that is
-// neither of their targets.
-static float s_mShoulderStiffMul = 1.0f;
-static void tuneJointSprings(void);
-static float s_mJointDamping = 1.0f;
-static b3Vec3 s_mIKElbow[MECH_ARMS];
-static b3Vec3 s_mIKWrist[MECH_ARMS];
-static b3Quat s_mShoulderFrame[MECH_ARMS];
-
-// --- knuckle-walk locomotion -------------------------------------------------
-//
-// A mech with no legs moves the way a gorilla does: plant a fist, haul the body
-// past it, swing, plant the other. Planting is a real joint between the arm's
-// tip and the ground body, so the machine is genuinely hauling against the
-// world — same IK, same springs, same mass. Pull your hand half a metre and the
-// machine advances half a metre, minus lag, plus momentum. Nothing kinematic
-// moves it.
-static b3JointId s_mAnchorJ[MECH_ARMS];
-static int s_mAnchored[MECH_ARMS];
-static int s_mSlipped[MECH_ARMS];       // grip broke from over-reach, until re-grip
-static int s_mCoastFrames = 0;          // how long the machine has been near-still
-static int s_mDragMode = 0;             // 1 while anchored or still sliding
-
-// A fist can only grab the ground when it is at the ground.
-#define ANCHOR_REACH_Y 0.16f
-
-// Whether the machine still has legs. Knuckle-hauling is the fallback for when
-// it does not: with the legs gone the hull drops and lies on the ground, real
-// contact friction resists the drag, and the shoulders sit low enough that the
-// fists reach the floor. Standing at full height the fists cannot reach the
-// ground at all — measured, the tip bottoms out 19 cm up even with the pilot
-// crouching — which is the geometry telling us what this mechanic is for.
-static int s_mLegsWork = 1;
-static b3Quat s_mIKUpper[MECH_ARMS];
-static b3Quat s_mIKSpringTarget[MECH_ARMS];
-static b3Vec3 s_mHandTarget[MECH_ARMS];
-static int s_mHandActive[MECH_ARMS] = {0, 0};
-
-// The torso is held at a target by a spring with a hard force ceiling. That
-// ceiling is the machine's footing: push the arms hard enough and the legs
-// cannot hold it, so it staggers. It is not a cheat to keep the torso upright,
-// it is the legs having finite strength.
-static b3Vec3 s_mTorsoTarget;
-static float s_mTorsoK = 11000.0f;
-static float s_mTorsoC = 1350.0f;
-static float s_mTorsoMaxF = 14000.0f;
-
-static float s_mUpperLen, s_mForeLen, s_mToolHalf;
-
-WASM_EXPORT("w_mech_create")
-void w_mech_create(float x, float y, float z, float upperLen, float foreLen,
-                   float thickness, float density, float shoulderTorque,
-                   float elbowTorque, float coneAngle, float shoulderHalf)
+// Is `b` one of the player's fists, and what is it carrying behind it?
+// Returns 0 when it is not a fist at all.
+static float handStrikeMass(b3BodyId b)
 {
-    // How far out the shoulders sit. Measured off the player's own arm span
-    // rather than assumed, so the machine's joints line up with theirs.
-    if (!(shoulderHalf > 0.06f)) shoulderHalf = 0.20f;
-    if (shoulderHalf > 0.40f) shoulderHalf = 0.40f;
-    s_mShoulderHalf = shoulderHalf;
-
-    // Box3D asserts a spherical cone limit of at most a quarter turn, and this
-    // is built with NDEBUG so that assert is gone. Handing it 2.2 rad, as this
-    // did, sails straight past without complaint and leaves the cone geometry
-    // degenerate — cos(cone) goes negative — which showed up as the whole
-    // machine thrashing and no amount of tuning helping. Clamped here so a
-    // number out of range can never reach the solver again.
-    const float coneMax = 1.5707963f;
-    if (!(coneAngle >= 0.0f)) coneAngle = 0.0f;      // also catches NaN
-    if (coneAngle > coneMax) coneAngle = coneMax;
-
-    s_mUpperLen = upperLen;
-    s_mForeLen = foreLen;
-    s_mTorsoTarget.x = x; s_mTorsoTarget.y = y; s_mTorsoTarget.z = z;
-
-    // Torso: a real dynamic body. Everything the arms do pushes back on this.
-    b3BodyDef td = b3DefaultBodyDef();
-    td.type = b3_dynamicBody;
-    td.position.x = x; td.position.y = y; td.position.z = z;
-    td.angularDamping = 5.0f;   // a mech is not a spinning top
-    td.linearDamping = 1.0f;
-    s_mTorso = b3CreateBody(s_world, &td);
-
-    b3ShapeDef tsd = b3DefaultShapeDef();
-    tsd.density = density * 1.5f;   // the body outweighs the arms
-    tsd.baseMaterial.friction = 0.6f;
-    // The machine does not collide with itself.
-    //
-    // This is what was pulling the arm off the pose IK asked for, and it hid
-    // very well: with the torso pinned and the arm reaching down and away the
-    // shoulder hit its target to within one degree, while a folded arm was 36
-    // to 56 degrees out — worse the tighter it folded. No joint limit was
-    // binding and no controller was fighting; the forearm and the mount were
-    // simply pressing into the torso, and a contact can hold a spring off its
-    // target all day. Only the shoulder pair had collision disabled, because
-    // that is all collideConnected does.
-    tsd.filter = MECH_FILTER;
-    // Deliberately small. An earlier version was 0.52 x 0.60 x 0.32 m centred at
-    // a fixed height, which swallowed the player's head.
-    // Torso spans the shoulders, so it widens with the player too.
-    b3BoxHull thull = b3MakeBoxHull(shoulderHalf * 0.92f, 0.22f, 0.13f);
-    b3CreateHullShape(s_mTorso, &tsd, &thull.base);
-
-    for (int i = 0; i < MECH_ARMS; i++)
+    for (int i = 0; i < HAND_COUNT; i++)
     {
-        const float side = (i == 0) ? -1.0f : 1.0f;
-        const float sx = side * shoulderHalf;   // shoulder, in torso local space
-        const float sy = 0.17f;
-
-        // --- upper arm ---
-        b3BodyDef ud = b3DefaultBodyDef();
-        ud.type = b3_dynamicBody;
-        ud.position.x = x + sx; ud.position.y = y + sy; ud.position.z = z;
-        ud.angularDamping = 0.15f;   // loose enough to swing
-        s_mUpper[i] = b3CreateBody(s_world, &ud);
-
-        b3ShapeDef usd = b3DefaultShapeDef();
-        usd.density = density;
-        usd.baseMaterial.friction = 0.6f;
-        usd.filter = MECH_FILTER;
-        b3BoxHull uhull = b3MakeBoxHull(thickness, thickness, upperLen * 0.5f);
-        b3Transform uoff = b3Transform_identity;
-        uoff.p.z = -upperLen * 0.5f;      // hangs forward from the shoulder
-        b3Vec3 one = {1.0f, 1.0f, 1.0f};
-        b3CreateTransformedHullShape(s_mUpper[i], &usd, &uhull.base, uoff, one);
-
-        b3SphericalJointDef sj = b3DefaultSphericalJointDef();
-        sj.base.bodyIdA = s_mTorso;
-        sj.base.bodyIdB = s_mUpper[i];
-        sj.base.localFrameA = b3Transform_identity;
-        sj.base.localFrameA.p.x = sx;
-        sj.base.localFrameA.p.y = sy;
-        // Tilt the cone axis back by 45 degrees.
-        //
-        // Box3D measures the cone from body A's local +Z, and a quarter turn is
-        // as wide as the limit may legally be. Left pointing straight along Z,
-        // that puts "arm straight out in front" at the centre of the cone and
-        // "arm hanging at your side" exactly on its edge — measured, the arm
-        // could not get back to its side at all, ending up 0.38 m adrift.
-        // Splitting the difference puts forward and down each 45 degrees off
-        // centre, so both are comfortably inside and the arm can also swing
-        // across the body.
-        sj.base.localFrameA.q.v.x = -0.38268343f;   // -45 deg about X
-        sj.base.localFrameA.q.v.y = 0.0f;
-        sj.base.localFrameA.q.v.z = 0.0f;
-        sj.base.localFrameA.q.s = 0.92387953f;
-        s_mShoulderFrame[i] = sj.base.localFrameA.q;
-        sj.base.localFrameB = b3Transform_identity;
-        sj.base.collideConnected = false;
-        sj.enableConeLimit = true;
-        sj.coneAngle = coneAngle;
-        // Friction, not a motor. A spherical motor with no target velocity
-        // holds the joint still, and at the torque this used to carry (1400 N m)
-        // that is a lock, not a shoulder — the arm was being hauled by the hand
-        // and braked by its own joint at the same time, which is what made it
-        // thrash instead of swing. What is left is the stiffness of the
-        // mechanism itself: enough to feel like machinery, far too little to
-        // stop the arm moving.
-        sj.enableMotor = shoulderTorque > 0.0f;
-        sj.maxMotorTorque = shoulderTorque;
-        // The shoulder is driven by a spring toward the orientation IK asks
-        // for. Box3D solves this implicitly, so unlike a torque applied from
-        // outside it cannot be stiffened into instability — which is what put a
-        // ceiling on the previous attempt and left the arm short of its pose.
-        sj.enableSpring = true;
-        sj.hertz = s_mJointHertz;
-        sj.dampingRatio = s_mJointDamping;
-        s_mShoulder[i] = b3CreateSphericalJoint(s_world, &sj);
-
-        // --- forearm ---
-        b3BodyDef fd = b3DefaultBodyDef();
-        fd.type = b3_dynamicBody;
-        fd.position.x = x + sx; fd.position.y = y + sy; fd.position.z = z - upperLen;
-        fd.angularDamping = 0.15f;
-        s_mFore[i] = b3CreateBody(s_world, &fd);
-
-        b3ShapeDef fsd = b3DefaultShapeDef();
-        fsd.density = density;
-        fsd.baseMaterial.friction = 0.6f;
-        fsd.filter = MECH_FILTER;
-        b3BoxHull fhull = b3MakeBoxHull(thickness * 0.9f, thickness * 0.9f, foreLen * 0.5f);
-        b3Transform foff = b3Transform_identity;
-        foff.p.z = -foreLen * 0.5f;
-        b3CreateTransformedHullShape(s_mFore[i], &fsd, &fhull.base, foff, one);
-
-        // Elbow.
-        //
-        // Box3D hinges about the joint frame's local +Z, and these frames were
-        // left as identity — which pointed the hinge straight down the arm's
-        // own length. That is a twist, not an elbow: the forearm could spin
-        // about the arm but could not fold at all, so the whole limb behaved as
-        // one rigid stick. It is why reaching for a point half an arm away left
-        // the arm stretched out full length beside it, and why the thing read
-        // as two poles rather than as an arm.
-        //
-        // Turning both frames a quarter turn about Y swings that axis onto the
-        // arm's local X — sideways, across the limb — which is what a hinge
-        // needs to be. Both frames get the same rotation, so the joint's zero
-        // angle is still "straight".
-        const float rt2 = 0.70710678f;
-        b3Transform elbowFrame = b3Transform_identity;
-        elbowFrame.q.v.x = 0.0f; elbowFrame.q.v.y = rt2; elbowFrame.q.v.z = 0.0f;
-        elbowFrame.q.s = rt2;
-
-        b3RevoluteJointDef rj = b3DefaultRevoluteJointDef();
-        rj.base.bodyIdA = s_mUpper[i];
-        rj.base.bodyIdB = s_mFore[i];
-        rj.base.localFrameA = elbowFrame;
-        rj.base.localFrameA.p.z = -upperLen;
-        rj.base.localFrameB = elbowFrame;
-        rj.base.collideConnected = false;
-        rj.enableLimit = true;
-        // Measured, not assumed: with the hinge on the right axis the arm folds
-        // toward negative angles. Read off w_mech_joints, the elbow sat pinned
-        // at its limit in every pose, arm stretched to 0.85 m for a target
-        // 0.28 m away, because the fold direction was fenced off.
-        rj.lowerAngle = -2.40f;   // fully folded
-        rj.upperAngle = 0.10f;    // just short of straight — no hyperextending
-        // Same as the shoulder: this is the hinge's own stiffness, not a motor
-        // driving the arm anywhere. The limits above are what stop the elbow
-        // bending the wrong way; the torque here only resists.
-        rj.enableMotor = elbowTorque > 0.0f;
-        rj.maxMotorTorque = elbowTorque;
-        rj.motorSpeed = 0.0f;
-        rj.enableSpring = true;
-        rj.hertz = s_mJointHertz;
-        rj.dampingRatio = s_mJointDamping;
-        s_mElbow[i] = b3CreateRevoluteJoint(s_world, &rj);
-
-        // --- attachment, on a wrist ---
-        b3BodyDef kd = b3DefaultBodyDef();
-        kd.type = b3_dynamicBody;
-        kd.position.x = x + sx; kd.position.y = y + sy;
-        kd.position.z = z - upperLen - foreLen;
-        // The pull acts on the far face of this block, which torques it hard
-        // against the wrist's cone limit — up to a few hundred newton metres.
-        // Riding a hard stop with almost no rotational damping is what made the
-        // mount buzz. This is the mount's own bearing friction.
-        kd.angularDamping = 6.0f;
-        s_mTool[i] = b3CreateBody(s_world, &kd);
-
-        b3ShapeDef ksd = b3DefaultShapeDef();
-        ksd.density = density;
-        ksd.baseMaterial.friction = 0.8f;
-        ksd.filter = MECH_FILTER;
-        // The mount is part of the arm's reach, so an oversized block here
-        // lengthens the whole limb. At 1.3x thickness it added 18 cm to an arm
-        // that was already twice as long as it should be.
-        const float toolHalf = thickness * 1.0f;
-        s_mToolHalf = toolHalf;
-        b3BoxHull khull = b3MakeBoxHull(toolHalf, toolHalf, toolHalf);
-        b3Transform koff = b3Transform_identity;
-        koff.p.z = -toolHalf;
-        b3CreateTransformedHullShape(s_mTool[i], &ksd, &khull.base, koff, one);
-
-        // Wrist: spherical, with a tighter cone than the shoulder. It has to
-        // hold an aim, so its motor is what resists a sword being knocked aside.
-        b3SphericalJointDef wj = b3DefaultSphericalJointDef();
-        wj.base.bodyIdA = s_mFore[i];
-        wj.base.bodyIdB = s_mTool[i];
-        wj.base.localFrameA = b3Transform_identity;
-        wj.base.localFrameA.p.z = -foreLen;
-        wj.base.localFrameB = b3Transform_identity;
-        wj.base.collideConnected = false;
-        wj.enableConeLimit = true;
-        // Measured pinned against this limit in every pose while the aim
-        // controller kept pushing past it. A controller shoving against a hard
-        // constraint chatters, which is the attachment buzzing. Widened so the
-        // wrist has somewhere to go; the aim is also clamped to what the wrist
-        // can actually reach, below, so the two stop fighting.
-        wj.coneAngle = s_mWristCone;
-        // No motor here. A spherical motor with a zero target velocity is a
-        // brake: it was holding the mount still with several hundred newton
-        // metres and swamping the aim torque entirely, so the attachment sat at
-        // whatever angle the arm's geometry left it at no matter where the
-        // controller pointed. The aim torque now works against the cone limit
-        // alone, which is what should resist it.
-        wj.enableMotor = false;
-        s_mWristJ[i] = b3CreateSphericalJoint(s_world, &wj);
-        s_mToolAim[i] = b3Quat_identity;
-
-        // The point that tracks the controller: the middle of the attachment.
-        //
-        // There is no separate hand body — the mech does not need one. What
-        // matters is that this point ends up where the player's hand actually
-        // is, so the arm's total length has to match their reach rather than
-        // stopping a hand's length short at a wrist.
-        // Pull from the far face of the attachment, not its middle. That point
-        // is the end of the arm, and the end of the arm is what has to arrive
-        // where your hand is.
-        s_mWrist[i].x = 0.0f; s_mWrist[i].y = 0.0f; s_mWrist[i].z = -2.0f * toolHalf;
-        s_mHandActive[i] = 0;
+        if (!s_handExists[i]) continue;
+        if (!B3_ID_EQUALS(b, s_handBody[i])) continue;
+        const float m = b3Body_GetMass(s_handBody[i]);
+        return s_handReachMass[i] > m ? s_handReachMass[i] : m;
     }
-    s_mExists = 1;
-    tuneJointSprings();
-}
-
-// Where the machine is trying to stand. Follows the player.
-WASM_EXPORT("w_mech_stand")
-void w_mech_stand(float x, float y, float z)
-{
-    s_mTorsoTarget.x = x; s_mTorsoTarget.y = y; s_mTorsoTarget.z = z;
-}
-
-// Which way the machine is trying to FACE. The torso never had a yaw
-// drive — "the machine is still free to turn" — but nothing ever turned
-// it, so when the pilot rotated to track a circling opponent the
-// shoulders stayed behind and every punch crossed a twisted body. The
-// page feeds the head's facing; the same spring family that keeps the
-// machine upright now brings the shoulders around with the pilot.
-// (atan2(dir.x, dir.z) of the chest's world direction, chest = -z.)
-static float s_mFaceYaw = 0.0f;
-static int s_mFaceSet = 0;
-WASM_EXPORT("w_mech_face")
-void w_mech_face(float yaw)
-{
-    s_mFaceYaw = yaw;
-    s_mFaceSet = 1;
-}
-
-WASM_EXPORT("w_mech_hand")
-void w_mech_hand(int i, float x, float y, float z, int active,
-                 float qx, float qy, float qz, float qw)
-{
-    if (i < 0 || i >= MECH_ARMS) return;
-    s_mHandTarget[i].x = x; s_mHandTarget[i].y = y; s_mHandTarget[i].z = z;
-    s_mHandActive[i] = active;
-    s_mToolAim[i].v.x = qx; s_mToolAim[i].v.y = qy; s_mToolAim[i].v.z = qz;
-    s_mToolAim[i].s = qw;
-}
-
-// How hard you can haul the wrist. This is the pilot's grip on the controls,
-// not the joint strength — the joints have their own ceilings and will give way
-// first if they are the weaker link.
-// Loose enough that the arm is dragged rather than commanded, damped enough
-// that it does not flail. Beyond this, feel is not something measurement here
-// can settle — it needs a person in the headset.
-// Playtest verdict: the old 2000/3000 read as mush, not mass. Weight is
-// sold at impact now (flinch, knockback, hit-stop), not by input lag —
-// the K stays FIXED across arm masses so weight still grades, but the
-// baseline is crisp enough that a punch goes where you threw it.
-static float s_mPullK = 5200.0f;
-static float s_mPullMax = 7800.0f;
-
-// Damping is given as a ratio, not a coefficient.
-//
-// The stiffness above stays a fixed spring constant on purpose: measured
-// earlier, a mass-normalised spring lags by exactly the same amount at 3 kg and
-// at 27 kg, so it cannot convey weight at all, while a fixed N/m grades it
-// properly. That finding is the reason this spike exists and it is not being
-// given up.
-//
-// Damping is a separate question. It is not there to shape the feel, only to
-// stop the arm ringing, and how much is needed genuinely does depend on how
-// much arm there is to bring to a halt — so it is derived from the arm's own
-// mass each frame. 1.0 is critical: it settles without bouncing back.
-static float s_mPullZeta = 1.0f;
-
-// How quickly the attachment swings round to the angle you are pointing, and
-// how hard it will hold that angle against a knock.
-static float s_mAimPeriod = 0.35f;    // seconds — softened; 0.25 buzzed
-static float s_mAimZeta = 1.0f;
-static float s_mAimMax = 12.0f;       // N m per kg of attachment
-
-// How much of the arm's own weight the machine carries. 1 is all of it, which
-// is what a powered joint does; 0 is a dead limb hanging off a shoulder.
-static float s_mArmLift = 1.0f;
-
-
-// Which way round the elbow sits is no longer a controller fighting the
-// physics — the IK solve picks it directly, straight down, and the joints are
-// driven to that.
-
-// How the machine holds itself up, as a response rather than as raw gains.
-//
-// Written as gains scaled by mass this was unstable at every setting: angular
-// dynamics answers to rotational inertia, and the torso's is about 1.2 kg m^2
-// against 55 kg of mass, so a damping term scaled by mass came out roughly
-// fifty times too strong and an explicit integrator at 72 Hz blew up. Stiffen
-// it and the tilt got worse, not better, which is the giveaway.
-//
-// Period is how long a full correction takes — larger reads as heavier.
-// Damping of 1.0 is critical: it comes back level without rebounding past.
-static float s_mUprightPeriod = 0.60f;   // seconds
-static float s_mUprightZeta = 1.0f;
-static float s_mUprightMax = 26.0f;      // N m per kg of machine — leg strength
-
-// Effective rotational inertia about the torso's centre, arms included.
-//
-// The arms are most of what has to be hauled back upright, and how much they
-// weigh is the entire point of the experiment, so leaving them out would tune
-// the machine for a body that does not exist.
-static float mechInertia(void)
-{
-    b3Matrix3 Ib = b3Body_GetLocalRotationalInertia(s_mTorso);
-    float I = 0.5f * (Ib.cx.x + Ib.cz.z);   // pitch and roll, averaged
-
-    b3Pos c = b3Body_GetPosition(s_mTorso);
-    for (int i = 0; i < MECH_ARMS; i++)
-    {
-        b3BodyId parts[3] = { s_mUpper[i], s_mFore[i], s_mTool[i] };
-        for (int k = 0; k < 3; k++)
-        {
-            b3Pos p = b3Body_GetPosition(parts[k]);
-            const float dx = (float)(p.x - c.x);
-            const float dy = (float)(p.y - c.y);
-            const float dz = (float)(p.z - c.z);
-            I += b3Body_GetMass(parts[k]) * (dx*dx + dy*dy + dz*dz);
-        }
-    }
-    return I;
-}
-
-static float mechMass(void)
-{
-    float m = b3Body_GetMass(s_mTorso);
-    for (int i = 0; i < MECH_ARMS; i++)
-    {
-        m += b3Body_GetMass(s_mUpper[i]) + b3Body_GetMass(s_mFore[i]) + b3Body_GetMass(s_mTool[i]);
-    }
-    return m;
-}
-
-WASM_EXPORT("w_mech_tune")
-void w_mech_tune(float pullK, float pullZeta, float pullMax, float torsoMaxF)
-{
-    s_mPullK = pullK; s_mPullZeta = pullZeta; s_mPullMax = pullMax;
-    s_mTorsoMaxF = torsoMaxF;
-}
-
-// Bolt the torso to the world, so an arm can be studied on its own.
-//
-// Two things were going wrong at once — the machine could not stand up and the
-// arms could not reach — and each was hiding the other. Pinning the torso
-// separates them: whatever the arm does with this on is the arm's own doing.
-// It is also what a test rig or a wall-mounted arm would be.
-// What every joint is actually doing, in radians: shoulder cone angle, elbow
-// angle, wrist cone angle, for each arm. Guessing at whether a joint is pinned
-// against a limit wastes far more time than reading it off.
-WASM_EXPORT("w_mech_joints")
-float* w_mech_joints(void)
-{
-    static float out[MECH_ARMS * 3];
-    if (!s_mExists) return out;
-    for (int i = 0; i < MECH_ARMS; i++)
-    {
-        out[i*3 + 0] = b3SphericalJoint_GetConeAngle(s_mShoulder[i]);
-        out[i*3 + 1] = b3RevoluteJoint_GetAngle(s_mElbow[i]);
-        out[i*3 + 2] = b3SphericalJoint_GetConeAngle(s_mWristJ[i]);
-    }
-    return out;
-}
-
-WASM_EXPORT("w_mech_aim")
-void w_mech_aim(float period, float zeta, float maxTorquePerKg)
-{
-    s_mAimPeriod = period; s_mAimZeta = zeta; s_mAimMax = maxTorquePerKg;
-}
-
-WASM_EXPORT("w_mech_joint_spring")
-void w_mech_joint_spring(float stiffness, float damping)
-{
-    s_mActStiffness = stiffness; s_mJointDamping = damping;
-    if (s_mExists) tuneJointSprings();
-}
-
-// Target orientation for each upper arm, and the relative rotation actually
-// handed to the shoulder spring. Comparing these against what the body does
-// separates "the spring is not reaching its target" from "the target is wrong".
-// What the joints actually ended up with, read back from the engine rather
-// than from what was asked for.
-WASM_EXPORT("w_mech_spring_state")
-float* w_mech_spring_state(void)
-{
-    static float out[4];
-    if (!s_mExists) return out;
-    out[0] = b3SphericalJoint_GetSpringHertz(s_mShoulder[0]);
-    out[1] = b3SphericalJoint_GetSpringDampingRatio(s_mShoulder[0]);
-    out[2] = b3RevoluteJoint_GetSpringHertz(s_mElbow[0]);
-    out[3] = b3SphericalJoint_IsSpringEnabled(s_mShoulder[0]) ? 1.0f : 0.0f;
-    return out;
-}
-
-WASM_EXPORT("w_mech_ik_quat")
-float* w_mech_ik_quat(void)
-{
-    static float out[MECH_ARMS * 8];
-    for (int i = 0; i < MECH_ARMS; i++)
-    {
-        out[i*8+0] = s_mIKUpper[i].v.x; out[i*8+1] = s_mIKUpper[i].v.y;
-        out[i*8+2] = s_mIKUpper[i].v.z; out[i*8+3] = s_mIKUpper[i].s;
-        out[i*8+4] = s_mIKSpringTarget[i].v.x; out[i*8+5] = s_mIKSpringTarget[i].v.y;
-        out[i*8+6] = s_mIKSpringTarget[i].v.z; out[i*8+7] = s_mIKSpringTarget[i].s;
-    }
-    return out;
-}
-
-WASM_EXPORT("w_mech_shoulder_mul")
-void w_mech_shoulder_mul(float mul)
-{
-    s_mShoulderStiffMul = mul;
-    if (s_mExists) tuneJointSprings();
-}
-
-// Where IK wants the elbow and wrist, so a pose that is merely unreachable can
-// be told apart from a pose that was solved wrongly.
-WASM_EXPORT("w_mech_ik_target")
-float* w_mech_ik_target(void)
-{
-    static float out[MECH_ARMS * 6];
-    for (int i = 0; i < MECH_ARMS; i++)
-    {
-        out[i*6+0] = s_mIKElbow[i].x; out[i*6+1] = s_mIKElbow[i].y; out[i*6+2] = s_mIKElbow[i].z;
-        out[i*6+3] = s_mIKWrist[i].x; out[i*6+4] = s_mIKWrist[i].y; out[i*6+5] = s_mIKWrist[i].z;
-    }
-    return out;
-}
-
-WASM_EXPORT("w_mech_lift")
-void w_mech_lift(float fraction)
-{
-    s_mArmLift = fraction;
-}
-
-WASM_EXPORT("w_mech_pin")
-void w_mech_pin(int on)
-{
-    if (!s_mExists) return;
-    b3Body_SetType(s_mTorso, on ? b3_staticBody : b3_dynamicBody);
-}
-
-WASM_EXPORT("w_mech_upright")
-void w_mech_upright(float period, float zeta, float maxTorquePerKg)
-{
-    s_mUprightPeriod = period; s_mUprightZeta = zeta; s_mUprightMax = maxTorquePerKg;
-}
-
-// ---------------------------------------------------------------------------
-// Two-bone inverse kinematics for an arm
-//
-// Dragging the far end of a jointed chain with a force and hoping the joints
-// work out the rest is not how anyone builds a VR arm, and this spike spent
-// several rounds proving it: the elbow has no defined answer, the pose the
-// player sees has no relationship to their own, and every fix was a new
-// controller fighting the last one.
-//
-// Every VR body rig — VRIK, FinalIK, the Movement SDK — solves the arm
-// analytically instead. A shoulder, an elbow and a wrist is the textbook
-// two-bone problem: the distance from shoulder to wrist fixes the elbow's bend
-// exactly by the law of cosines, and the one remaining freedom, where the elbow
-// sits on its circle, is chosen deliberately rather than left to chance.
-//
-// What is *not* copied from those rigs is how the result is applied. They pose
-// the skeleton directly, which would throw away the mass, the collisions and
-// the momentum this whole game is built on. Here the solution is a target, and
-// capped torques drive the real bodies toward it — so the machine still has to
-// physically get there, a heavy arm still takes longer, and a punch still
-// shoves the torso. That split is the point: IK decides the pose, physics
-// decides what it costs.
-// ---------------------------------------------------------------------------
-
-typedef struct { float x, y, z; } V3;
-
-static V3 v3(float x, float y, float z) { V3 r = {x, y, z}; return r; }
-static V3 v3sub(V3 a, V3 b) { return v3(a.x-b.x, a.y-b.y, a.z-b.z); }
-static V3 v3add(V3 a, V3 b) { return v3(a.x+b.x, a.y+b.y, a.z+b.z); }
-static V3 v3mul(V3 a, float s) { return v3(a.x*s, a.y*s, a.z*s); }
-static float v3dot(V3 a, V3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
-static V3 v3cross(V3 a, V3 b) {
-    return v3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x);
-}
-static float v3len(V3 a) { return __builtin_sqrtf(v3dot(a, a)); }
-static V3 v3norm(V3 a) {
-    const float l = v3len(a);
-    return (l > 1e-6f) ? v3mul(a, 1.0f / l) : v3(0.0f, 0.0f, 1.0f);
-}
-
-// Orientation of a bone that runs along its own -Z from origin toward `tip`,
-// hinging about `hinge`. Returned as a quaternion in world space.
-static b3Quat boneQuat(V3 from, V3 tip, V3 hinge)
-{
-    const V3 zAxis = v3norm(v3sub(from, tip));     // bone extends along -Z
-    V3 xAxis = v3sub(hinge, v3mul(zAxis, v3dot(hinge, zAxis)));
-    if (v3len(xAxis) < 1e-4f)
-    {
-        // Hinge parallel to the bone: any perpendicular will do.
-        V3 alt = (__builtin_fabsf(zAxis.y) < 0.9f) ? v3(0,1,0) : v3(1,0,0);
-        xAxis = v3sub(alt, v3mul(zAxis, v3dot(alt, zAxis)));
-    }
-    xAxis = v3norm(xAxis);
-    const V3 yAxis = v3cross(zAxis, xAxis);
-
-    // Built by hand rather than through b3MakeQuatFromMatrix. Handing that
-    // function a basis produced an orientation that left both the explicit
-    // torque drive and the joint springs applying exactly zero — the arm sat at
-    // its construction pose, to the millimetre, no matter how hard either was
-    // pushed. A target that produces no error is a target equal to the current
-    // rotation, which is what pointed here. This is Shepperd's method on the
-    // columns, and it is unambiguous about which way round the basis goes.
-    const float m00 = xAxis.x, m10 = xAxis.y, m20 = xAxis.z;
-    const float m01 = yAxis.x, m11 = yAxis.y, m21 = yAxis.z;
-    const float m02 = zAxis.x, m12 = zAxis.y, m22 = zAxis.z;
-
-    b3Quat q;
-    const float tr = m00 + m11 + m22;
-    if (tr > 0.0f)
-    {
-        const float sc = __builtin_sqrtf(tr + 1.0f) * 2.0f;
-        q.s = 0.25f * sc;
-        q.v.x = (m21 - m12) / sc;
-        q.v.y = (m02 - m20) / sc;
-        q.v.z = (m10 - m01) / sc;
-    }
-    else if (m00 > m11 && m00 > m22)
-    {
-        const float sc = __builtin_sqrtf(1.0f + m00 - m11 - m22) * 2.0f;
-        q.s = (m21 - m12) / sc;
-        q.v.x = 0.25f * sc;
-        q.v.y = (m01 + m10) / sc;
-        q.v.z = (m02 + m20) / sc;
-    }
-    else if (m11 > m22)
-    {
-        const float sc = __builtin_sqrtf(1.0f + m11 - m00 - m22) * 2.0f;
-        q.s = (m02 - m20) / sc;
-        q.v.x = (m01 + m10) / sc;
-        q.v.y = 0.25f * sc;
-        q.v.z = (m12 + m21) / sc;
-    }
-    else
-    {
-        const float sc = __builtin_sqrtf(1.0f + m22 - m00 - m11) * 2.0f;
-        q.s = (m10 - m01) / sc;
-        q.v.x = (m02 + m20) / sc;
-        q.v.y = (m12 + m21) / sc;
-        q.v.z = 0.25f * sc;
-    }
-    return b3NormalizeQuat(q);
-}
-
-// Set each joint's spring rate from what it actually has to swing.
-static void tuneJointSprings(void)
-{
-    for (int i = 0; i < MECH_ARMS; i++)
-    {
-        const float mU = b3Body_GetMass(s_mUpper[i]);
-        const float mF = b3Body_GetMass(s_mFore[i]);
-        const float mT = b3Body_GetMass(s_mTool[i]);
-        const float L1 = s_mUpperLen, L2 = s_mForeLen;
-
-        b3Matrix3 iu = b3Body_GetLocalRotationalInertia(s_mUpper[i]);
-        b3Matrix3 ifo = b3Body_GetLocalRotationalInertia(s_mFore[i]);
-
-        // The shoulder swings the whole arm; the elbow only swings what is
-        // past it.
-        float Ishoulder = iu.cx.x + mU * (L1*0.5f)*(L1*0.5f)
-                        + mF * (L1 + L2*0.5f)*(L1 + L2*0.5f)
-                        + mT * (L1 + L2)*(L1 + L2);
-        float Ielbow = ifo.cx.x + mF * (L2*0.5f)*(L2*0.5f) + mT * L2*L2;
-        if (Ishoulder < 1e-3f) Ishoulder = 1e-3f;
-        if (Ielbow < 1e-3f) Ielbow = 1e-3f;
-
-        float hz1 = __builtin_sqrtf(s_mActStiffness * s_mShoulderStiffMul / Ishoulder) / 6.2831853f;
-        float hz2 = __builtin_sqrtf(s_mActStiffness / Ielbow) / 6.2831853f;
-        // Below about 1.5 Hz the arm is unusable rather than heavy; above 60 it
-        // is past what the step can resolve cleanly.
-        if (hz1 < 1.5f) hz1 = 1.5f; if (hz1 > 60.0f) hz1 = 60.0f;
-        if (hz2 < 1.5f) hz2 = 1.5f; if (hz2 > 60.0f) hz2 = 60.0f;
-
-        b3SphericalJoint_SetSpringHertz(s_mShoulder[i], hz1);
-        b3SphericalJoint_SetSpringDampingRatio(s_mShoulder[i], s_mJointDamping);
-        b3RevoluteJoint_SetSpringHertz(s_mElbow[i], hz2);
-        b3RevoluteJoint_SetSpringDampingRatio(s_mElbow[i], s_mJointDamping);
-    }
-}
-
-// Solve arm i and drive its two bones toward the solution.
-static void armIK(int i)
-{
-    b3WorldTransform tx = b3Body_GetTransform(s_mTorso);
-    const b3Vec3 localShoulder = { (i == 0) ? -s_mShoulderHalf : s_mShoulderHalf, 0.17f, 0.0f };
-    const b3Vec3 rotated = b3RotateVector(tx.q, localShoulder);
-    const V3 S = v3((float)tx.p.x + rotated.x, (float)tx.p.y + rotated.y, (float)tx.p.z + rotated.z);
-
-    // Where the end of the mount has to be, and which way it points.
-    const V3 H = v3(s_mHandTarget[i].x, s_mHandTarget[i].y, s_mHandTarget[i].z);
-    const b3Vec3 fwdLocal = { 0.0f, 0.0f, -1.0f };
-    const b3Vec3 fwd = b3RotateVector(s_mToolAim[i], fwdLocal);
-    const float toolLen = 2.0f * s_mToolHalf;
-
-    // The wrist sits one mount-length back along the aim, so the far face of
-    // the mount — not the wrist — is what lands on your hand.
-    const V3 W = v3sub(H, v3mul(v3(fwd.x, fwd.y, fwd.z), toolLen));
-
-    const float L1 = s_mUpperLen, L2 = s_mForeLen;
-    V3 toW = v3sub(W, S);
-    float d = v3len(toW);
-
-    // Out of reach is normal — you can hold a controller further away than the
-    // machine's arm goes. It stretches out toward you and stops, which is what
-    // an arm does.
-    const float dMin = __builtin_fabsf(L1 - L2) + 0.02f;
-    const float dMax = L1 + L2 - 0.01f;
-    if (d < dMin) d = dMin;
-    if (d > dMax) d = dMax;
-    const V3 dir = v3norm(toW);
-
-    // Law of cosines: how far along the shoulder-to-wrist line the elbow sits,
-    // and how far off it.
-    const float a = (d*d + L1*L1 - L2*L2) / (2.0f * d);
-    float hSq = L1*L1 - a*a;
-    if (hSq < 0.0f) hSq = 0.0f;
-    const float h = __builtin_sqrtf(hSq);
-
-    // The one free choice in the whole solve: which way round the circle the
-    // elbow sits. Straight down, which is where a person's elbow is, and the
-    // reason it no longer ends up pointing at the ceiling.
-    V3 pole = v3sub(v3(0.0f, -1.0f, 0.0f), v3mul(dir, v3dot(v3(0.0f, -1.0f, 0.0f), dir)));
-    if (v3len(pole) < 1e-3f)
-    {
-        // Arm pointing straight up or down; use forward instead.
-        pole = v3sub(v3(0.0f, 0.0f, -1.0f), v3mul(dir, v3dot(v3(0.0f, 0.0f, -1.0f), dir)));
-    }
-    pole = v3norm(pole);
-
-    const V3 E = v3add(S, v3add(v3mul(dir, a), v3mul(pole, h)));
-
-    // The elbow hinges about the normal to the bend plane.
-    // Negated deliberately.
-    //
-    // cross(upper, forearm) points the way that makes the bend a *positive*
-    // rotation about it, and the elbow's limits only allow negative — folding
-    // is negative, straight is zero. Left unflipped the shoulder still aimed
-    // correctly, so the elbow landed within a couple of centimetres, while the
-    // forearm was asked to bend into its own hard stop and the wrist ended up
-    // 38 cm out. The elbow being right while the wrist got worse as the spring
-    // stiffened is what gave it away.
-    V3 hinge = v3mul(v3cross(v3sub(E, S), v3sub(W, E)), -1.0f);
-    if (v3len(hinge) < 1e-4f) hinge = v3cross(pole, dir);
-    hinge = v3norm(hinge);
-
-    s_mIKElbow[i].x = E.x; s_mIKElbow[i].y = E.y; s_mIKElbow[i].z = E.z;
-    s_mIKWrist[i].x = W.x; s_mIKWrist[i].y = W.y; s_mIKWrist[i].z = W.z;
-
-    const b3Quat qUpper = boneQuat(S, E, hinge);
-    s_mIKUpper[i] = qUpper;
-    const b3Quat qFore = boneQuat(E, W, hinge);
-
-    // Hand the solution to the joints as spring targets.
-    //
-    // The shoulder spring works in joint-frame terms: frame B relative to frame
-    // A, where A carries the tilt built into the shoulder mount, so the target
-    // has to be expressed in that frame rather than in world.
-    const b3Quat qFrameA = b3MulQuat(tx.q, s_mShoulderFrame[i]);
-    s_mIKSpringTarget[i] = b3NormalizeQuat(b3MulQuat(b3Conjugate(qFrameA), qUpper));
-    b3SphericalJoint_SetTargetRotation(s_mShoulder[i], s_mIKSpringTarget[i]);
-
-    // The elbow only has one angle to be told about, and the law of cosines
-    // already gave it: straight is zero, folded is negative.
-    const float cosInterior = (L1*L1 + L2*L2 - d*d) / (2.0f * L1 * L2);
-    const float interior = __builtin_acosf(cosInterior < -1.0f ? -1.0f
-                                         : (cosInterior > 1.0f ? 1.0f : cosInterior));
-    b3RevoluteJoint_SetTargetAngle(s_mElbow[i], interior - 3.14159265f);
-}
-
-
-// World position of arm i's far face — the knuckles.
-static b3Vec3 mechTip(int i)
-{
-    b3Pos p = b3Body_GetPosition(s_mTool[i]);
-    b3Quat q = b3Body_GetRotation(s_mTool[i]);
-    b3Matrix3 m = b3MakeMatrixFromQuat(q);
-    const float d = -2.0f * s_mToolHalf;
-    b3Vec3 out;
-    out.x = (float)p.x + m.cz.x * d;
-    out.y = (float)p.y + m.cz.y * d;
-    out.z = (float)p.z + m.cz.z * d;
-    return out;
-}
-
-// Called every frame with the grip button's state. The engine decides whether a
-// grab actually takes hold: squeezing in mid-air does nothing, because a fist
-// with nothing under it has nothing to hold.
-WASM_EXPORT("w_mech_legs")
-void w_mech_legs(int working)
-{
-    s_mLegsWork = working ? 1 : 0;
-}
-
-WASM_EXPORT("w_mech_anchor")
-void w_mech_anchor(int i, int wantAnchor)
-{
-    if (i < 0 || i >= MECH_ARMS || !s_mExists) return;
-
-    if (!wantAnchor)
-    {
-        if (s_mAnchored[i])
-        {
-            b3DestroyJoint(s_mAnchorJ[i], true);
-            s_mAnchored[i] = 0;
-        }
-        s_mSlipped[i] = 0;   // opening the hand resets a slipped grip
-        return;
-    }
-
-    if (s_mAnchored[i] || s_mSlipped[i]) return;
-
-    b3Vec3 tip = mechTip(i);
-    if (tip.y > s_groundY + ANCHOR_REACH_Y) return;   // not at the ground
-
-    // A planted fist is a pivot: the tip cannot translate, the arm can still
-    // rotate about it. Grounded fists really do work like this.
-    b3Pos gp = b3Body_GetPosition(s_groundBody);
-    b3SphericalJointDef aj = b3DefaultSphericalJointDef();
-    aj.base.bodyIdA = s_groundBody;
-    aj.base.bodyIdB = s_mTool[i];
-    aj.base.localFrameA = b3Transform_identity;
-    aj.base.localFrameA.p.x = tip.x - (float)gp.x;
-    aj.base.localFrameA.p.y = tip.y - (float)gp.y;
-    aj.base.localFrameA.p.z = tip.z - (float)gp.z;
-    aj.base.localFrameB = b3Transform_identity;
-    aj.base.localFrameB.p.z = -2.0f * s_mToolHalf;
-    aj.base.collideConnected = false;
-    s_mAnchorJ[i] = b3CreateSphericalJoint(s_world, &aj);
-    s_mAnchored[i] = 1;
-}
-
-// [anchoredL, anchoredR, slippedL, slippedR, dragMode, speed]
-WASM_EXPORT("w_mech_drag_state")
-float* w_mech_drag_state(void)
-{
-    static float out[6];
-    out[0] = (float)s_mAnchored[0];
-    out[1] = (float)s_mAnchored[1];
-    out[2] = (float)s_mSlipped[0];
-    out[3] = (float)s_mSlipped[1];
-    out[4] = (float)s_mDragMode;
-    if (s_mExists)
-    {
-        b3Vec3 v = b3Body_GetLinearVelocity(s_mTorso);
-        out[5] = __builtin_sqrtf(v.x*v.x + v.z*v.z);
-    }
-    return out;
-}
-
-WASM_EXPORT("w_mech_apply")
-void w_mech_apply(void)
-{
-    if (!s_mExists) return;
-
-    // Drag mode.
-    //
-    // While a fist is planted — and while the machine is still sliding after
-    // the last one let go — the feet give way and go along instead of holding
-    // their spot, exactly as knuckle-walking needs. It ends only when the
-    // machine has actually come to rest, so releasing mid-haul lets momentum
-    // carry it and the feet catch the stop at the end.
-    {
-        const int anyAnchor = s_mAnchored[0] || s_mAnchored[1];
-        b3Vec3 tv = b3Body_GetLinearVelocity(s_mTorso);
-        const float speed = __builtin_sqrtf(tv.x*tv.x + tv.z*tv.z);
-        if (anyAnchor)
-        {
-            s_mDragMode = 1;
-            s_mCoastFrames = 0;
-        }
-        else if (s_mDragMode)
-        {
-            if (speed < 0.10f) s_mCoastFrames++;
-            else s_mCoastFrames = 0;
-            if (s_mCoastFrames > 10) s_mDragMode = 0;   // planted again
-        }
-
-        // An over-stretched grip breaks. Without this, walking away from a
-        // planted fist loads an unbounded joint spring against a hard anchor,
-        // and the arm ends up violently rubber-banded to a spot on the floor.
-        for (int i = 0; i < MECH_ARMS; i++)
-        {
-            if (!s_mAnchored[i]) continue;
-            b3WorldTransform tx0 = b3Body_GetTransform(s_mTorso);
-            const b3Vec3 ls = { (i == 0) ? -s_mShoulderHalf : s_mShoulderHalf, 0.17f, 0.0f };
-            const b3Vec3 r = b3RotateVector(tx0.q, ls);
-            b3Vec3 tip = mechTip(i);
-            const float dx = tip.x - ((float)tx0.p.x + r.x);
-            const float dy = tip.y - ((float)tx0.p.y + r.y);
-            const float dz = tip.z - ((float)tx0.p.z + r.z);
-            const float reach = s_mUpperLen + s_mForeLen + 2.0f * s_mToolHalf;
-            if (__builtin_sqrtf(dx*dx + dy*dy + dz*dz) > reach * 0.97f)
-            {
-                b3DestroyJoint(s_mAnchorJ[i], true);
-                s_mAnchored[i] = 0;
-                s_mSlipped[i] = 1;
-            }
-        }
-    }
-
-    // Legs.
-    //
-    // Only while the machine still has them. With the legs gone no leg force
-    // exists at all — the hull falls, rests on the ground, and everything the
-    // machine does from then on is done against real contact friction.
-    if (s_mLegsWork)
-    {
-    // They hold the machine's height, full stop. An earlier version made the
-    // legs a plain spring that had to fight gravity, so heavier arms dragged the
-    // whole mech downwards until it sank out from under the player and the arms
-    // could not be swung at all. Legs do not work like that: yours hold you at
-    // your height whether or not you are carrying something heavy, and they give
-    // out entirely rather than sagging in proportion to the load.
-    //
-    // So the vertical is gravity-compensated and stiff — the machine stands. The
-    // horizontal is a limited spring, which is what lets a committed punch drag
-    // it off its footing.
-    {
-        b3Pos p = b3Body_GetPosition(s_mTorso);
-        b3Vec3 v = b3Body_GetLinearVelocity(s_mTorso);
-        const float mass = b3Body_GetMass(s_mTorso);
-
-        // Cancel the torso's own weight, then hold the height stiffly.
-        float fy = mass * 9.81f
-                 + (s_mTorsoTarget.y - (float)p.y) * s_mTorsoK * 3.0f
-                 - v.y * s_mTorsoC * 2.0f;
-
-        // In drag mode the feet stop holding a spot: the spring term goes and
-        // only the damping stays, which is the drag of the feet over the
-        // ground. That resistance is also what brings the machine to rest when
-        // the fist lets go, so momentum ends in a slide rather than a glide.
-        float fx, fz;
-        if (s_mDragMode)
-        {
-            fx = -v.x * s_mTorsoC * 0.6f;
-            fz = -v.z * s_mTorsoC * 0.6f;
-        }
-        else
-        {
-            fx = (s_mTorsoTarget.x - (float)p.x) * s_mTorsoK - v.x * s_mTorsoC;
-            fz = (s_mTorsoTarget.z - (float)p.z) * s_mTorsoK - v.z * s_mTorsoC;
-        }
-
-        // Only the horizontal is capped — that is the footing giving way.
-        float hsq = fx*fx + fz*fz;
-        if (hsq > s_mTorsoMaxF * s_mTorsoMaxF)
-        {
-            float k = s_mTorsoMaxF / __builtin_sqrtf(hsq);
-            fx *= k; fz *= k;
-        }
-
-        b3Vec3 f; f.x = fx; f.y = fy; f.z = fz;
-        b3Body_ApplyForceToCenter(s_mTorso, f, true);
-    }
-    }
-
-    // Staying upright.
-    //
-    // Without this the machine tumbles. The legs held its height but nothing
-    // held its attitude, so every swing torqued the torso back and it rolled
-    // over — measured at 300 steps, the right shoulder had swung across to the
-    // left side of the body. The arms were fine; the thing they hang from was
-    // cartwheeling.
-    //
-    // Legs and stabilisers really do this, so it is the machine working rather
-    // than a correction bolted on. It is capped for the same reason the footing
-    // is: a hard enough swing gets to tip you over, and that is the drama. Only
-    // pitch and roll are restored — the cross product has no yaw term — so the
-    // machine is still free to turn.
-    {
-        b3Quat q = b3Body_GetRotation(s_mTorso);
-        b3Matrix3 m = b3MakeMatrixFromQuat(q);
-
-        // Local up, in world space, crossed with world up. The result is the
-        // axis that swings the machine back level, and its length is the sine
-        // of how far over it is.
-        const float ax = -m.cy.z, az = m.cy.x;
-
-        b3Vec3 w = b3Body_GetAngularVelocity(s_mTorso);
-        const float I = mechInertia();
-        const float w0 = 6.2831853f / s_mUprightPeriod;
-        const float k = I * w0 * w0;                       // torque per radian
-        const float c = 2.0f * s_mUprightZeta * I * w0;    // torque per rad/s
-
-        float tx = ax * k - w.x * c;
-        float ty =        - w.y * c;
-        float tz = az * k - w.z * c;
-
-        // Shoulders follow the pilot's facing (spring-lagged, so a glance
-        // doesn't yank the hull — a turn brings it around).
-        if (s_mFaceSet)
-        {
-            const float facing = __builtin_atan2f(-m.cz.x, -m.cz.z);
-            float err = s_mFaceYaw - facing;
-            while (err > 3.14159265f) err -= 6.2831853f;
-            while (err < -3.14159265f) err += 6.2831853f;
-            ty += err * k * 0.5f;
-        }
-
-        const float cap = s_mUprightMax * mechMass();
-        float tsq = tx*tx + ty*ty + tz*tz;
-        if (tsq > cap * cap)
-        {
-            float k = cap / __builtin_sqrtf(tsq);
-            tx *= k; ty *= k; tz *= k;
-        }
-
-        b3Vec3 t; t.x = tx; t.y = ty; t.z = tz;
-        b3Body_ApplyTorque(s_mTorso, t, true);
-    }
-
-    // Arms.
-    //
-    // Each arm is solved as a two-bone IK problem and then physically driven to
-    // that solution. Nothing here drags the hand end and hopes: the pose is
-    // worked out first, the bodies have to earn their way there.
-    for (int i = 0; i < MECH_ARMS; i++)
-    {
-        // The machine carries its own arm, so the drive torque below is spent
-        // moving the limb rather than holding it up against gravity.
-        {
-            b3BodyId parts[3] = { s_mUpper[i], s_mFore[i], s_mTool[i] };
-            for (int k = 0; k < 3; k++)
-            {
-                b3Vec3 lift;
-                lift.x = 0.0f;
-                lift.y = b3Body_GetMass(parts[k]) * 9.81f * s_mArmLift;
-                lift.z = 0.0f;
-                b3Body_ApplyForceToCenter(parts[k], lift, true);
-            }
-        }
-
-        if (!s_mHandActive[i]) continue;
-
-        armIK(i);
-
-        // Aim. The attachment turns to face where the controller faces, which is
-        // what lets a sword be pointed rather than merely carried. Torque-based
-        // so it can be resisted or knocked off line.
-        {
-            // Shortest rotation from current to target, as a quaternion.
-            b3Quat cur = b3Body_GetRotation(s_mTool[i]);
-            b3Quat tgt = s_mToolAim[i];
-
-            // Never ask the wrist for an angle it cannot hold.
-            //
-            // The target is your controller's orientation, and it is often well
-            // outside the wrist's cone — measured, the joint was jammed hard
-            // against that limit in every single frame while the aim kept
-            // pushing further. A controller shoving at a hard constraint is a
-            // fight neither side wins, and it chatters: that is the mount
-            // spasming. Folding the request back to the edge of what the joint
-            // can reach ends the fight rather than damping it.
-            {
-                b3Matrix3 fm = b3MakeMatrixFromQuat(b3Body_GetRotation(s_mFore[i]));
-                b3Matrix3 tm = b3MakeMatrixFromQuat(tgt);
-                float d = fm.cz.x*tm.cz.x + fm.cz.y*tm.cz.y + fm.cz.z*tm.cz.z;
-                if (d < -1.0f) d = -1.0f;
-                if (d > 1.0f) d = 1.0f;
-                const float ang = __builtin_acosf(d);
-                const float room = s_mWristCone * 0.9f;   // stop shy of the stop
-                if (ang > room)
-                {
-                    float ax[3] = {
-                        fm.cz.y*tm.cz.z - fm.cz.z*tm.cz.y,
-                        fm.cz.z*tm.cz.x - fm.cz.x*tm.cz.z,
-                        fm.cz.x*tm.cz.y - fm.cz.y*tm.cz.x };
-                    const float al = __builtin_sqrtf(ax[0]*ax[0] + ax[1]*ax[1] + ax[2]*ax[2]);
-                    if (al > 1e-4f)
-                    {
-                        ax[0] /= al; ax[1] /= al; ax[2] /= al;
-                        const float h = -(ang - room) * 0.5f;
-                        const float sh = __builtin_sinf(h);
-                        b3Quat qc;
-                        qc.v.x = ax[0]*sh; qc.v.y = ax[1]*sh; qc.v.z = ax[2]*sh;
-                        qc.s = __builtin_cosf(h);
-                        tgt = b3MulQuat(qc, tgt);
-                    }
-                }
-            }
-
-            float dot = cur.v.x*tgt.v.x + cur.v.y*tgt.v.y + cur.v.z*tgt.v.z + cur.s*tgt.s;
-            if (dot < 0.0f) { tgt.v.x = -tgt.v.x; tgt.v.y = -tgt.v.y; tgt.v.z = -tgt.v.z; tgt.s = -tgt.s; }
-            // err = tgt * conj(cur)
-            float cx = -cur.v.x, cy = -cur.v.y, cz = -cur.v.z, cw = cur.s;
-            float ex = tgt.s*cx + tgt.v.x*cw + tgt.v.y*cz - tgt.v.z*cy;
-            float ey = tgt.s*cy - tgt.v.x*cz + tgt.v.y*cw + tgt.v.z*cx;
-            float ez = tgt.s*cz + tgt.v.x*cy - tgt.v.y*cx + tgt.v.z*cw;
-
-            // Gains from the attachment's own rotational inertia, not from
-            // numbers picked by eye.
-            //
-            // This was the thing wrecking the arm. At a damping of 22 against
-            // an inertia of about 0.027 kg m^2, the damping term came out
-            // around eleven times what an explicit step at 72 Hz can take —
-            // anything past 2 diverges — so the aim pumped energy in every
-            // frame. With the torso bolted down the arm still swept steadily
-            // across the body and never settled, which is what gave it away:
-            // a fixed target cannot cause drift, only a controller adding
-            // energy can.
-            b3Matrix3 Ik = b3Body_GetLocalRotationalInertia(s_mTool[i]);
-            const float Ia = (Ik.cx.x + Ik.cy.y + Ik.cz.z) / 3.0f;
-            const float wAim = 6.2831853f / s_mAimPeriod;
-            const float kAim = Ia * wAim * wAim;
-            const float cAim = 2.0f * s_mAimZeta * Ia * wAim;
-
-            b3Vec3 w = b3Body_GetAngularVelocity(s_mTool[i]);
-            float tx = ex * kAim - w.x * cAim;
-            float ty = ey * kAim - w.y * cAim;
-            float tz = ez * kAim - w.z * cAim;
-
-            // Capped, so a heavy enough blow knocks the aim off line rather
-            // than the mount holding its angle through anything.
-            const float aimCap = s_mAimMax * b3Body_GetMass(s_mTool[i]);
-            const float tsq = tx*tx + ty*ty + tz*tz;
-            if (tsq > aimCap * aimCap)
-            {
-                const float s = aimCap / __builtin_sqrtf(tsq);
-                tx *= s; ty *= s; tz *= s;
-            }
-
-            b3Vec3 t; t.x = tx; t.y = ty; t.z = tz;
-            b3Body_ApplyTorque(s_mTool[i], t, true);
-        }
-    }
-}
-
-WASM_EXPORT("w_mech_state")
-float* w_mech_state(void)
-{
-    static float out[7 * 7];
-    if (!s_mExists) return out;
-    b3BodyId ids[7] = { s_mTorso,
-                        s_mUpper[0], s_mFore[0], s_mTool[0],
-                        s_mUpper[1], s_mFore[1], s_mTool[1] };
-    for (int i = 0; i < 7; i++)
-    {
-        float* o = &out[i * 7];
-        b3Pos p = b3Body_GetPosition(ids[i]);
-        b3Quat q = b3Body_GetRotation(ids[i]);
-        o[0] = (float)p.x; o[1] = (float)p.y; o[2] = (float)p.z;
-        o[3] = q.v.x; o[4] = q.v.y; o[5] = q.v.z; o[6] = q.s;
-    }
-    return out;
-}
-
-WASM_EXPORT("w_mech_lengths")
-float* w_mech_lengths(void)
-{
-    static float out[3];
-    out[0] = s_mUpperLen; out[1] = s_mForeLen; out[2] = s_mToolHalf;
-    return out;
+    return 0.0f;
 }
 
 // ---------------------------------------------------------------------------
@@ -1712,11 +444,11 @@ float* w_mech_lengths(void)
 // plate — no per-object tuning, just the table.
 // ---------------------------------------------------------------------------
 
-// 24: pillars (up to 6) + two chest plates + the enemy's FOURTEEN body-part
-// grids — head, pelvis, and per side upper arm, forearm, fist, upper leg,
-// lower leg, foot. Per-part damage IS the vox system: each part is a small
-// grid, so hits, hp, debris, hurt-tinting and the renderer all come free.
-#define VOX_GRIDS 24
+// 20: the figure's SEVENTEEN bones, plus room for loose scenery. Per-bone
+// damage IS the vox system — each bone is a small grid, so hits, hp, debris,
+// the dent read and the renderer all come free, and a bone that runs out of
+// cells is a bone that comes off.
+#define VOX_GRIDS 20
 #define VOX_MAX 4096
 #define VOX_ROWS_MAX 512
 #define VOX_RUNS_PER_ROW 16
@@ -1906,9 +638,9 @@ static void vxMeshRow(VoxGrid* g, int y, int z)
     if (g->partDens > 0.0f) sd.density = g->partDens;
     if (g->category)
     {
-        // Armour belongs to a team: its own machine's fists and clubs pass
-        // through it, everyone else's connect. Without this the player's own
-        // punches battered their own chest plate on the way to the enemy.
+        // A body belongs to a team: its own limbs pass through each other,
+        // everyone else's connect. Without this the figure's own guard
+        // ground against its own chest and dented it from the inside.
         sd.filter.categoryBits = g->category;
         sd.filter.maskBits = ~g->category;
     }
@@ -1982,10 +714,10 @@ static int vxBuild(b3BodyId body, b3Vec3 local, int nx, int ny, int nz,
     return (int)(g - s_vxG);
 }
 
-// A body PART is a grid with its own toughness AND its own density: hp
-// scales so a fist is not a wall; density drops to something a shoulder
-// spring can actually lift (a steel-density fist cell weighed 83 kg and
-// every arm hung dead); and only a player arm can break it.
+// A BONE is a grid with its own toughness and its own density: hp scales so
+// a hand is not a wall; density drops to something a shoulder spring can
+// actually lift (at steel density one hand cell weighed 83 kg and every arm
+// hung dead); and only your fist can break it.
 static void vxMakePart(int grid, float hpMul)
 {
     if (grid < 0 || grid >= VOX_GRIDS || !s_vxG[grid].used) return;
@@ -1998,6 +730,18 @@ static void vxMakePart(int grid, float hpMul)
     for (int z = 0; z < g->n[2]; z++)
         for (int y = 0; y < g->n[1]; y++)
             vxMeshRow(g, y, z);        // remesh so the new density takes
+}
+
+// Override a bone's density after the fact, so a trunk can be heavy while a
+// hand stays light enough for its own shoulder to throw.
+static void vxPartDensity(int grid, float dens)
+{
+    if (grid < 0 || grid >= VOX_GRIDS || !s_vxG[grid].used || dens <= 0.0f) return;
+    VoxGrid* g = &s_vxG[grid];
+    g->partDens = dens;
+    for (int z = 0; z < g->n[2]; z++)
+        for (int y = 0; y < g->n[1]; y++)
+            vxMeshRow(g, y, z);
 }
 
 // A wall: a grid standing on the ground on its own static body.
@@ -2266,13 +1010,14 @@ void w_vox_post(void)
         b3BodyId bodyA = b3Shape_GetBody(h->shapeIdA);
         b3BodyId bodyB = b3Shape_GetBody(h->shapeIdB);
 
-        // A body can carry SEVERAL grids now (the enemy torso wears its
-        // head, pelvis and legs). First-match routing sent a head hit into
-        // the chest plate — and vxDamageAt clamps into bounds, so it even
-        // "landed". Pick the grid whose box actually contains the impact,
-        // nearest wins, and skip part grids for anything but a player arm.
+        // One body carries SEVERAL grids (a bone wears its own, and severed
+        // bones keep theirs). First-match routing sent a head hit into the
+        // chest — and vxDamageAt clamps into bounds, so it even "landed".
+        // Pick the grid whose box actually contains the impact, nearest
+        // wins, and let nothing but a fist break a bone.
         VoxGrid* g = 0;
         b3BodyId other;
+        float strikeMass = 0.0f;
         float bestD = 1e30f;
         for (int k = 0; k < VOX_GRIDS; k++)
         {
@@ -2281,21 +1026,17 @@ void w_vox_post(void)
             if (B3_ID_EQUALS(bodyA, s_vxG[k].body)) oth = bodyB;
             else if (B3_ID_EQUALS(bodyB, s_vxG[k].body)) oth = bodyA;
             else continue;
+            float sm = 0.0f;
             if (s_vxG[k].armOnly)
             {
-                int fromArm = 0;
-                if (s_mExists)
-                    for (int a = 0; a < MECH_ARMS; a++)
-                        if (B3_ID_EQUALS(oth, s_mTool[a]) || B3_ID_EQUALS(oth, s_mFore[a])
-                            || B3_ID_EQUALS(oth, s_mUpper[a])) fromArm = 1;
-                if (!fromArm) continue;
-                // The STRIKER is the faster body, and a strike is FAST.
-                // Without both gates the machine was disarmed by its own
-                // offence (its swings landing on a resting guard broke its
-                // fists) and by the guard itself (the player's stiff arm
-                // springs yank back after every shove, and the yank read
-                // as a punch). Your deliberate punch breaks its parts;
-                // everything else is just two machines touching.
+                // A fist, and a fist that is actually MOVING. Without both
+                // gates the figure took itself apart: its own swings landing
+                // on your resting guard broke its hands, and the spring that
+                // yanks your fist back after a shove read as another punch.
+                // Your deliberate blow breaks bone; everything else is two
+                // bodies touching.
+                sm = handStrikeMass(oth);
+                if (sm <= 0.0f) continue;
                 b3Vec3 vo = b3Body_GetLinearVelocity(oth);
                 b3Vec3 vg = b3Body_GetLinearVelocity(s_vxG[k].body);
                 const float so = vo.x*vo.x + vo.y*vo.y + vo.z*vo.z;
@@ -2305,32 +1046,19 @@ void w_vox_post(void)
             }
             const float d2 = vxLocalDist2(&s_vxG[k], (float)h->point.x,
                                           (float)h->point.y, (float)h->point.z);
-            if (d2 < bestD) { bestD = d2; g = &s_vxG[k]; other = oth; }
+            if (d2 < bestD) { bestD = d2; g = &s_vxG[k]; other = oth; strikeMass = sm; }
         }
         if (!g) continue;
         // Beyond a cell and a half from the chosen grid's box, the impact
-        // belongs to a bare hull shape, not to any armour.
+        // belongs to a bare hull shape, not to any cell of this grid.
         if (bestD > (1.5f * g->size) * (1.5f * g->size)) continue;
 
-        float mass = b3Body_GetMass(other);
+        // A punch does not arrive as a loose fist — the arm behind it is
+        // driving it, and that is what the impactor's effective mass is.
+        // Without it a committed blow chipped one cell where it should
+        // stave the panel in.
+        float mass = strikeMass > 0.0f ? strikeMass : b3Body_GetMass(other);
         if (mass <= 0.0f) continue;
-
-        // A fist does not arrive alone: the whole arm is rigidly driving it,
-        // so the impactor's effective mass is the arm's, not the little block
-        // on the end. Without this a committed heavy punch chipped one cell
-        // where it should crater.
-        if (s_mExists)
-        {
-            for (int a = 0; a < MECH_ARMS; a++)
-            {
-                if (B3_ID_EQUALS(other, s_mTool[a]) || B3_ID_EQUALS(other, s_mFore[a]))
-                {
-                    mass = b3Body_GetMass(s_mUpper[a]) + b3Body_GetMass(s_mFore[a])
-                         + b3Body_GetMass(s_mTool[a]);
-                    break;
-                }
-            }
-        }
 
         s_vxLastHits++;
         if (s_vxHitEvCount < VOX_HITEV_MAX)
@@ -2550,13 +1278,7 @@ float* w_vox_stats(void)
     return out;
 }
 
-// Per-grid: [alive, killed, total] — the page reports each wall separately.
-// The player's own plate is worn a hand-span from their eyes: real and
-// damageable, but drawn in their face it is a wall across the bottom of the
-// view. Hidden grids keep simulating and taking hits; they just stay out of
-// the draw list, and the page shows their state as an instrument instead.
-// Restore every surviving structure of a grid to full health and refill the
-// holes — the repair pad's other half.
+// Restore every cell of a grid to full health and refill the holes.
 WASM_EXPORT("w_vox_heal")
 void w_vox_heal(int grid)
 {
@@ -2577,6 +1299,28 @@ void w_vox_heal(int grid)
     (void)revived;
 }
 
+// A hidden grid keeps simulating and keeps taking hits; it just stays out of
+// the engine's draw list. Every bone is hidden — the page draws each one as a
+// deformable mesh instead, so a blow craters the surface rather than
+// repainting a box.
+// How far through this grid the damage has got, 0 to 1.
+//
+// The cell count alone cannot answer that: a cell only leaves the count when
+// it is completely gone, so four solid punches into a tough limb read as no
+// progress at all. Everything above a cell's death — how a dent deepens, how
+// close a bone is to coming off — lives in the accumulated hp, and until this
+// existed there was no way to see it from outside.
+static float vxDamage(const VoxGrid* g)
+{
+    const int total = g->n[0] * g->n[1] * g->n[2];
+    if (total <= 0 || g->cellHpMax <= 0.0f) return 0.0f;
+    float left = 0.0f;
+    for (int i = 0; i < total; i++) if (g->hp[i] > 0.0f) left += g->hp[i];
+    const float full = (float)total * g->cellHpMax;
+    const float d = 1.0f - left / full;
+    return d < 0.0f ? 0.0f : (d > 1.0f ? 1.0f : d);
+}
+
 WASM_EXPORT("w_vox_hide")
 void w_vox_hide(int grid, int hide)
 {
@@ -2587,1460 +1331,1088 @@ void w_vox_hide(int grid, int hide)
 WASM_EXPORT("w_vox_grid_stats")
 float* w_vox_grid_stats(int grid)
 {
-    static float out[3];
-    out[0] = out[1] = out[2] = 0.0f;
+    static float out[4];
+    out[0] = out[1] = out[2] = out[3] = 0.0f;
     if (grid < 0 || grid >= VOX_GRIDS || !s_vxG[grid].used) return out;
     const VoxGrid* g = &s_vxG[grid];
     out[0] = (float)g->alive;
     out[1] = (float)g->killed;
     out[2] = (float)(g->n[0] * g->n[1] * g->n[2]);
+    out[3] = vxDamage(g);
     return out;
 }
 
 
 // ---------------------------------------------------------------------------
-// The dummy — armour worn by something that moves
+// The figure — one opponent, built on a human skeleton
 //
-// A heavy core hangs from a pivot like a punching bag, wearing a plate of
-// voxel armour on its front face. Punch it and the whole body swings; the
-// plate cracks, sheds cells, and slabs of it tear off mid-swing, flying with
-// the body's own velocity. This is the fight in miniature: strip the armour,
-// then hit the thing inside.
+// Seventeen bones and sixteen joints, laid out on real anthropometry: every
+// length here is a fraction of standing height, and the height is the height
+// of the person wearing the headset. Stand next to it and it is your size,
+// because it was built from your measurement.
+//
+//   pelvis - abdomen - chest - neck - head          the spine, five bones
+//   chest  - upper arm - forearm - hand             each arm, three
+//   pelvis - thigh - shin - foot                    each leg, three
+//
+// The joints are the joints you have. Shoulders and hips are ball joints with
+// a cone. Elbows and knees are HINGES, and they bend the way yours bend —
+// the elbow forward, the knee back — which is most of why the thing reads as
+// a body rather than a rig. Spine, neck, wrists and ankles are ball joints
+// with tight cones.
+//
+// What there is no of: a core, a reactor, an engine, a chest plate, a weak
+// point that ends the fight when you find it. Every bone is a voxel grid, so
+// every bone dents under a fist, and a bone battered past a third of itself
+// BREAKS — its joint is destroyed and it falls, taking everything below it
+// with it. Break an elbow and the forearm and hand go together. That is not a
+// special case in the code; it is what a skeleton is.
+//
+// It goes down when it cannot stand: both legs gone, or the spine broken. No
+// explosion, nothing to detonate. You take the body apart.
+//
+// The whole build is in the REST POSE with every body at identity rotation.
+// That single decision pays for itself all through this file: every joint's
+// rest target is the identity quaternion, so a pose is a rotation away from
+// standing rather than an absolute frame nobody can picture.
 // ---------------------------------------------------------------------------
 
-static b3BodyId s_dummyCore;
-
-WASM_EXPORT("w_dummy_create")
-void w_dummy_create(float x, float z, int material)
-{
-    // The gantry the bag hangs from.
-    b3BodyDef gd = b3DefaultBodyDef();
-    gd.type = b3_staticBody;
-    gd.position.x = x; gd.position.y = 2.05f; gd.position.z = z;
-    b3BodyId gantry = b3CreateBody(s_world, &gd);
-
-    // The core: heavy, bare metal underneath.
-    b3BodyDef cd = b3DefaultBodyDef();
-    cd.type = b3_dynamicBody;
-    cd.position.x = x; cd.position.y = 1.15f; cd.position.z = z;
-    cd.angularDamping = 0.8f;
-    cd.linearDamping = 0.2f;
-    s_dummyCore = b3CreateBody(s_world, &cd);
-
-    b3ShapeDef csd = b3DefaultShapeDef();
-    csd.density = 380.0f;   // light enough that punches visibly swing it
-    csd.baseMaterial.friction = 0.6f;
-    b3BoxHull chull = b3MakeBoxHull(0.28f, 0.42f, 0.12f);
-    b3CreateHullShape(s_dummyCore, &csd, &chull.base);
-
-    // The rope: a pivot at the gantry.
-    b3SphericalJointDef sj = b3DefaultSphericalJointDef();
-    sj.base.bodyIdA = gantry;
-    sj.base.bodyIdB = s_dummyCore;
-    sj.base.localFrameA = b3Transform_identity;
-    sj.base.localFrameB = b3Transform_identity;
-    sj.base.localFrameB.p.y = 0.90f;      // hangs from above its head
-    sj.base.collideConnected = false;
-    b3CreateSphericalJoint(s_world, &sj);
-
-    // The armour: an 8 x 8 plate, one cell thick, bolted to the face toward
-    // the player (+z side — the fists arrive travelling -z). Anchor axis z:
-    // the layer against the core is the foundation, so cells that lose their
-    // connection to the body fall off it, wherever it is swinging.
-    b3Vec3 local = { -0.28f, -0.28f, 0.12f };
-    vxBuild(s_dummyCore, local, 8, 8, 1, 0.07f, material, 2, 0);
-    s_dummyExists = 1;
-}
-
-// [px,py,pz, qx,qy,qz,qw, hx,hy,hz] — so the page can draw the bare core.
-WASM_EXPORT("w_dummy_state")
-float* w_dummy_state(void)
-{
-    static float out[10];
-    if (!s_dummyExists) return out;
-    b3Pos p = b3Body_GetPosition(s_dummyCore);
-    b3Quat q = b3Body_GetRotation(s_dummyCore);
-    out[0] = (float)p.x; out[1] = (float)p.y; out[2] = (float)p.z;
-    out[3] = q.v.x; out[4] = q.v.y; out[5] = q.v.z; out[6] = q.s;
-    out[7] = 0.28f; out[8] = 0.42f; out[9] = 0.12f;
-    return out;
-}
-
-// ---------------------------------------------------------------------------
-// The enemy — the other machine in the arena
-//
-// Everything it is made of already exists: a torso held up by the same
-// gravity-compensated legs and inertia-derived uprighting the player's
-// machine uses, voxel armour riding its body through the grid system, and
-// punches that are momentum like every other impact in the world.
-//
-// What is new is only the will: a small state machine that walks it toward
-// the player, squares it up, telegraphs, and swings a club arm through the
-// player's torso. Strip its plate and the core underneath takes the hits;
-// enough of them and the drives cut out — the machine drops, and what is
-// left of its armour bursts off.
-// ---------------------------------------------------------------------------
-
-typedef enum { E_IDLE = 0, E_APPROACH, E_WINDUP, E_SWING, E_RECOVER, E_DEAD,
-               E_TRIUMPH } EnemyState;
-
-static b3BodyId s_eTorso;
-static b3BodyId s_eArm[2];                // the FOREARM bodies — the striking limbs
-static b3BodyId s_eUpArm[2];              // upper arms, shoulder to elbow
-static b3JointId s_eShoulder[2];
-static b3JointId s_eElbow[2];
-
-// The fourteen smashable parts, each a one-cell vox grid. Order is load-
-// bearing: arms index as PART_L_* + side*3.
 enum {
-    PART_HEAD = 0, PART_PELVIS = 1,
-    PART_L_UPLEG = 2, PART_L_LOLEG = 3, PART_L_FOOT = 4,
-    PART_R_UPLEG = 5, PART_R_LOLEG = 6, PART_R_FOOT = 7,
-    PART_L_UPARM = 8, PART_L_FOREARM = 9, PART_L_FIST = 10,
-    PART_R_UPARM = 11, PART_R_FOREARM = 12, PART_R_FIST = 13,
-    PART_COUNT = 14
+    BONE_PELVIS = 0, BONE_ABDOMEN, BONE_CHEST, BONE_NECK, BONE_HEAD,
+    BONE_L_UPPERARM, BONE_L_FOREARM, BONE_L_HAND,
+    BONE_R_UPPERARM, BONE_R_FOREARM, BONE_R_HAND,
+    BONE_L_THIGH, BONE_L_SHIN, BONE_L_FOOT,
+    BONE_R_THIGH, BONE_R_SHIN, BONE_R_FOOT,
+    BONE_COUNT
 };
-static int s_ePart[PART_COUNT];
-static float s_ePendStature = 0.0f;       // stature told before creation
+// Arms and legs index as BONE_L_* + side * 3.
+#define ARM(side) (BONE_L_UPPERARM + (side) * 3)
+#define LEG(side) (BONE_L_THIGH + (side) * 3)
 
-// Per-machine SILHOUETTE. Every opponent used to be built from one set of box
-// dimensions, so every opponent had the same body. These say how a chassis is
-// proportioned, told before creation like the stature.
+// How a bone's joint frame is oriented, which decides where its cone points
+// and which way its hinge turns.
+typedef enum {
+    AX_UP = 0,     // the bone extends along its own +Y  (the spine)
+    AX_DOWN,       // along its own -Y                   (arms, legs)
+    AX_FWD,        // along its own +Z                   (feet)
+    AX_HINGE       // a hinge turning about world X      (elbows, knees)
+} BoneAxis;
+
+typedef struct
+{
+    int parent;              // -1 for the root
+    float ox, oy, oz;        // rest origin: the JOINT, in stature fractions
+    float hx, hy, hz;        // half extents, in stature fractions
+    int cells;               // cells along the longest axis, and the taper of a
+                             // limb comes from here: a shin given the same
+                             // count as its thigh gets the same cell size and
+                             // therefore the same thickness, and the whole leg
+                             // reads as one uninterrupted shaft with no knee
+                             // in it. Looking at a render is the only thing
+                             // that catches that; every measurement passed.
+                             // It sets the CELL
+                             // SIZE, so it is also what decides the other two
+                             // dimensions — the foot's 2 made a cubic cell
+                             // 13 cm on a side, which is a correct 27 cm long
+                             // foot and a 13 cm THICK one. Six centimetres of
+                             // extra ankle drove the soles through the floor,
+                             // the leg chain jammed, and floor friction pinned
+                             // the figure so hard it could no longer turn to
+                             // face anybody: 10 N m of heading torque went in
+                             // every step for three seconds and moved it 0.06
+                             // radians. The leg chain and the stand height
+                             // have to agree to the millimetre.
+    BoneAxis axis;
+    float cone;              // cone half-angle, or hinge lower limit
+    float hi;                // hinge upper limit (hinges only)
+    float hertz;             // joint spring stiffness
+    float hpMul;             // how much punishment one cell of it soaks
+    float dens;              // kg/m^3 — trunk heavy, limbs light, as a body is
+} BoneDef;
+
+// Anthropometry, as fractions of stature. Ankle .039, knee .285, hip .530,
+// waist .620, shoulder .820, chin .845, crown 1.000 — the standard canon,
+// which is why the silhouette comes out human without anybody art-directing
+// it. The origin of every bone is the joint it hangs from.
 //
-// Limb segments are cut into `s_eLimbCells` cells along their length rather
-// than made of one lump: the segment keeps its length, so the cells get
-// THINNER as the count goes up, and a lanky machine falls out of the same code
-// that builds a stocky one. More cells also means more of it dents before any
-// of it dies.
+// The spring rates are MUSCLE, and the first cut of them was not. At 5-9 Hz
+// every joint sagged a little under gravity, the sags added down the chain,
+// and the measurement was unambiguous: chest 25 cm low, head 68 cm low, the
+// whole figure folded forward over its own hips and face-planted inside four
+// seconds without being touched. Nothing was unstable and nothing errored —
+// it just slowly lay down. A standing body is actively held at every joint,
+// so these are stiff enough to hold it and damped just under critical.
+static const BoneDef BONES[BONE_COUNT] = {
+  /* PELVIS   */ { -1,            0.000f, 0.530f, 0.000f, 0.075f, 0.045f, 0.055f, 2, AX_UP,    0.00f, 0,  0.0f, 3.0f , 900.0f },
+  /* ABDOMEN  */ { BONE_PELVIS,   0.000f, 0.620f, 0.000f, 0.065f, 0.050f, 0.050f, 2, AX_UP,    0.45f, 0, 28.0f, 2.6f , 900.0f },
+  /* CHEST    */ { BONE_ABDOMEN,  0.000f, 0.720f, 0.000f, 0.085f, 0.063f, 0.060f, 3, AX_UP,    0.40f, 0, 28.0f, 1.8f , 900.0f },
+  /* NECK     */ { BONE_CHEST,    0.000f, 0.845f, 0.000f, 0.026f, 0.023f, 0.026f, 2, AX_UP,    0.50f, 0, 22.0f, 2.2f , 600.0f },
+  /* HEAD     */ { BONE_NECK,     0.000f, 0.890f, 0.000f, 0.055f, 0.055f, 0.060f, 2, AX_UP,    0.45f, 0, 22.0f, 1.5f , 650.0f },
+
+  /* L UPARM  */ { BONE_CHEST,   -0.115f, 0.820f, 0.000f, 0.030f, 0.095f, 0.030f, 3, AX_DOWN,  1.45f, 0, 14.0f, 1.6f , 420.0f },
+  /* L FOREARM*/ { BONE_L_UPPERARM, -0.115f, 0.630f, 0.000f, 0.026f, 0.073f, 0.026f, 4, AX_HINGE, -2.50f, 0.0f, 15.0f, 1.0f , 380.0f },
+  /* L HAND   */ { BONE_L_FOREARM,  -0.115f, 0.485f, 0.000f, 0.030f, 0.055f, 0.022f, 2, AX_DOWN,  0.55f, 0, 16.0f, 1.2f , 340.0f },
+
+  /* R UPARM  */ { BONE_CHEST,    0.115f, 0.820f, 0.000f, 0.030f, 0.095f, 0.030f, 3, AX_DOWN,  1.45f, 0, 14.0f, 1.6f , 420.0f },
+  /* R FOREARM*/ { BONE_R_UPPERARM,  0.115f, 0.630f, 0.000f, 0.026f, 0.073f, 0.026f, 4, AX_HINGE, -2.50f, 0.0f, 15.0f, 1.0f , 380.0f },
+  /* R HAND   */ { BONE_R_FOREARM,   0.115f, 0.485f, 0.000f, 0.030f, 0.055f, 0.022f, 2, AX_DOWN,  0.55f, 0, 16.0f, 1.2f , 340.0f },
+
+  /* L THIGH  */ { BONE_PELVIS,  -0.045f, 0.530f, 0.000f, 0.045f, 0.123f, 0.045f, 3, AX_DOWN,  1.00f, 0, 28.0f, 2.8f , 620.0f },
+  /* L SHIN   */ { BONE_L_THIGH, -0.045f, 0.285f, 0.000f, 0.037f, 0.123f, 0.037f, 4, AX_HINGE, 0.00f, 2.40f, 26.0f, 1.6f , 520.0f },
+  /* L FOOT   */ { BONE_L_SHIN,  -0.045f, 0.039f, 0.000f, 0.030f, 0.020f, 0.076f, 4, AX_FWD,   0.50f, 0, 20.0f, 1.8f , 420.0f },
+
+  /* R THIGH  */ { BONE_PELVIS,   0.045f, 0.530f, 0.000f, 0.045f, 0.123f, 0.045f, 3, AX_DOWN,  1.00f, 0, 28.0f, 2.8f , 620.0f },
+  /* R SHIN   */ { BONE_R_THIGH,  0.045f, 0.285f, 0.000f, 0.037f, 0.123f, 0.037f, 4, AX_HINGE, 0.00f, 2.40f, 26.0f, 1.6f , 520.0f },
+  /* R FOOT   */ { BONE_R_SHIN,   0.045f, 0.039f, 0.000f, 0.030f, 0.020f, 0.076f, 4, AX_FWD,   0.50f, 0, 20.0f, 1.8f , 420.0f },
+};
+
+// Arms are softer than legs, and the reason is measured rather than chosen: a
+// limb that is free to swing gives way under a blow, so far less of the
+// momentum stays in it. At leg toughness an arm took thirty-odd landed hits
+// against a thigh's eight, which is backwards — the legs are meant to be the
+// efficient way to put it down.
 //
-// The head is given as cell counts on each axis, which is the only way to get a
-// head that is not a cube — wide and flat, say.
-static int s_eLimbCells = 0;              // 0 = the stock build
-static int s_eHeadW = 0, s_eHeadH = 0, s_eHeadD = 0;
+// A bone breaks when it is battered down to a third of itself or less. Not
+// when the last cell goes: a limb that only comes off once it has been
+// entirely erased never reads as coming off, it reads as fading out.
+#define FIG_BREAK_NUM 1
+#define FIG_BREAK_DEN 3
 
-// Torso proportions, as multipliers on the stock box. The shoulders, the hips
-// and the chest plate all follow the width, so a narrow machine gets narrow
-// shoulders and a narrow plate rather than a slim box wearing a wide slab.
-static float s_eTorsoW = 1.0f, s_eTorsoH = 1.0f, s_eTorsoD = 1.0f;
+// Its own collision team, so its guard cannot grind against its own chest.
+#define FIG_CATEGORY 0x4ULL
 
-static void eResetShape(void)
+typedef enum {
+    FIG_WAIT = 0,   // stands, guard up, sways — the state it starts in
+    FIG_STEP,       // closing on you
+    FIG_WINDUP,     // the telegraph: the arm draws back, in the pose
+    FIG_STRIKE,     // driving the hand through where you are
+    FIG_RECOVER,    // open — the punish window
+    FIG_FALLING,    // the legs have gone; on its way down
+    FIG_DOWN        // finished
+} FigState;
+
+static int s_figExists = 0;
+static b3BodyId s_figBone[BONE_COUNT];
+static b3JointId s_figJoint[BONE_COUNT];      // the joint to the PARENT
+static int s_figAttached[BONE_COUNT];
+static int s_figGrid[BONE_COUNT];
+static b3Quat s_figFrame[BONE_COUNT];         // the joint frame rotation, R
+static float s_figStature = 1.75f;
+static float s_figHipY = 0.93f;               // rest hip height, world
+static FigState s_figState = FIG_WAIT;
+static float s_figTimer = 0.0f;
+static int s_figArm = 1;                      // which hand is winding up
+static int s_figHold = 0;                     // freeze the will, guard up
+static float s_figSway = 0.0f;
+static float s_figStride = 0.0f;
+static b3Vec3 s_figPlayer;                    // where you are, told each frame
+static float s_figPlayerEye = 1.62f;
+static float s_figStanceX = 0.0f;             // the spot its feet are holding
+static float s_figStanceZ = 0.0f;
+static float s_figReach = 0.0f;               // momentum landed on you this step
+static int s_figBroke = 0;                    // bones lost this step
+static float s_figTempo = 1.0f;
+static float s_figDbg[8];
+
+static void figWorldReset(void)
 {
-    s_eLimbCells = 0;
-    s_eHeadW = s_eHeadH = s_eHeadD = 0;
-    s_eTorsoW = s_eTorsoH = s_eTorsoD = 1.0f;
+    s_figExists = 0;
+    for (int i = 0; i < BONE_COUNT; i++) { s_figAttached[i] = 0; s_figGrid[i] = -1; }
+    s_figState = FIG_WAIT;
+    s_figHold = 0;
 }
 
-static int ePartDead(int p)
-{
-    const int g = s_ePart[p];
-    return g >= 0 && g < VOX_GRIDS && s_vxG[g].used && s_vxG[g].alive == 0;
-}
-// An arm fights only while all three of its parts hold.
-static int eArmDead(int side)
-{
-    return ePartDead(PART_L_UPARM + side * 3) || ePartDead(PART_L_FOREARM + side * 3)
-        || ePartDead(PART_L_FIST + side * 3);
-}
-static EnemyState s_eState = E_IDLE;
-static float s_eTimer = 0.0f;
-static int s_eSwingArm = 0;
-static int s_eSwingStyle = 0;             // 0 overhead, 1 lateral sweep
-static unsigned s_eSwingCount = 0;
-static float s_ePrevPlateAlive = -1.0f;   // for the stagger: slab loss in one step
-static float s_eBlockHit = 0.0f;          // club momentum landed on a player ARM
-static float s_eStrafePhase = 0.0f;       // the approach weave
-static float s_eHoverPhase = 0.0f;        // the God's vertical breath
-static float s_eDownTimer = 0.0f;         // knockdown: stand cut, then the rise
-static float s_eCoreHp = 0.0f;
-static float s_eCoreHpMax = 260.0f;
-static int s_eGrid = -1;                  // its armour plate
-static b3Vec3 s_ePlayerPos;               // told by the page each frame
-static int s_ePlayerPlateGrid = -1;
-static float s_eHitPlayerCore = 0.0f;     // momentum landed on the bare player torso
-static float s_eBlockCool = 0.0f;         // a fresh block absorbs the swing's follow-through
-static float s_eLastCoreHit = 0.0f;       // for the page's sound hooks
-static float s_eLastPlayerHit = 0.0f;
+// --- small quaternion helpers ----------------------------------------------
 
-// Height the enemy stands at, and how far away it wants to fight from.
-#define ENEMY_STAND_Y s_eStandY
-// Close enough that both machines' arms genuinely reach each other: the
-// player's fist reaches 0.68 m and the enemy's club 0.60, so at 0.72 m
-// centre-to-centre the fight actually connects both ways. The first probe had
-// this at 1.05 and every player punch whiffed short.
-#define ENEMY_RANGE 0.72f
-
-static int w_enemy_create_inner(float x, float z, int material);
-
-// The full-fat constructor: size scales the whole machine, tempo speeds its
-// decisions, coreHp sets how much punishment the bared core takes, and hover
-// floats it — the last boss does not deign to stand.
-WASM_EXPORT("w_enemy_create_ex")
-int w_enemy_create_ex(float x, float z, int material, float scale,
-                      float coreHp, int hover, float tempo)
+static b3Quat qAxisAngle(float ax, float ay, float az, float angle)
 {
-    // Clamp ceiling 3.0: mech-bulk chapters legitimately reach ~2.1, and a
-    // clamped physics scale under an unclamped drawn scale re-opens the
-    // drawn-smaller-than-simulated bug the campaign already fixed once.
-    s_eScale = scale < 0.5f ? 0.5f : (scale > 3.0f ? 3.0f : scale);
-    s_eTempo = tempo < 0.4f ? 0.4f : (tempo > 2.5f ? 2.5f : tempo);
-    s_eHover = hover ? 1 : 0;
-    s_eCoreHpMax = coreHp > 20.0f ? coreHp : 260.0f;
-    s_eStandY = s_eHover ? 1.45f : 1.15f * (0.7f + 0.3f * s_eScale);
-    // A stature told before creation wins over the default — the legs are
-    // built to fill exactly the gap it leaves to the floor.
-    if (s_ePendStature > 0.0f) { s_eStandY = s_ePendStature; s_ePendStature = 0.0f; }
-    const int made = w_enemy_create_inner(x, z, material);
-    eResetShape();   // a silhouette belongs to one machine, not the next
-    return made;
+    const float h = 0.5f * angle;
+    const float s = __builtin_sinf(h);
+    b3Quat q; q.v.x = ax * s; q.v.y = ay * s; q.v.z = az * s; q.s = __builtin_cosf(h);
+    return q;
 }
 
-// How this chassis is PROPORTIONED, told before creation like the stature.
-// limbCells cuts every limb segment into that many cells along its length —
-// the segment keeps its reach and gets thinner, so 3 builds a lanky machine
-// out of the same code that builds a stocky one at 1. headW/H/D shape the head
-// in cells, so it can be wide and flat rather than a cube. Any argument <= 0
-// keeps the stock build. Cleared after each create, so it cannot leak into the
-// next machine.
-// The grid behind each of the fourteen parts, so the page can hide the engine's
-// boxes and draw (and crumple) the part itself. -1 if the part does not exist.
-WASM_EXPORT("w_enemy_part_grid")
-int w_enemy_part_grid(int part)
+static b3Quat qConj(b3Quat q)
 {
-    if (part < 0 || part >= PART_COUNT) return -1;
-    return s_ePart[part];
+    b3Quat r; r.v.x = -q.v.x; r.v.y = -q.v.y; r.v.z = -q.v.z; r.s = q.s;
+    return r;
 }
 
-WASM_EXPORT("w_enemy_part_count")
-int w_enemy_part_count(void) { return PART_COUNT; }
-
-// Torso proportions for this chassis, as multipliers on the stock box
-// (width, height, depth). Shoulders, hips and the chest plate follow the width.
-// Cleared after creation with the rest of the silhouette.
-WASM_EXPORT("w_enemy_torso")
-void w_enemy_torso(float w, float h, float d)
+// The minimal rotation carrying unit vector a onto unit vector b.
+static b3Quat qFromTo(b3Vec3 a, b3Vec3 b)
 {
-    s_eTorsoW = w > 0.3f ? (w > 2.5f ? 2.5f : w) : 1.0f;
-    s_eTorsoH = h > 0.3f ? (h > 2.5f ? 2.5f : h) : 1.0f;
-    s_eTorsoD = d > 0.3f ? (d > 2.5f ? 2.5f : d) : 1.0f;
-}
-
-WASM_EXPORT("w_enemy_shape")
-void w_enemy_shape(int limbCells, int headW, int headH, int headD)
-{
-    s_eLimbCells = limbCells > 0 ? (limbCells > 6 ? 6 : limbCells) : 0;
-    s_eHeadW = headW > 0 ? (headW > 6 ? 6 : headW) : 0;
-    s_eHeadH = headH > 0 ? (headH > 6 ? 6 : headH) : 0;
-    s_eHeadD = headD > 0 ? (headD > 6 ? 6 : headD) : 0;
-}
-
-WASM_EXPORT("w_enemy_create")
-int w_enemy_create(float x, float z, int material)
-{
-    s_eScale = 1.0f; s_eTempo = 1.0f; s_eHover = 0;
-    s_eCoreHpMax = 260.0f; s_eStandY = 1.15f;
-    const int made = w_enemy_create_inner(x, z, material);
-    eResetShape();   // a silhouette belongs to one machine, not the next
-    return made;
-}
-
-// How tall it stands. The default stature parks every torso around waist
-// height on a real pilot — the playtest read the opponent as "half my
-// height". The page knows the pilot's calibrated eye line, so it sets the
-// stand height after creation and the machines are sized against the
-// person actually in the headset. Call after w_enemy_create_ex.
-WASM_EXPORT("w_enemy_stature")
-void w_enemy_stature(float standY)
-{
-    if (standY <= 0.6f || standY >= 3.0f) return;
-    if (s_eExists) s_eStandY = standY;
-    else s_ePendStature = standY;    // applied by the next create
-}
-
-// The neutral corner. While the player's machine is down and counting, a
-// boxing opponent does not stand over the body swinging — it backs off,
-// keeps its guard, and waits. Corner mode abandons any strike in motion,
-// retreats to long range, and never winds up; clearing it resumes the
-// fight. This is also what killed the old grind exploit: there is no
-// frozen statue to punch for free damage, only a machine that keeps its
-// distance until you stand.
-static int s_eCorner = 0;
-WASM_EXPORT("w_enemy_corner")
-void w_enemy_corner(int on)
-{
-    s_eCorner = on ? 1 : 0;
-    if (s_eCorner && (s_eState == E_WINDUP || s_eState == E_SWING))
+    const float d = a.x*b.x + a.y*b.y + a.z*b.z;
+    if (d < -0.99999f)
     {
-        s_eState = E_RECOVER;
-        s_eTimer = 0.0f;
+        // Opposed: any perpendicular axis, half a turn. Pick the one furthest
+        // from a so the cross product is well conditioned.
+        b3Vec3 t = { 1.0f, 0.0f, 0.0f };
+        if (a.x < -0.9f || a.x > 0.9f) { t.x = 0.0f; t.y = 1.0f; }
+        b3Vec3 ax = { a.y*t.z - a.z*t.y, a.z*t.x - a.x*t.z, a.x*t.y - a.y*t.x };
+        const float l = __builtin_sqrtf(ax.x*ax.x + ax.y*ax.y + ax.z*ax.z);
+        return qAxisAngle(ax.x/l, ax.y/l, ax.z/l, 3.14159265f);
     }
-}
-
-static int w_enemy_create_inner(float x, float z, int material)
-{
-    for (int i = 0; i < PART_COUNT; i++) s_ePart[i] = -1;
-    b3BodyDef td = b3DefaultBodyDef();
-    td.type = b3_dynamicBody;
-    td.position.x = x; td.position.y = ENEMY_STAND_Y; td.position.z = z;
-    td.angularDamping = 4.0f;
-    td.linearDamping = 0.8f;
-    s_eTorso = b3CreateBody(s_world, &td);
-
-    b3ShapeDef tsd = b3DefaultShapeDef();
-    tsd.density = 700.0f;
-    tsd.baseMaterial.friction = 0.5f;
-    tsd.enableHitEvents = true;           // core hits are how it dies
-    tsd.filter.categoryBits = ENEMY_CATEGORY;
-    tsd.filter.maskBits = ~ENEMY_CATEGORY;
-    const float sc = s_eScale;
-    b3BoxHull thull = b3MakeBoxHull(0.24f * sc * s_eTorsoW, 0.34f * sc * s_eTorsoH,
-                                    0.14f * sc * s_eTorsoD);
-    b3CreateHullShape(s_eTorso, &tsd, &thull.base);
-
-    // HUMANOID arms: two segments a side — upper arm from the shoulder,
-    // forearm carrying the fist — on spherical joints with spring drives.
-    // The clubs are gone; the playtest asked for a machine with parts, and
-    // every part here is a small vox grid you can individually smash.
-    // Both segments extend along their body's +z (the cone axes agree with
-    // the shapes — the hard-won lesson from the club era).
-    for (int i = 0; i < 2; i++)
-    {
-        const float side = i == 0 ? -1.0f : 1.0f;
-        const float shX = side * 0.36f * sc * s_eTorsoW, shY = 0.16f * sc * s_eTorsoH;
-
-        b3BodyDef ud = b3DefaultBodyDef();
-        ud.type = b3_dynamicBody;
-        ud.position.x = x + shX;
-        ud.position.y = ENEMY_STAND_Y + shY;
-        ud.position.z = z + 0.17f * sc;
-        ud.angularDamping = 1.2f;
-        s_eUpArm[i] = b3CreateBody(s_world, &ud);
-
-        b3ShapeDef usd = b3DefaultShapeDef();
-        usd.density = 900.0f;
-        usd.baseMaterial.friction = 0.5f;
-        usd.enableHitEvents = true;
-        usd.filter.categoryBits = ENEMY_CATEGORY;
-        usd.filter.maskBits = ~ENEMY_CATEGORY;
-        b3BoxHull uhull = b3MakeBoxHull(0.06f * sc, 0.06f * sc, 0.17f * sc);
-        b3Transform uoff = b3Transform_identity;
-        uoff.p.z = 0.17f * sc;
-        b3Vec3 one = { 1.0f, 1.0f, 1.0f };
-        b3CreateTransformedHullShape(s_eUpArm[i], &usd, &uhull.base, uoff, one);
-
-        b3SphericalJointDef sj = b3DefaultSphericalJointDef();
-        sj.base.bodyIdA = s_eTorso;
-        sj.base.bodyIdB = s_eUpArm[i];
-        sj.base.localFrameA = b3Transform_identity;
-        sj.base.localFrameA.p.x = shX;
-        sj.base.localFrameA.p.y = shY;
-        sj.base.localFrameB = b3Transform_identity;
-        sj.base.collideConnected = false;
-        sj.enableConeLimit = true;
-        sj.coneAngle = 1.5f;
-        sj.enableSpring = true;
-        sj.hertz = 3.0f;
-        sj.dampingRatio = 0.8f;
-        s_eShoulder[i] = b3CreateSphericalJoint(s_world, &sj);
-
-        b3BodyDef fd = b3DefaultBodyDef();
-        fd.type = b3_dynamicBody;
-        fd.position.x = x + shX;
-        fd.position.y = ENEMY_STAND_Y + shY;
-        fd.position.z = z + 0.34f * sc + 0.15f * sc;
-        fd.angularDamping = 1.0f;
-        s_eArm[i] = b3CreateBody(s_world, &fd);   // s_eArm stays the STRIKING limb
-
-        b3ShapeDef fsd = b3DefaultShapeDef();
-        fsd.density = 1100.0f;
-        fsd.baseMaterial.friction = 0.5f;
-        fsd.enableHitEvents = true;
-        fsd.filter.categoryBits = ENEMY_CATEGORY;
-        fsd.filter.maskBits = ~ENEMY_CATEGORY;
-        b3BoxHull fhull = b3MakeBoxHull(0.055f * sc, 0.055f * sc, 0.15f * sc);
-        b3Transform foff = b3Transform_identity;
-        foff.p.z = 0.15f * sc;
-        b3CreateTransformedHullShape(s_eArm[i], &fsd, &fhull.base, foff, one);
-
-        b3SphericalJointDef ej = b3DefaultSphericalJointDef();
-        ej.base.bodyIdA = s_eUpArm[i];
-        ej.base.bodyIdB = s_eArm[i];
-        ej.base.localFrameA = b3Transform_identity;
-        ej.base.localFrameA.p.z = 0.34f * sc;
-        ej.base.localFrameB = b3Transform_identity;
-        ej.base.collideConnected = false;
-        ej.enableConeLimit = true;
-        ej.coneAngle = 1.5f;
-        ej.enableSpring = true;
-        ej.hertz = 4.0f;
-        ej.dampingRatio = 0.9f;
-        s_eElbow[i] = b3CreateSphericalJoint(s_world, &ej);
-
-        // The arm's parts: two slim cells along each segment and a fist a
-        // human-proportioned machine would throw — the first pass wore
-        // half-metre cubes for hands ("way too big"). Two cells also means
-        // a segment DENTS before it dies.
-        // Segment length is fixed at 0.20*sc; the cell count decides how thin
-        // it is. Two cells is the stock arm; a lanky chassis asks for more and
-        // gets a slimmer one for free.
-        const int   aC  = s_eLimbCells > 0 ? s_eLimbCells : 2;
-        const float aSz = (0.20f * sc) / (float)aC;
-        b3Vec3 upLoc = { -0.5f * aSz, -0.5f * aSz, 0.06f * sc };
-        s_ePart[PART_L_UPARM + i * 3] =
-            vxBuild(s_eUpArm[i], upLoc, 1, 1, aC, aSz, material, 2, ENEMY_CATEGORY);
-        vxMakePart(s_ePart[PART_L_UPARM + i * 3], 10.0f);
-        b3Vec3 foLoc = { -0.5f * aSz, -0.5f * aSz, 0.03f * sc };
-        s_ePart[PART_L_FOREARM + i * 3] =
-            vxBuild(s_eArm[i], foLoc, 1, 1, aC, aSz, material, 2, ENEMY_CATEGORY);
-        vxMakePart(s_ePart[PART_L_FOREARM + i * 3], 9.0f);
-        // The fist tracks the forearm's thickness, or it hangs off the end of a
-        // slim arm like a boxing glove on a wire.
-        const float fiSz = s_eLimbCells > 0 ? aSz * 1.30f : 0.13f * sc;
-        b3Vec3 fiLoc = { -0.5f * fiSz, -0.5f * fiSz, 0.24f * sc };
-        s_ePart[PART_L_FIST + i * 3] =
-            vxBuild(s_eArm[i], fiLoc, 1, 1, 1, fiSz, material, 2, ENEMY_CATEGORY);
-        vxMakePart(s_ePart[PART_L_FIST + i * 3], 12.0f);
-    }
-
-    // Head and pelvis ride the torso; the legs hang below it, sized to
-    // exactly fill the gap the stature leaves to the floor — which is why
-    // stature must be told BEFORE creation (s_ePendStature).
-    {
-        // A head given as cell counts can be wide and flat instead of a cube.
-        // Cell size shrinks as the counts grow so the head keeps its volume
-        // rather than ballooning off the shoulders.
-        const int hW = s_eHeadW > 0 ? s_eHeadW : 1;
-        const int hH = s_eHeadH > 0 ? s_eHeadH : 1;
-        const int hD = s_eHeadD > 0 ? s_eHeadD : 1;
-        const int hMax = hW > hH ? (hW > hD ? hW : hD) : (hH > hD ? hH : hD);
-        const float hSz = (0.16f * sc) / (float)hMax;
-        b3Vec3 hdLoc = { -0.5f * hW * hSz, 0.36f * sc * s_eTorsoH, -0.5f * hD * hSz };
-        s_ePart[PART_HEAD] =
-            vxBuild(s_eTorso, hdLoc, hW, hH, hD, hSz, material, 2, ENEMY_CATEGORY);
-        vxMakePart(s_ePart[PART_HEAD], 20.0f);
-        b3Vec3 pvLoc = { -0.09f * sc * s_eTorsoW, -0.56f * sc * s_eTorsoH,
-                         -0.09f * sc * s_eTorsoD };
-        s_ePart[PART_PELVIS] =
-            vxBuild(s_eTorso, pvLoc, 1, 1, 1, 0.18f * sc, material, 2, ENEMY_CATEGORY);
-        vxMakePart(s_ePart[PART_PELVIS], 26.0f);
-
-        // The legs FIT the gap, strictly: a 4 cm hover keeps the feet just
-        // off the floor (the stand spring carries the machine; the legs are
-        // targets and silhouette; 10 cm absorbs the torso sag the
-        // hanging arm chains add). No absolute minimum sizes — minimum
-        // clamps once built legs LONGER than the gap and the God dragged
-        // its buried feet at millimetres per second, stalled a metre out
-        // of range. Short-statured machines get stubby legs; buried feet
-        // get nobody anywhere.
-        float legLen = (ENEMY_STAND_Y - s_worldFloorY) - 0.56f * sc - 0.10f;
-        if (legLen < 0.12f) legLen = 0.12f;
-        // The cap keeps a leg from becoming a tree trunk, but it has to
-        // scale with the TORSO: shorten the trunk and the legs must be
-        // free to grow into the gap, or the machine hangs its feet above
-        // the floor and reads as a box on stubs.
-        const float legCap = 0.13f * sc / (s_eTorsoH > 0.2f ? s_eTorsoH : 1.0f);
-        float uSz = legLen * 0.40f; if (uSz > legCap) uSz = legCap;
-        float lSz = uSz;
-        float fSz = legLen * 0.20f; if (fSz > 0.10f * sc) fSz = 0.10f * sc;
-        for (int L = 0; L < 2; L++)
-        {
-            const float lx = (L == 0 ? -1.0f : 1.0f) * 0.16f * sc * s_eTorsoW;
-            const int base = L == 0 ? PART_L_UPLEG : PART_R_UPLEG;
-            float yTop = -0.65f * sc * s_eTorsoH;
-            // Same trick as the arms: cut the segment into cells along its
-            // LENGTH, so the leg keeps reaching the floor but gets thinner.
-            const int   lC   = s_eLimbCells > 0 ? s_eLimbCells : 1;
-            const float uCel = uSz / (float)lC;
-            const float lCel = lSz / (float)lC;
-            b3Vec3 ul = { lx - uCel * 0.5f, yTop - uSz, -uCel * 0.5f };
-            s_ePart[base] = vxBuild(s_eTorso, ul, 1, lC, 1, uCel, material, 2, ENEMY_CATEGORY);
-            vxMakePart(s_ePart[base], 26.0f);
-            b3Vec3 ll = { lx - lCel * 0.5f, yTop - uSz - lSz, -lCel * 0.5f };
-            s_ePart[base + 1] = vxBuild(s_eTorso, ll, 1, lC, 1, lCel, material, 2, ENEMY_CATEGORY);
-            vxMakePart(s_ePart[base + 1], 26.0f);
-            b3Vec3 fl = { lx - fSz * 0.5f, yTop - uSz - lSz - fSz, -fSz * 0.5f + 0.05f };
-            s_ePart[base + 2] = vxBuild(s_eTorso, fl, 1, 1, 1, fSz, material, 2, ENEMY_CATEGORY);
-            vxMakePart(s_ePart[base + 2], 20.0f);
-        }
-    }
-
-    // Its armour: a plate over the chest, facing the player side (+z).
-    // The plate is cut to the chest it covers. Sized to a constant, a narrow
-    // machine wore a slab wider than its own body — which is exactly what a
-    // playtest kept seeing instead of a robot.
-    const float plW = 0.07f * sc * s_eTorsoW, plH = 0.07f * sc * s_eTorsoH;
-    const float plCell = plW < plH ? plW : plH;
-    b3Vec3 local = { -3.5f * plCell, -3.5f * plCell, 0.14f * sc * s_eTorsoD };
-    s_eGrid = vxBuild(s_eTorso, local, 7, 7, 1, plCell, material, 2, ENEMY_CATEGORY);
-
-    s_eCoreHp = s_eCoreHpMax;
-    s_eState = E_APPROACH;
-    s_eTimer = 0.0f;
-    s_eSwingArm = 0;
-    s_eSwingStyle = 0;
-    s_eSwingCount = 0;
-    s_ePrevPlateAlive = -1.0f;
-    s_eBlockHit = 0.0f;
-    s_eDownTimer = 0.0f;
-    s_eStrafePhase = 0.0f;
-    s_eHoverPhase = 0.0f;
-    s_eHitPlayerCore = 0.0f;
-    s_eBlockCool = 0.0f;
-    s_eCorner = 0;
-    s_eExists = 1;
-    return s_eGrid;
-}
-
-// The player's machine wears a plate too, once there is someone to hit back.
-WASM_EXPORT("w_player_plate")
-int w_player_plate(int material)
-{
-    if (!s_mExists) return -1;
-    // The player's machine faces -z (the arms hang that way), so its chest —
-    // and its plate — face the enemy at -z. The first cut bolted it on the
-    // player's back.
-    b3Vec3 local = { -0.21f, -0.21f, -0.17f };
-    s_ePlayerPlateGrid = vxBuild(s_mTorso, local, 6, 6, 1, 0.07f, material, 2, MECH_CATEGORY);
-    return s_ePlayerPlateGrid;
-}
-
-// Aim a shoulder spring so the club points from the shoulder toward a world
-// target — the swing is the spring chasing a target driven through the player.
-static void eAimArm(int i, b3Vec3 worldTarget, float hertz)
-{
-    b3WorldTransform tt = b3Body_GetTransform(s_eTorso);
-    const float side = i == 0 ? -1.0f : 1.0f;
-    // The joint anchors scale with the machine; the aim origin must match
-    // or every swing on a scaled machine starts from a phantom shoulder.
-    b3Vec3 shoulderLocal = { side * 0.36f * s_eScale, 0.16f * s_eScale, 0.0f };
-    b3Vec3 sw = b3RotateVector(tt.q, shoulderLocal);
-    sw.x += (float)tt.p.x; sw.y += (float)tt.p.y; sw.z += (float)tt.p.z;
-
-    b3Vec3 d = { worldTarget.x - sw.x, worldTarget.y - sw.y, worldTarget.z - sw.z };
-    const float len = __builtin_sqrtf(d.x*d.x + d.y*d.y + d.z*d.z);
-    if (len < 1e-4f) return;
-    d.x /= len; d.y /= len; d.z /= len;
-
-    // World orientation whose +Z points along d — the club extends along +z,
-    // matching the cone. boneQuat points -Z at its tip argument, so hand it
-    // the point BEHIND the shoulder.
-    V3 from = { sw.x, sw.y, sw.z };
-    V3 back = { sw.x - d.x, sw.y - d.y, sw.z - d.z };
-    V3 hingeGuess = { 1.0f, 0.0f, 0.0f };
-    b3Quat qWorld = boneQuat(from, back, hingeGuess);
-
-    // Spring target is frame B relative to frame A (torso frame, identity).
-    b3Quat rel = b3NormalizeQuat(b3MulQuat(b3Conjugate(tt.q), qWorld));
-    b3SphericalJoint_SetTargetRotation(s_eShoulder[i], rel);
-    b3SphericalJoint_SetSpringHertz(s_eShoulder[i], hertz);
-}
-
-// The elbow: drive the forearm's rest rotation relative to the upper arm.
-// Negative bends lift the fist (the boxing curl); zero is a straight drive.
-static void eBend(int i, float bend, float hertz)
-{
-    b3Quat q = { { __builtin_sinf(bend * 0.5f), 0.0f, 0.0f }, __builtin_cosf(bend * 0.5f) };
-    b3SphericalJoint_SetTargetRotation(s_eElbow[i], q);
-    b3SphericalJoint_SetSpringHertz(s_eElbow[i], hertz);
-}
-
-// Tip the machine over. The legs are rigid props, so neither death nor a
-// knockdown can SINK it — it has to fall, and it falls away from the blow.
-// The one-shot impulse is not enough on its own: the shoulder cone limits
-// act as hard pendulum stabilizers and right the body again, so the axis
-// is remembered and a sustained topple torque leans on it for the whole
-// down window (applied in the update while s_eDownTimer runs).
-static b3Vec3 s_eKeelAxis = { 1.0f, 0.0f, 0.0f };
-static void eKeel(float rate)
-{
-    b3Pos tp2 = b3Body_GetPosition(s_eTorso);
-    b3Vec3 away = { (float)tp2.x - s_ePlayerPos.x, 0.0f, (float)tp2.z - s_ePlayerPos.z };
-    const float al = __builtin_sqrtf(away.x*away.x + away.z*away.z);
-    if (al < 1e-3f) { away.x = 0.0f; away.z = 1.0f; }
-    else { away.x /= al; away.z /= al; }
-    const float m = b3Body_GetMass(s_eTorso);
-    b3Vec3 axis = { -away.z, 0.0f, away.x };
-    s_eKeelAxis = axis;
-    b3Vec3 aimp = { axis.x * m * 0.5f * rate, 0.0f, axis.z * m * 0.5f * rate };
-    b3Body_SetAngularDamping(s_eTorso, 0.4f);
-    b3Body_ApplyAngularImpulse(s_eTorso, aimp, true);
-}
-
-// A dead arm hangs. The springs stay on, weak, aimed at the floor — limp
-// reads as broken, and a broken arm never swings again.
-static void eLimp(int i)
-{
-    b3WorldTransform tt = b3Body_GetTransform(s_eTorso);
-    const float side = i == 0 ? -1.0f : 1.0f;
-    b3Vec3 dLoc = { side * 0.40f * s_eScale, -1.0f, 0.0f };
-    b3Vec3 dw = b3RotateVector(tt.q, dLoc);
-    b3Vec3 tgt = { (float)tt.p.x + dw.x, (float)tt.p.y + dw.y, (float)tt.p.z + dw.z };
-    eAimArm(i, tgt, 0.8f);
-    eBend(i, -0.15f, 0.8f);
-}
-
-// The boxing guard: each fist held up and forward of its own shoulder,
-// covering the face line. This is the silhouette that says FIGHTER, and
-// it is also why punching through to the core takes an opening.
-static void eAimGuard(int arm, b3Pos tp, b3Vec3 pHat, b3Vec3 lat)
-{
-    const float side = arm ? 1.0f : -1.0f;
-    // Two-segment guard: the UPPER arm aims level-forward (the elbow line),
-    // and the forearm curls up from there to put the fist over the face —
-    // the boxer's silhouette, from the geometry instead of one aim point.
-    b3Vec3 g = { (float)tp.x + pHat.x * 0.30f + lat.x * side * 0.15f,
-                 (float)tp.y + 0.02f,
-                 (float)tp.z + pHat.z * 0.30f + lat.z * side * 0.15f };
-    eAimArm(arm, g, 12.0f);
-    eBend(arm, -0.85f, 22.0f);
-}
-
-// Once per frame, before w_step. dt at 72 Hz.
-WASM_EXPORT("w_enemy_update")
-void w_enemy_update(float px, float py, float pz, float dt)
-{
-    if (!s_eExists) return;
-    s_ePlayerPos.x = px; s_ePlayerPos.y = py; s_ePlayerPos.z = pz;
-    if (s_eState == E_DEAD) return;
-
-    b3Pos tp = b3Body_GetPosition(s_eTorso);
-    b3Vec3 tv = b3Body_GetLinearVelocity(s_eTorso);
-    const float mass = b3Body_GetMass(s_eTorso);
-
-    // dt == 0 is the POSE-ONLY call: the page uses it during READY so the
-    // machine waits in its guard instead of with dead hanging arms — first
-    // impressions — without walking, swinging, or advancing any timer.
-
-    // (skipped in the pose-only call)
-    // Legs: hold height, close to fighting range, stop there. On the way in
-    // it strafes — a slow weave across the line of approach, so the walk-up
-    // reads as circling a fight rather than a train on a rail.
-    {
-        b3Vec3 toP = { px - (float)tp.x, 0.0f, pz - (float)tp.z };
-        const float dist = __builtin_sqrtf(toP.x*toP.x + toP.z*toP.z);
-        float gx = (float)tp.x, gz = (float)tp.z;
-        const float wantRange = s_eCorner ? 3.4f
-                              : ENEMY_RANGE + (s_eScale - 1.0f) * 0.15f;
-        if (s_eCorner && dist < wantRange - 0.3f && dist > 1e-3f && dt > 0.0f)
-        {
-            // Cornered off: step back until the count's distance is kept.
-            const float back = wantRange - dist;
-            gx -= toP.x / dist * back;
-            gz -= toP.z / dist * back;
-        }
-        else if (dist > wantRange && dt > 0.0f)
-        {
-            const float step = dist - wantRange;
-            gx += toP.x / dist * step;
-            gz += toP.z / dist * step;
-            if (s_eState == E_APPROACH && dist > wantRange + 0.5f && dist > 1e-3f)
-            {
-                s_eStrafePhase += dt * s_eTempo * 1.1f;
-                const float weave = __builtin_sinf(s_eStrafePhase) * 0.55f;
-                gx += (toP.z / dist) * weave;
-                gz += (-toP.x / dist) * weave;
-            }
-        }
-        else if (s_eState == E_APPROACH && dist > 1e-3f && dt > 0.0f)
-        {
-            // In range, waiting to strike: it boxes in place — a lateral
-            // sway, so the dwell reads as rhythm instead of statue.
-            s_eStrafePhase += dt * s_eTempo * 2.6f;
-            const float sway = __builtin_sinf(s_eStrafePhase) * 0.15f;
-            gx += (toP.z / dist) * sway;
-            gz += (-toP.x / dist) * sway;
-        }
-        // A hoverer breathes vertically — a slow bob, so floating reads as
-        // floating and not as being bolted to an invisible pole.
-        float standY = ENEMY_STAND_Y;
-        if (s_eHover)
-        {
-            s_eHoverPhase += dt;
-            standY += __builtin_sinf(s_eHoverPhase * 0.7f) * 0.07f;
-        }
-        // The stand carries the WHOLE machine: the arm chains hang off the
-        // shoulders and their weight routes into the torso through the
-        // joints — compensating torso mass alone sagged the heavy builds
-        // 10 cm, right onto their own feet.
-        const float mAll = mass
-            + b3Body_GetMass(s_eUpArm[0]) + b3Body_GetMass(s_eUpArm[1])
-            + b3Body_GetMass(s_eArm[0]) + b3Body_GetMass(s_eArm[1]);
-        // Near-critical vertical damping, scaled to the REAL mass: the old
-        // fixed 900 left heavy builds bouncing on their stand spring after
-        // every flinch — "hopping around like an idiot".
-        const float vDamp = 1.9f * __builtin_sqrtf(5200.0f * mAll);
-        float fy = mAll * 9.81f + (standY - (float)tp.y) * 5200.0f - tv.y * vDamp;
-        // Knocked down: the stand is out and the machine falls under its own
-        // weight, then the spring returns and it hauls itself back up.
-        if (s_eDownTimer > 0.0f)
-        {
-            s_eDownTimer -= dt;
-            fy = -tv.y * 250.0f;   // damping only: it drops, it does not bounce
-            // Reel over; steadiness comes back with the stand.
-            if (s_eDownTimer <= 0.0f) b3Body_SetAngularDamping(s_eTorso, 4.0f);
-        }
-        // Smashed legs are lost drive: every dead leg part slows the chase,
-        // a dead pelvis halves it — cripple the machine's wheels and it
-        // must fight where it stands.
-        float legSlow = ePartDead(PART_PELVIS) ? 0.55f : 1.0f;
-        {
-            int deadLegs = 0;
-            for (int lp2 = PART_L_UPLEG; lp2 <= PART_R_FOOT; lp2++)
-                if (ePartDead(lp2)) deadLegs++;
-            legSlow *= 1.0f - 0.11f * (float)deadLegs;
-            if (legSlow < 0.28f) legSlow = 0.28f;
-        }
-        float fx = ((gx - (float)tp.x) * 1400.0f - tv.x * 620.0f) * legSlow;
-        float fz = ((gz - (float)tp.z) * 1400.0f - tv.z * 620.0f) * legSlow;
-        const float cap = 2600.0f * legSlow;
-        const float hsq = fx*fx + fz*fz;
-        if (hsq > cap * cap) { const float k = cap / __builtin_sqrtf(hsq); fx *= k; fz *= k; }
-        b3Vec3 f = { fx, fy, fz };
-        b3Body_ApplyForceToCenter(s_eTorso, f, true);
-    }
-
-    // Stay upright, and turn to face the player (so the armour faces the fight).
-    // Not while knocked down: the legs are rigid props now, so a downed
-    // machine cannot sink — it KEELS instead. The righting torque cuts out
-    // for the count and hauls it back upright when the reel ends.
-    if (s_eDownTimer <= 0.0f)
-    {
-        b3Quat q = b3Body_GetRotation(s_eTorso);
-        b3Matrix3 m = b3MakeMatrixFromQuat(q);
-        b3Matrix3 Ib = b3Body_GetLocalRotationalInertia(s_eTorso);
-        const float I = (Ib.cx.x + Ib.cy.y + Ib.cz.z) / 3.0f;
-        const float w0 = 6.2831853f / 0.6f;
-        const float k = I * w0 * w0, c = 2.0f * I * w0;
-        b3Vec3 w = b3Body_GetAngularVelocity(s_eTorso);
-
-        // Pitch/roll: local up toward world up.
-        float tx = -m.cy.z * k - w.x * c;
-        float tz = m.cy.x * k - w.z * c;
-
-        // Yaw: local +z toward the player bearing.
-        b3Vec3 toP = { px - (float)tp.x, 0.0f, pz - (float)tp.z };
-        const float dl = __builtin_sqrtf(toP.x*toP.x + toP.z*toP.z);
-        float ty = -w.y * c;
-        if (dl > 0.05f)
-        {
-            const float bearing = __builtin_atan2f(toP.x / dl, toP.z / dl);
-            const float facing = __builtin_atan2f(m.cz.x, m.cz.z);
-            float err = bearing - facing;
-            while (err > 3.14159265f) err -= 6.2831853f;
-            while (err < -3.14159265f) err += 6.2831853f;
-            ty += err * k * 0.6f;
-        }
-        const float cap = 60.0f * mass;
-        const float tsq = tx*tx + ty*ty + tz*tz;
-        if (tsq > cap * cap) { const float s = cap / __builtin_sqrtf(tsq); tx *= s; ty *= s; tz *= s; }
-        b3Vec3 t = { tx, ty, tz };
-        b3Body_ApplyTorque(s_eTorso, t, true);
-    }
-
-    // The will.
-    //
-    // Every target the clubs are given sits comfortably INSIDE the shoulder
-    // cone. The first cut pointed the windup straight up — exactly on the cone
-    // edge — and the spring chattered against the limit at 55 m/s of tip speed
-    // while the swing never got within half a metre of the player. Measured,
-    // not guessed: the probe tracked the tip.
-    // A smashed head is smashed sensors: everything it decides comes slower.
-    s_eTimer += dt * s_eTempo * (ePartDead(PART_HEAD) ? 0.65f : 1.0f);
-    if (s_eBlockCool > 0.0f) s_eBlockCool -= dt;
-    const int armD0 = eArmDead(0), armD1 = eArmDead(1);
-    b3Vec3 toP = { px - (float)tp.x, py - (float)tp.y, pz - (float)tp.z };
-    const float pl = __builtin_sqrtf(toP.x*toP.x + toP.y*toP.y + toP.z*toP.z);
-    b3Vec3 pHat = { 1.0f, 0.0f, 0.0f };
-    if (pl > 1e-3f) { pHat.x = toP.x / pl; pHat.y = toP.y / pl; pHat.z = toP.z / pl; }
-    b3Vec3 guard = { px, py + 0.10f, pz };
-    // Broken arms hang, always, whatever the state — and if the swinging
-    // arm is broken mid-strike, the strike is over.
-    if (armD0) eLimp(0);
-    if (armD1) eLimp(1);
-    if ((s_eState == E_WINDUP || s_eState == E_SWING) &&
-        (s_eSwingArm ? armD1 : armD0))
-    { s_eState = E_RECOVER; s_eTimer = 0.0f; }
-    // Knocked down, everything is limp: the state aims re-stiffen the arm
-    // springs every frame, and two stiff spring-anchored arms gyro-hold
-    // the torso so well the machine could not fall over. Floppy arms are
-    // what lets a knockdown BE a knockdown.
-    if (s_eDownTimer > 0.0f)
-    {
-        eLimp(0);
-        eLimp(1);
-        // The sustained topple: lean on the remembered keel axis until the
-        // count ends. The cone limits cannot out-arm-wrestle this.
-        b3Vec3 keelT = { s_eKeelAxis.x * mass * 10.0f, 0.0f,
-                         s_eKeelAxis.z * mass * 10.0f };
-        b3Body_ApplyTorque(s_eTorso, keelT, true);
-    }
-    else switch (s_eState)
-    {
-        case E_APPROACH:
-        {
-            b3Vec3 lat = { pHat.z, 0.0f, -pHat.x };
-            if (!armD0) eAimGuard(0, tp, pHat, lat);
-            if (!armD1) eAimGuard(1, tp, pHat, lat);
-            const float reach = ENEMY_RANGE + (s_eScale - 1.0f) * 0.15f;
-            const float d2 = toP.x*toP.x + toP.z*toP.z;
-            // The strike gate is WIDER than the walk's stopping distance:
-            // pressing against a guard (or debris, or a wall) can stall the
-            // approach a hand's width short, and a machine that stops there
-            // must still fight, not stand in punch range forever deciding.
-            if (!s_eCorner && !(armD0 && armD1) &&
-                d2 < (reach + 0.30f) * (reach + 0.30f) && s_eTimer > 0.8f)
-            {
-                s_eState = E_WINDUP; s_eTimer = 0.0f;
-                s_eSwingArm = 1 - s_eSwingArm;
-                if (s_eSwingArm ? armD1 : armD0) s_eSwingArm = 1 - s_eSwingArm;
-                // Three lines of attack, mixed by the machine's own traits
-                // (deterministic Knuth hash — low bits repeat in runs). The
-                // JAB is the boxing bread-and-butter: fast, straight,
-                // short-telegraphed. A hoverer leads with sweeps, a slow
-                // heavyweight with the overhead crush, everyone else jabs.
-                s_eSwingCount++;
-                const unsigned h8 = (s_eSwingCount * 2654435761u >> 7) & 7u;
-                if (s_eHover)             s_eSwingStyle = h8 < 4 ? 1 : (h8 < 6 ? 2 : 0);
-                else if (s_eTempo < 0.9f) s_eSwingStyle = h8 < 4 ? 0 : (h8 < 6 ? 2 : 1);
-                else                      s_eSwingStyle = h8 < 4 ? 2 : (h8 < 6 ? 0 : 1);
-            }
-            break;
-        }
-        case E_WINDUP:
-        {
-            // The telegraph IS the tell: overhead draws high behind the
-            // shoulder, the sweep draws wide to the side, the jab pulls
-            // straight back to the shoulder — short and sharp, like the
-            // punch it becomes. All sit well inside the cone.
-            b3Vec3 lat = { pHat.z, 0.0f, -pHat.x };
-            const float side = s_eSwingArm ? -1.0f : 1.0f;
-            b3Vec3 up;
-            if (s_eSwingStyle == 0)
-            {
-                up.x = (float)tp.x - pHat.x * 0.35f;
-                up.y = (float)tp.y + 0.80f;
-                up.z = (float)tp.z - pHat.z * 0.35f;
-            }
-            else if (s_eSwingStyle == 1)
-            {
-                up.x = (float)tp.x + lat.x * side * 0.45f - pHat.x * 0.15f;
-                up.y = (float)tp.y + 0.55f;
-                up.z = (float)tp.z + lat.z * side * 0.45f - pHat.z * 0.15f;
-            }
-            else
-            {
-                up.x = (float)tp.x - pHat.x * 0.18f + lat.x * side * 0.16f;
-                up.y = (float)tp.y + 0.32f;
-                up.z = (float)tp.z - pHat.z * 0.18f + lat.z * side * 0.16f;
-            }
-            eAimArm(s_eSwingArm, up, s_eSwingStyle == 2 ? 8.0f : 5.0f);
-            eBend(s_eSwingArm, -0.6f, 8.0f);
-            if (!(s_eSwingArm ? armD0 : armD1))
-                eAimGuard(1 - s_eSwingArm, tp, pHat, lat);
-            // The sweep is the harder hit to answer, so it telegraphs
-            // longest; the jab barely telegraphs at all — that is its point.
-            if (s_eTimer > (s_eSwingStyle == 1 ? 0.62f
-                          : s_eSwingStyle == 2 ? 0.22f : 0.45f))
-            { s_eState = E_SWING; s_eTimer = 0.0f; }
-            break;
-        }
-        case E_SWING:
-        {
-            // Driven THROUGH the chest, not at it: the target sits past the
-            // player so the club's equilibrium is inside them and contact is
-            // guaranteed rather than grazed. The sweep crosses to the far
-            // side of the body; the jab goes straight and fast and ends
-            // sooner.
-            b3Vec3 lat = { pHat.z, 0.0f, -pHat.x };
-            const float side = s_eSwingArm ? -1.0f : 1.0f;
-            const float across = s_eSwingStyle == 1 ? -side * 0.30f : 0.0f;
-            const float depth = s_eSwingStyle == 2 ? 0.30f : 0.45f;
-            b3Vec3 through = { px + pHat.x * depth + lat.x * across,
-                               py - 0.05f,
-                               pz + pHat.z * depth + lat.z * across };
-            eAimArm(s_eSwingArm, through, s_eSwingStyle == 2 ? 12.0f : 10.0f);
-            eBend(s_eSwingArm, 0.0f, 10.0f);   // the arm straightens into the drive
-            if (s_eTimer > (s_eSwingStyle == 2 ? 0.28f : 0.40f))
-            { s_eState = E_RECOVER; s_eTimer = 0.0f; }
-            break;
-        }
-        case E_TRIUMPH:
-        {
-            // Both clubs high over the wreck. It walks to where you fell
-            // (the seek still closes to range) and holds this until the
-            // world is rebuilt. It can still be killed here — a machine
-            // showboating over a live pilot has made a mistake.
-            b3Vec3 lat = { pHat.z, 0.0f, -pHat.x };
-            b3Vec3 hi0 = { (float)tp.x - lat.x * 0.35f, (float)tp.y + 0.95f,
-                           (float)tp.z - lat.z * 0.35f };
-            b3Vec3 hi1 = { (float)tp.x + lat.x * 0.35f, (float)tp.y + 0.95f,
-                           (float)tp.z + lat.z * 0.35f };
-            if (!armD0) { eAimArm(0, hi0, 9.0f); eBend(0, -0.2f, 8.0f); }
-            if (!armD1) { eAimArm(1, hi1, 9.0f); eBend(1, -0.2f, 8.0f); }
-            break;
-        }
-        case E_RECOVER:
-        {
-            // Reeling, arms dropped wide and low — NOT guarding. Guarding
-            // here parked the clubs across its own core and the machine
-            // became unkillable by accident; recovery is meant to be the
-            // window you punish, so the core stays open while it reels.
-            b3Vec3 lat = { pHat.z, 0.0f, -pHat.x };
-            b3Vec3 lo0 = { (float)tp.x - lat.x * 0.55f, (float)tp.y - 0.35f,
-                           (float)tp.z - lat.z * 0.55f };
-            b3Vec3 lo1 = { (float)tp.x + lat.x * 0.55f, (float)tp.y - 0.35f,
-                           (float)tp.z + lat.z * 0.55f };
-            if (!armD0) { eAimArm(0, lo0, 7.0f); eBend(0, -0.3f, 6.0f); }
-            if (!armD1) { eAimArm(1, lo1, 7.0f); eBend(1, -0.3f, 6.0f); }
-            if (s_eTimer > 0.55f) { s_eState = E_APPROACH; s_eTimer = 0.4f; }
-            break;
-        }
-        default: break;
-    }
-}
-
-// After w_step: read the step's impacts for the two cores.
-WASM_EXPORT("w_enemy_post")
-void w_enemy_post(void)
-{
-    if (!s_eExists) return;
-    s_eLastCoreHit = 0.0f;
-    s_eLastPlayerHit = 0.0f;
-    s_eBlockHit = 0.0f;
-    if (s_eState == E_DEAD) return;
-
-    float stepCore = 0.0f, stepCorePeak = 0.0f;
-    b3ContactEvents ev = b3World_GetContactEvents(s_world);
-    for (int i = 0; i < ev.hitCount; i++)
-    {
-        const b3ContactHitEvent* h = &ev.hitEvents[i];
-        b3BodyId a = b3Shape_GetBody(h->shapeIdA);
-        b3BodyId b = b3Shape_GetBody(h->shapeIdB);
-
-        // Player fist into the enemy's bare core.
-        const int aCore = B3_ID_EQUALS(a, s_eTorso), bCore = B3_ID_EQUALS(b, s_eTorso);
-        if ((aCore || bCore) && s_mExists)
-        {
-            b3BodyId other = aCore ? b : a;
-            for (int arm = 0; arm < MECH_ARMS; arm++)
-            {
-                if (B3_ID_EQUALS(other, s_mTool[arm]) || B3_ID_EQUALS(other, s_mFore[arm]))
-                {
-                    const float armMass = b3Body_GetMass(s_mUpper[arm])
-                        + b3Body_GetMass(s_mFore[arm]) + b3Body_GetMass(s_mTool[arm]);
-                    const float hit = h->approachSpeed * armMass;
-                    s_eCoreHp -= hit;
-                    if (hit > s_eLastCoreHit) s_eLastCoreHit = hit;
-                }
-            }
-        }
-
-        // Enemy club into the player's bare torso — COLLECTED, not applied:
-        // whether it counts depends on whether this step also carried a
-        // block, and contact events arrive in no useful order.
-        if (s_mExists)
-        {
-            const int aP = B3_ID_EQUALS(a, s_mTorso), bP = B3_ID_EQUALS(b, s_mTorso);
-            if (aP || bP)
-            {
-                b3BodyId other = aP ? b : a;
-                for (int arm = 0; arm < 2; arm++)
-                {
-                    if (B3_ID_EQUALS(other, s_eArm[arm]) ||
-                        B3_ID_EQUALS(other, s_eUpArm[arm]))
-                    {
-                        const float hit = h->approachSpeed * b3Body_GetMass(s_eArm[arm]);
-                        stepCore += hit;
-                        if (hit > stepCorePeak) stepCorePeak = hit;
-                    }
-                }
-            }
-
-            // Enemy club onto a player ARM: a block. Costs the player
-            // nothing — it is the parry working, and the page makes it ring.
-            for (int arm = 0; arm < 2; arm++)
-            {
-                const int aC = B3_ID_EQUALS(a, s_eArm[arm]), bC = B3_ID_EQUALS(b, s_eArm[arm]);
-                if (!aC && !bC) continue;
-                b3BodyId other = aC ? b : a;
-                for (int pa = 0; pa < MECH_ARMS; pa++)
-                {
-                    if (B3_ID_EQUALS(other, s_mUpper[pa]) || B3_ID_EQUALS(other, s_mFore[pa])
-                        || B3_ID_EQUALS(other, s_mTool[pa]))
-                    {
-                        const float hit = h->approachSpeed * b3Body_GetMass(s_eArm[arm]);
-                        // Approach speed, not momentum, decides what was a
-                        // BLOCK: momentum thresholds stop scaling the moment
-                        // the machines gain bulk, and a hair-trigger let the
-                        // player's resting arms cancel every swing by touch.
-                        // A strike arriving faster than ~2 m/s into a guard
-                        // is caught; a drifting graze is nothing.
-                        if (h->approachSpeed > 1.2f && hit > s_eBlockHit) s_eBlockHit = hit;
-                        // A caught swing INTERRUPTS (the playtest said
-                        // blocking didn't work — damage leaked through and
-                        // honest blocks didn't count). The club's momentum
-                        // dies where it rang: the strike visibly stops on
-                        // your arm, recovery starts now, and recovery is
-                        // the punish window. Blocking earns the counter;
-                        // that is the boxing contract.
-                        if (h->approachSpeed > 2.0f && s_eState == E_SWING)
-                        {
-                            s_eState = E_RECOVER;
-                            s_eTimer = 0.0f;
-                            b3Vec3 cv = b3Body_GetLinearVelocity(s_eArm[arm]);
-                            const float cm = b3Body_GetMass(s_eArm[arm]);
-                            b3Vec3 kill = { -cv.x * cm * 0.8f,
-                                            -cv.y * cm * 0.8f,
-                                            -cv.z * cm * 0.8f };
-                            b3Body_ApplyLinearImpulseToCenter(s_eArm[arm], kill, true);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // The block ABSORBS the strike: if this step rang on a guarding arm —
-    // or one did within the last third of a second — the same swing's
-    // follow-through onto the torso costs nothing. Before this rule a
-    // club could ring the guard and still drive through it into the hull,
-    // which is why the playtest said blocking didn't really work.
-    if (s_eBlockHit > 0.5f) s_eBlockCool = 0.30f;
-    if (s_eBlockCool <= 0.0f)
-    {
-        s_eHitPlayerCore += stepCore;
-        if (stepCorePeak > s_eLastPlayerHit) s_eLastPlayerHit = stepCorePeak;
-    }
-
-    // The stagger: a slab torn off the plate in one step reels the machine.
-    // Nibbles (a cell or two) do not — only a real tear interrupts it. A
-    // BIG tear is a knockdown: the stand cuts out and the machine drops,
-    // then hauls itself back to height as the reel ends. And EVERY landed
-    // hit flinches the body — a machine that soaks punches without moving
-    // reads as a wall, not an opponent. Weight lives at the impact.
-    if (s_eGrid >= 0 && s_vxG[s_eGrid].used)
-    {
-        const float alive = (float)s_vxG[s_eGrid].alive;
-        const float loss = s_ePrevPlateAlive >= 0.0f ? s_ePrevPlateAlive - alive : 0.0f;
-        if (loss >= 1.0f && s_eState != E_DEAD)
-        {
-            b3Pos ep2 = b3Body_GetPosition(s_eTorso);
-            b3Vec3 kb = { (float)ep2.x - s_ePlayerPos.x, 0.0f,
-                          (float)ep2.z - s_ePlayerPos.z };
-            const float kl = __builtin_sqrtf(kb.x*kb.x + kb.z*kb.z);
-            if (kl > 1e-3f)
-            {
-                const float mag = (loss > 6.0f ? 6.0f : loss) * 9.0f;
-                b3Vec3 imp = { kb.x / kl * mag, 0.9f, kb.z / kl * mag };
-                b3Body_ApplyLinearImpulseToCenter(s_eTorso, imp, true);
-                b3Vec3 spin = { kb.z / kl * mag * 0.35f, 0.0f, -kb.x / kl * mag * 0.35f };
-                b3Body_ApplyAngularImpulse(s_eTorso, spin, true);
-            }
-        }
-        // A machine with a smashed head staggers off half the tear it used
-        // to shrug off — broken gyros, broken poise.
-        const float stag = ePartDead(PART_HEAD) ? 2.0f : 4.0f;
-        const float down = ePartDead(PART_HEAD) ? 4.0f : 8.0f;
-        // A knockdown-sized tear floors it from ANY fighting state — a
-        // same-step parry used to flip it into RECOVER first and the
-        // state gate quietly ate the knockdown.
-        if (loss >= down && s_eState != E_TRIUMPH)
-        {
-            s_eState = E_RECOVER;
-            s_eTimer = -1.1f;
-            s_eDownTimer = 0.9f;
-            eKeel(4.2f);
-        }
-        else if (loss >= stag
-            && (s_eState == E_APPROACH || s_eState == E_WINDUP || s_eState == E_SWING))
-        {
-            s_eState = E_RECOVER;
-            s_eTimer = -0.35f;
-        }
-        s_ePrevPlateAlive = alive;
-    }
-
-    // The whole robot is destructible and wrecking it ANYWHERE counts —
-    // the chest is one target among fifteen, not the game. Three fifths
-    // of its body cells torn off kills the drives outright.
-    {
-        int pk = 0, pt = 0;
-        for (int i2 = 0; i2 < PART_COUNT; i2++)
-        {
-            const int g2 = s_ePart[i2];
-            if (g2 >= 0 && g2 < VOX_GRIDS && s_vxG[g2].used)
-            { pk += s_vxG[g2].killed; pt += s_vxG[g2].killed + s_vxG[g2].alive; }
-        }
-        if (pt > 0 && pk * 5 >= pt * 3 && s_eCoreHp > 0.0f) s_eCoreHp = 0.0f;
-    }
-    if (s_eCoreHp <= 0.0f)
-    {
-        // The drives cut out. The machine drops, and what is left of its
-        // plate bursts off it.
-        s_eState = E_DEAD;
-        // Drives off: the arms go limp and the legs stop holding, so the
-        // machine drops where it stands.
-        for (int a = 0; a < 2; a++)
-        {
-            b3SphericalJoint_SetSpringHertz(s_eShoulder[a], 0.0f);
-            b3SphericalJoint_SetSpringHertz(s_eElbow[a], 0.0f);
-        }
-        eKeel(3.4f);   // rigid legs cannot crumple; the dead machine falls
-        if (s_eGrid >= 0 && s_vxG[s_eGrid].used)
-        {
-            VoxGrid* g = &s_vxG[s_eGrid];
-            const b3Transform t = vxPose(g);
-            for (int z = 0; z < g->n[2]; z++)
-            for (int y = 0; y < g->n[1]; y++)
-            for (int x = 0; x < g->n[0]; x++)
-            {
-                if (!vxAliveAt(g, x, y, z)) continue;
-                const b3Vec3 wc = b3TransformPoint(t, vxCellLocal(g, x, y, z));
-                vxDamageAt(g, wc.x, wc.y, wc.z, 10000.0f);
-            }
-            vxRemesh(g);
-        }
-    }
-}
-
-// [x,y,z,qx,qy,qz,qw, state, coreFrac, armL(7), armR(7), lastCoreHit,
-//  lastPlayerHit, playerCoreDamage, blockHit, swingStyle] — everything the
-//  page draws and sounds.
-// The repair pad wipes the hull damage the enemy has scored on the player.
-WASM_EXPORT("w_player_repair")
-void w_player_repair(void)
-{
-    s_eHitPlayerCore = 0.0f;
-}
-
-// The other machine wins: it stalks to the wreck and raises both clubs.
-// The page calls this when the player's hull gives out for good.
-WASM_EXPORT("w_enemy_triumph")
-void w_enemy_triumph(void)
-{
-    if (s_eExists && s_eState != E_DEAD) { s_eState = E_TRIUMPH; s_eTimer = 0.0f; }
-}
-
-// Direct core damage, for tests and future weapons.
-WASM_EXPORT("w_enemy_damage_core")
-void w_enemy_damage_core(float amount)
-{
-    if (s_eExists && s_eState != E_DEAD) s_eCoreHp -= amount;
-}
-
-WASM_EXPORT("w_enemy_state")
-float* w_enemy_state(void)
-{
-    static float out[30];
-    if (!s_eExists) return out;
-    b3Pos p = b3Body_GetPosition(s_eTorso);
-    b3Quat q = b3Body_GetRotation(s_eTorso);
-    out[0] = (float)p.x; out[1] = (float)p.y; out[2] = (float)p.z;
-    out[3] = q.v.x; out[4] = q.v.y; out[5] = q.v.z; out[6] = q.s;
-    out[7] = (float)s_eState;
-    out[8] = s_eCoreHp > 0.0f ? s_eCoreHp / s_eCoreHpMax : 0.0f;
-    for (int i = 0; i < 2; i++)
-    {
-        b3Pos ap = b3Body_GetPosition(s_eArm[i]);
-        b3Quat aq = b3Body_GetRotation(s_eArm[i]);
-        float* o = &out[9 + i * 7];
-        o[0] = (float)ap.x; o[1] = (float)ap.y; o[2] = (float)ap.z;
-        o[3] = aq.v.x; o[4] = aq.v.y; o[5] = aq.v.z; o[6] = aq.s;
-    }
-    out[23] = s_eLastCoreHit;
-    out[24] = s_eLastPlayerHit;
-    out[25] = s_eHitPlayerCore;
-    out[26] = s_eBlockHit;
-    out[27] = (float)s_eSwingStyle;
-    out[28] = ePartDead(PART_HEAD) ? 0.0f : 1.0f;   // the visor needs a head
-    {
-        // How many of its fourteen parts are gone — the page turns a rise
-        // in this into the severed-part moment (clang, burst, hit-stop).
-        int dead = 0;
-        for (int i = 0; i < PART_COUNT; i++) if (ePartDead(i)) dead++;
-        out[29] = (float)dead;
-    }
-    return out;
-}
-
-// ---------------------------------------------------------------------------
-// Piloting spike — an arm that swings from a shoulder
-//
-// The first version of this failed the only test that matters: it did not read
-// as an arm. Two boxes were tethered to invisible anchors by motor joints that
-// *translated* them toward the hand, so they drifted through space attached to
-// nothing. Correct dynamics, no embodiment — and embodiment is the whole point.
-//
-// This version is built the other way round. An arm is a limb that pivots at a
-// shoulder on a body:
-//
-//   torso (static)  --spherical joint-->  upper arm (dynamic)
-//
-// The shoulder is the pivot, the segment's shape is offset so it hangs outward
-// from that pivot rather than being centred on it, and the motor applies torque
-// to swing it toward the hand. It cannot drift, because it is attached, and it
-// swings rather than slides, because that is what a joint does.
-//
-// The force limit still does the work the design needs: maxMotorTorque against
-// the segment's mass decides whether the arm can keep up, so the lag is still
-// F = ma and the upgrade is still a bigger number.
-// ---------------------------------------------------------------------------
-
-#define ARM_COUNT 2
-static b3JointId s_armJoint[ARM_COUNT];
-static b3BodyId s_armBody[ARM_COUNT];
-static b3Vec3 s_shoulderLocal[ARM_COUNT];  // offset from the torso origin
-static b3Vec3 s_shoulder[ARM_COUNT];       // same point in world space, updated each frame
-static float s_armLength[ARM_COUNT];
-static int s_armExists[ARM_COUNT] = {0, 0};
-static b3BodyId s_torso;
-static int s_torsoExists = 0;
-
-// Build the torso the arms hang from.
-//
-// Kinematic rather than static, because shoulders belong to the player, not to
-// the room. A static torso has to be placed once and then never moves, so any
-// lean, step or change of posture leaves the mech behind and needs a manual
-// recalibration to fix. Driven from the head every frame instead, the shoulders
-// simply are where the player's shoulders are, and the height question stops
-// existing rather than being repeatedly patched.
-WASM_EXPORT("w_torso_create")
-void w_torso_create(float x, float y, float z, float hx, float hy, float hz)
-{
-    b3BodyDef bd = b3DefaultBodyDef();
-    bd.type = b3_kinematicBody;
-    bd.position.x = x;
-    bd.position.y = y;
-    bd.position.z = z;
-    s_torso = b3CreateBody(s_world, &bd);
-
-    b3ShapeDef sd = b3DefaultShapeDef();
-    sd.density = 1.0f;
-    b3BoxHull hull = b3MakeBoxHull(hx, hy, hz);
-    b3CreateHullShape(s_torso, &sd, &hull.base);
-    s_torsoExists = 1;
-}
-
-// Move the torso to follow the head. Called every frame.
-//
-// Only yaw is applied, not full head rotation: the body should turn with the
-// player but not pitch and roll with their neck, or looking down would tip the
-// whole mech over.
-WASM_EXPORT("w_torso_update")
-void w_torso_update(float x, float y, float z, float yaw)
-{
-    if (!s_torsoExists)
-    {
-        return;
-    }
-
-    const float half = yaw * 0.5f;
     b3Quat q;
-    q.v.x = 0.0f;
-    q.v.y = __builtin_sinf(half);
-    q.v.z = 0.0f;
-    q.s = __builtin_cosf(half);
-
-    b3Pos p;
-    p.x = x; p.y = y; p.z = z;
-    b3Body_SetTransform(s_torso, p, q);
-
-    // Shoulders ride with the torso, so their world positions have to follow —
-    // the arm targeting works from these.
-    const float c = q.s * q.s - q.v.y * q.v.y;      // cos(yaw)
-    const float sn = 2.0f * q.s * q.v.y;            // sin(yaw)
-    for (int i = 0; i < ARM_COUNT; i++)
-    {
-        const float lx = s_shoulderLocal[i].x, ly = s_shoulderLocal[i].y, lz = s_shoulderLocal[i].z;
-        s_shoulder[i].x = x + (lx * c + lz * sn);
-        s_shoulder[i].y = y + ly;
-        s_shoulder[i].z = z + (-lx * sn + lz * c);
-    }
+    q.v.x = a.y*b.z - a.z*b.y;
+    q.v.y = a.z*b.x - a.x*b.z;
+    q.v.z = a.x*b.y - a.y*b.x;
+    q.s = 1.0f + d;
+    return b3NormalizeQuat(q);
 }
 
-// One arm: a segment pivoting at (sx, sy, sz) and reaching `length` forward.
-WASM_EXPORT("w_arm_create")
-void w_arm_create(int i, float sx, float sy, float sz, float length, float thickness,
-                  float density, float maxTorque, float coneAngle)
+// The frame rotation R for a bone: it carries the frame's +Z onto the
+// direction the bone actually extends, so a cone limit is centred on the rest
+// pose instead of ninety degrees off it — and a hinge turns about the axis a
+// human elbow turns about.
+static b3Quat figFrameFor(BoneAxis a)
 {
-    if (i < 0 || i >= ARM_COUNT || !s_torsoExists)
+    switch (a)
     {
-        return;
+        case AX_UP:    return qAxisAngle(1.0f, 0.0f, 0.0f, -1.5707963f); // +Z -> +Y
+        case AX_DOWN:  return qAxisAngle(1.0f, 0.0f, 0.0f,  1.5707963f); // +Z -> -Y
+        case AX_HINGE: return qAxisAngle(0.0f, 1.0f, 0.0f,  1.5707963f); // +Z -> +X
+        default:       return b3Quat_identity;                           // +Z as is
     }
-
-    const float half = length * 0.5f;
-    b3Pos torsoPos0 = b3Body_GetPosition(s_torso);
-    s_shoulderLocal[i].x = sx - (float)torsoPos0.x;
-    s_shoulderLocal[i].y = sy - (float)torsoPos0.y;
-    s_shoulderLocal[i].z = sz - (float)torsoPos0.z;
-    s_shoulder[i].x = sx;
-    s_shoulder[i].y = sy;
-    s_shoulder[i].z = sz;
-    s_armLength[i] = length;
-
-    // The body's origin sits at the shoulder; the shape is pushed out along -Z
-    // so the limb extends forward from the pivot instead of straddling it.
-    b3BodyDef bd = b3DefaultBodyDef();
-    bd.type = b3_dynamicBody;
-    bd.position.x = sx;
-    bd.position.y = sy;
-    bd.position.z = sz;
-    s_armBody[i] = b3CreateBody(s_world, &bd);
-
-    b3ShapeDef sd = b3DefaultShapeDef();
-    sd.density = density;
-    sd.baseMaterial.friction = 0.6f;
-    sd.baseMaterial.restitution = 0.05f;
-
-    b3BoxHull hull = b3MakeBoxHull(thickness, thickness, half);
-    b3Transform offset = b3Transform_identity;
-    offset.p.z = -half;
-    b3Vec3 scale = {1.0f, 1.0f, 1.0f}; // the hull is already the right size
-    b3CreateTransformedHullShape(s_armBody[i], &sd, &hull.base, offset, scale);
-
-    // Pivot at the shoulder.
-    //
-    // localFrameA is expressed in the TORSO's local space, not world space, so
-    // it must be the shoulder *relative to the torso origin*. Passing the world
-    // position here adds the torso's height to the shoulder's and puts the joint
-    // roughly twice as high as intended — which is exactly what it did.
-    //
-    // localFrameB is in the arm's own space, and the arm body's origin is the
-    // shoulder by construction, so identity is correct there.
-    b3SphericalJointDef jd = b3DefaultSphericalJointDef();
-    jd.base.bodyIdA = s_torso;
-    jd.base.bodyIdB = s_armBody[i];
-    jd.base.localFrameA = b3Transform_identity;
-    jd.base.localFrameA.p = s_shoulderLocal[i];
-    jd.base.localFrameB = b3Transform_identity;
-    jd.base.collideConnected = false;
-    jd.enableMotor = true;
-    jd.maxMotorTorque = maxTorque;
-    jd.enableConeLimit = true;
-    jd.coneAngle = coneAngle;
-    s_armJoint[i] = b3CreateSphericalJoint(s_world, &jd);
-
-    s_armExists[i] = 1;
 }
 
-// Gain on the angular error, in 1/second.
-#define ARM_GAIN 9.0f
-#define ARM_MAX_RATE 12.0f
+// Drive a ball joint to a pose expressed the way a person would say it: the
+// child's rotation RELATIVE TO ITS PARENT. The joint wants that same rotation
+// expressed in its own frame, which is conj(R) * qRel * R.
+static void figAim(int bone, b3Quat qRel)
+{
+    if (!s_figAttached[bone] || BONES[bone].parent < 0) return;
+    if (BONES[bone].axis == AX_HINGE) return;
+    const b3Quat R = s_figFrame[bone];
+    b3SphericalJoint_SetTargetRotation(s_figJoint[bone],
+        b3MulQuat(qConj(R), b3MulQuat(qRel, R)));
+}
 
-// Swing the arm toward the hand.
+// Point a limb bone somewhere. `dir` is in the PARENT's frame; the bone's own
+// rest direction is straight down its -Y.
+static void figPoint(int bone, float dx, float dy, float dz)
+{
+    const float l = __builtin_sqrtf(dx*dx + dy*dy + dz*dz);
+    if (l < 1e-5f) return;
+    b3Vec3 down = { 0.0f, -1.0f, 0.0f };
+    b3Vec3 d = { dx/l, dy/l, dz/l };
+    figAim(bone, qFromTo(down, d));
+}
+
+static void figBend(int bone, float radians)
+{
+    if (!s_figAttached[bone] || BONES[bone].axis != AX_HINGE) return;
+    b3RevoluteJoint_SetTargetAngle(s_figJoint[bone], radians);
+}
+
+static void figShoulderHertz(int bone, float hz)
+{
+    if (!s_figAttached[bone]) return;
+    b3SphericalJoint_SetSpringHertz(s_figJoint[bone], hz);
+}
+
+// --- building it ------------------------------------------------------------
+
+static int figBroken(int b)
+{
+    if (!s_figAttached[b]) return 1;
+    const int g = s_figGrid[b];
+    if (g < 0) return 1;
+    const VoxGrid* vg = &s_vxG[g];
+    if (!vg->used) return 1;
+    const int total = vg->n[0] * vg->n[1] * vg->n[2];
+    return vg->alive * FIG_BREAK_DEN <= total * FIG_BREAK_NUM;
+}
+
+// An arm throws only while its upper arm AND its forearm hold. A hand is
+// worth having and it is not what the blow is made of.
+static int figArmGone(int side)
+{
+    return figBroken(ARM(side)) || figBroken(ARM(side) + 1);
+}
+
+// A leg carries only while its thigh AND its shin hold. The foot is balance
+// and silhouette; a machine on ankle stumps still stands.
+static int figLegCarries(int side)
+{
+    return !figBroken(LEG(side)) && !figBroken(LEG(side) + 1);
+}
+
+static float figSupport(void)
+{
+    return 0.5f * (float)(figLegCarries(0) + figLegCarries(1));
+}
+
+static int figSpineBroken(void)
+{
+    return figBroken(BONE_ABDOMEN) || figBroken(BONE_CHEST);
+}
+
+WASM_EXPORT("w_fig_destroy")
+void w_fig_destroy(void)
+{
+    if (!s_figExists) return;
+    for (int b = 0; b < BONE_COUNT; b++)
+    {
+        const int g = s_figGrid[b];
+        if (g >= 0 && g < VOX_GRIDS) s_vxG[g].used = 0;
+        // Destroying a body destroys its shapes and every joint on it, so the
+        // joints must not be destroyed separately here.
+        if (s_figAttached[b] || s_figGrid[b] >= 0) b3DestroyBody(s_figBone[b]);
+        s_figAttached[b] = 0;
+        s_figGrid[b] = -1;
+    }
+    s_figExists = 0;
+    s_figState = FIG_WAIT;
+}
+
+// Build the figure standing at (x, z), `stature` metres tall, out of
+// `material`. Every dimension follows from the stature, so the opponent is
+// sized against the person in the headset rather than against a constant.
+WASM_EXPORT("w_fig_create")
+int w_fig_create(float x, float z, float stature, int material)
+{
+    if (s_figExists) w_fig_destroy();
+    const float H = stature > 1.0f && stature < 2.4f ? stature : 1.75f;
+    s_figStature = H;
+    s_figHipY = s_worldFloorY + BONES[BONE_PELVIS].oy * H;
+
+    // Every body is created at identity rotation, in the rest pose. That is
+    // what makes an identity joint target mean "stand".
+    for (int b = 0; b < BONE_COUNT; b++)
+    {
+        const BoneDef* d = &BONES[b];
+        b3BodyDef bd = b3DefaultBodyDef();
+        bd.type = b3_dynamicBody;
+        bd.position.x = x + d->ox * H;
+        bd.position.y = s_worldFloorY + d->oy * H;
+        bd.position.z = z + d->oz * H;
+        bd.angularDamping = 1.4f;
+        bd.linearDamping = 0.15f;
+        s_figBone[b] = b3CreateBody(s_world, &bd);
+        s_figAttached[b] = 1;
+        s_figGrid[b] = -1;
+    }
+    // The pelvis carries the whole body on a spring; it must not be spun up
+    // by every limb that swings off it.
+    b3Body_SetAngularDamping(s_figBone[BONE_PELVIS], 2.5f);
+
+    // The bone itself: a voxel grid in the body's own frame. Its cells ARE
+    // the collision shapes, so as the bone is battered away it genuinely gets
+    // less there — no separate hull quietly keeping the old silhouette.
+    for (int b = 0; b < BONE_COUNT; b++)
+    {
+        const BoneDef* d = &BONES[b];
+        float hx = d->hx * H, hy = d->hy * H, hz = d->hz * H;
+        float longest = hx > hy ? hx : hy; if (hz > longest) longest = hz;
+        const float cell = 2.0f * longest / (float)d->cells;
+        int nx = (int)(2.0f * hx / cell + 0.5f); if (nx < 1) nx = 1;
+        int ny = (int)(2.0f * hy / cell + 0.5f); if (ny < 1) ny = 1;
+        int nz = (int)(2.0f * hz / cell + 0.5f); if (nz < 1) nz = 1;
+
+        // Where the box sits relative to the bone's origin, which is its
+        // joint: a limb hangs BELOW its joint, the spine stands above it, a
+        // foot reaches forward of the ankle.
+        float cx = 0.0f, cy = 0.0f, cz = 0.0f;
+        switch (d->axis)
+        {
+            case AX_UP:                    cy =  0.5f * ny * cell; break;
+            case AX_FWD:  cy = -0.5f * ny * cell; cz = 0.5f * nz * cell - 0.25f * nz * cell; break;
+            default:                       cy = -0.5f * ny * cell; break;   // hangs
+        }
+        b3Vec3 local = { cx - 0.5f * nx * cell, cy - 0.5f * ny * cell,
+                         cz - 0.5f * nz * cell };
+        s_figGrid[b] = vxBuild(s_figBone[b], local, nx, ny, nz, cell,
+                               material, 1, FIG_CATEGORY);
+        vxMakePart(s_figGrid[b], d->hpMul);
+        // Trunk heavy, limbs light — the mass distribution of a body. It is
+        // also what lets the pelvis be the root: a root that weighs a tenth of
+        // what it is steering gets steered instead.
+        vxPartDensity(s_figGrid[b], d->dens);
+        // The page draws every bone as a mesh that craters where it is hit.
+        // The engine's box renderer would draw the same cells as boxes.
+        w_vox_hide(s_figGrid[b], 1);
+    }
+
+    // The joints. Frame A sits on the parent at the joint; frame B is the
+    // child's own origin, which IS the joint — so at rest the two frames
+    // coincide and the relative rotation is identity.
+    for (int b = 0; b < BONE_COUNT; b++)
+    {
+        const BoneDef* d = &BONES[b];
+        if (d->parent < 0) continue;
+        const BoneDef* p = &BONES[d->parent];
+        const b3Quat R = figFrameFor(d->axis);
+        s_figFrame[b] = R;
+
+        b3Transform fa = b3Transform_identity;
+        fa.p.x = (d->ox - p->ox) * H;
+        fa.p.y = (d->oy - p->oy) * H;
+        fa.p.z = (d->oz - p->oz) * H;
+        fa.q = R;
+        b3Transform fb = b3Transform_identity;
+        fb.q = R;
+
+        if (d->axis == AX_HINGE)
+        {
+            b3RevoluteJointDef rj = b3DefaultRevoluteJointDef();
+            rj.base.bodyIdA = s_figBone[d->parent];
+            rj.base.bodyIdB = s_figBone[b];
+            rj.base.localFrameA = fa;
+            rj.base.localFrameB = fb;
+            rj.base.collideConnected = false;
+            rj.enableLimit = true;
+            rj.lowerAngle = d->cone;      // an elbow's range, or a knee's
+            rj.upperAngle = d->hi;
+            rj.enableSpring = true;
+            rj.hertz = d->hertz;
+            rj.dampingRatio = 0.9f;
+            rj.targetAngle = 0.0f;
+            s_figJoint[b] = b3CreateRevoluteJoint(s_world, &rj);
+        }
+        else
+        {
+            b3SphericalJointDef sj = b3DefaultSphericalJointDef();
+            sj.base.bodyIdA = s_figBone[d->parent];
+            sj.base.bodyIdB = s_figBone[b];
+            sj.base.localFrameA = fa;
+            sj.base.localFrameB = fb;
+            sj.base.collideConnected = false;
+            sj.enableConeLimit = true;
+            // Box3D asserts a quarter turn is the maximum, and the release
+            // build compiles asserts out — an over-wide cone silently goes
+            // degenerate rather than failing loudly.
+            sj.coneAngle = d->cone > 1.5f ? 1.5f : d->cone;
+            sj.enableSpring = true;
+            sj.hertz = d->hertz;
+            sj.dampingRatio = 0.9f;
+            sj.targetRotation = b3Quat_identity;
+            s_figJoint[b] = b3CreateSphericalJoint(s_world, &sj);
+        }
+    }
+
+    s_figState = FIG_WAIT;
+    s_figTimer = 0.0f;
+    s_figSway = 0.0f;
+    s_figStride = 0.0f;
+    s_figArm = 1;
+    s_figReach = 0.0f;
+    s_figBroke = 0;
+    s_figHold = 0;
+    s_figStanceX = x; s_figStanceZ = z;
+    s_figPlayer.x = x; s_figPlayer.y = s_worldFloorY + 1.5f; s_figPlayer.z = z + 1.5f;
+    s_figExists = 1;
+    return BONE_COUNT;
+}
+
+WASM_EXPORT("w_fig_bone_count")
+int w_fig_bone_count(void) { return BONE_COUNT; }
+
+WASM_EXPORT("w_fig_bone_grid")
+int w_fig_bone_grid(int b)
+{
+    if (b < 0 || b >= BONE_COUNT) return -1;
+    return s_figGrid[b];
+}
+
+// Freeze its will with its guard up — what it does before a fight starts.
+WASM_EXPORT("w_fig_hold")
+void w_fig_hold(int on) { s_figHold = on ? 1 : 0; }
+
+// How fast its decisions run. 1.0 is a person; below that it is reading you,
+// above it is coming forward.
+WASM_EXPORT("w_fig_tempo")
+void w_fig_tempo(float t)
+{
+    s_figTempo = t < 0.3f ? 0.3f : (t > 2.5f ? 2.5f : t);
+}
+
+// --- posing it --------------------------------------------------------------
+
+// The guard: hands up in front of the face line, elbows folded, weight even.
+// Everything is expressed in the parent's frame, so this is readable as a
+// description of a stance rather than as a list of quaternions.
+static void figGuard(float sway)
+{
+    for (int s = 0; s < 2; s++)
+    {
+        const float side = s == 0 ? -1.0f : 1.0f;
+        // Upper arm down and slightly forward, tucked in to the ribs.
+        figPoint(ARM(s), side * 0.28f, -0.90f, 0.34f + sway * 0.10f);
+        // Elbow folded up so the hand comes to the cheek. Negative is forward.
+        figBend(ARM(s) + 1, -2.05f);
+        figPoint(ARM(s) + 2, 0.0f, -1.0f, 0.0f);
+        figShoulderHertz(ARM(s), 14.0f);
+    }
+    // The trunk holds. The first cut swayed it by TWISTING the abdomen and
+    // chest a few degrees each way, which looked like the right idea and was
+    // the reason the figure would not face anybody: the spine springs run at
+    // 28 Hz and the pelvis's own yaw controller at under 2, so the trunk wagged
+    // the hips instead of the hips turning the trunk. Measured, it swung
+    // through two radians of heading while standing still. A real boxer's
+    // sway comes from the feet, so this one does too — see the stance shift
+    // in w_fig_apply. What is left here is a small forward lean, which is
+    // pitch, and pitch does not fight the heading.
+    figAim(BONE_ABDOMEN, qAxisAngle(1.0f, 0.0f, 0.0f, 0.10f));
+    figAim(BONE_CHEST, qAxisAngle(1.0f, 0.0f, 0.0f, 0.06f));
+    figAim(BONE_NECK, qAxisAngle(1.0f, 0.0f, 0.0f, -0.12f));
+    figAim(BONE_HEAD, b3Quat_identity);
+}
+
+// A stride. The legs are driven and the pelvis is force-carried, so this is a
+// driven gait with physics reaction rather than an emergent walk — the
+// honest thing to build, and it is what the hips and knees are FOR here:
+// take one out and the gait has nowhere to come from.
+// The legs have ONE owner, and this is it — standing and walking are the same
+// two hips and two knees, so they cannot be written in two places. The stance
+// spent a while in figGuard, which is called first and was overwritten on the
+// next line by this function every frame.
+static void figStride(float phase, float amount)
+{
+    for (int s = 0; s < 2; s++)
+    {
+        const float ph = phase + (s == 0 ? 0.0f : 3.14159265f);
+        const float swing = __builtin_sinf(ph) * 0.40f * amount;
+        const float lift  = __builtin_sinf(ph - 0.9f);
+        const float knee  = (lift > 0.0f ? lift : 0.0f) * 1.10f * amount;
+        // Standing, the hips set OUT so the feet are wider than the pelvis.
+        // Built dead vertical the two legs are 16 cm apart and 14 cm thick:
+        // they touch all the way down and read as one column with feet on the
+        // bottom. A render showed that in a second; no measurement here ever
+        // would have. It is also just what a fighter's legs do.
+        const float out = (s == 0 ? -0.14f : 0.14f) * (1.0f - amount);
+        figPoint(LEG(s), out, -1.0f, swing);
+        figBend(LEG(s) + 1, knee);
+        // The foot stays flat to the floor as the shin swings under it.
+        figAim(LEG(s) + 2, b3MulQuat(qAxisAngle(1.0f, 0.0f, 0.0f, -swing + knee),
+                                     qAxisAngle(0.0f, 0.0f, 1.0f, -out)));
+    }
+}
+
+// Where the player's chest is, in the chest bone's own frame — which is what
+// an arm needs in order to be aimed at it.
+static b3Vec3 figPlayerInChest(void)
+{
+    b3Vec3 out = { 0.0f, 0.0f, 1.0f };
+    if (!s_figAttached[BONE_CHEST]) return out;
+    b3Pos c = b3Body_GetPosition(s_figBone[BONE_CHEST]);
+    b3Quat q = b3Body_GetRotation(s_figBone[BONE_CHEST]);
+    b3Vec3 w = { (float)(s_figPlayer.x - c.x),
+                 (float)(s_figPlayer.y - c.y),
+                 (float)(s_figPlayer.z - c.z) };
+    return b3InvRotateVector(q, w);
+}
+
+// --- its will ---------------------------------------------------------------
+
+// Range at which it will throw a hand, as a fraction of its own reach.
+#define FIG_RANGE 0.92f
+
+// Told where you are, and how long since last time. Runs the decisions; the
+// forces are applied separately, so a page can step physics faster than it
+// thinks.
+WASM_EXPORT("w_fig_update")
+void w_fig_update(float px, float py, float pz, float dt)
+{
+    if (!s_figExists) return;
+    s_figPlayer.x = px; s_figPlayer.y = py; s_figPlayer.z = pz;
+    s_figPlayerEye = py;
+
+    const float H = s_figStature;
+    // Shoulder to fingertip: how far it can actually reach you.
+    const float reach = (BONES[BONE_L_UPPERARM].oy - 0.375f) * H;
+
+    b3Pos hip = b3Body_GetPosition(s_figBone[BONE_PELVIS]);
+    const float dx = px - (float)hip.x, dz = pz - (float)hip.z;
+    const float dist = __builtin_sqrtf(dx*dx + dz*dz);
+
+    s_figSway += dt * 1.7f * s_figTempo;
+    if (s_figSway > 6.2831853f) s_figSway -= 6.2831853f;
+    s_figTimer += dt * s_figTempo;
+
+    // Standing is not a decision it gets to make. Legs gone or spine gone and
+    // it is going down, whatever it was in the middle of.
+    if (s_figState != FIG_DOWN && (figSupport() <= 0.0f || figSpineBroken()))
+    {
+        if (s_figState != FIG_FALLING) { s_figState = FIG_FALLING; s_figTimer = 0.0f; }
+    }
+
+    switch (s_figState)
+    {
+        case FIG_FALLING:
+            if (s_figTimer > 1.6f) s_figState = FIG_DOWN;
+            break;
+
+        case FIG_DOWN:
+            break;
+
+        case FIG_WAIT:
+            if (s_figHold) break;
+            // Hysteresis, or it flaps: step out at range, stop well inside it.
+            // Without the gap it spent the whole fight alternating STEP and
+            // WAIT every few frames on the boundary, which reads as a twitch
+            // rather than as footwork.
+            if (dist > reach * FIG_RANGE) { s_figState = FIG_STEP; s_figTimer = 0.0f; }
+            else if (s_figTimer > 0.55f && !(figArmGone(0) && figArmGone(1)))
+            {
+                // Take both its arms off and it cannot throw anything: it
+                // stands and it comes forward, and that is all. Without this
+                // guard it ping-ponged WAIT to WINDUP forever, winding up
+                // with nothing on the end of either shoulder.
+                s_figState = FIG_WINDUP; s_figTimer = 0.0f;
+                // Alternate, so it does not become one predictable hand.
+                s_figArm = !s_figArm;
+            }
+            break;
+
+        case FIG_STEP:
+            if (s_figHold) { s_figState = FIG_WAIT; s_figTimer = 0.0f; break; }
+            // It cannot step on one leg. Losing a leg is not a debuff, it is
+            // the end of walking.
+            if (figSupport() < 1.0f) { s_figState = FIG_WAIT; s_figTimer = 0.0f; break; }
+            // Stop stepping well outside the spot it is walking to. With the
+            // two set a few centimetres apart it walked to a place that was
+            // still "too far", and never came out of STEP at all.
+            if (dist <= reach * FIG_RANGE * 0.86f) { s_figState = FIG_WAIT; s_figTimer = 0.0f; }
+            break;
+
+        case FIG_WINDUP:
+            // If the arm it chose has been taken off it, it does not swing a
+            // stump. It picks the other one, or waits.
+            if (figArmGone(s_figArm))
+            {
+                s_figArm = !s_figArm;
+                if (figArmGone(s_figArm)) { s_figState = FIG_WAIT; s_figTimer = 0.0f; break; }
+            }
+            if (s_figTimer > 0.26f) { s_figState = FIG_STRIKE; s_figTimer = 0.0f; }
+            break;
+
+        case FIG_STRIKE:
+            if (s_figTimer > 0.20f) { s_figState = FIG_RECOVER; s_figTimer = 0.0f; }
+            break;
+
+        case FIG_RECOVER:
+            // Wide open. This is the window, and it is deliberately long
+            // enough to use.
+            if (s_figTimer > 0.42f) { s_figState = FIG_WAIT; s_figTimer = 0.0f; }
+            break;
+    }
+
+    // Pose for the state it is now in.
+    const float sway = __builtin_sinf(s_figSway);
+    switch (s_figState)
+    {
+        case FIG_DOWN:
+        case FIG_FALLING:
+            // Nothing holds a pose on the way down. Every spring goes slack
+            // and the body falls the way a body falls — a figure that keeps
+            // its guard while collapsing was never really hurt.
+            for (int b = 0; b < BONE_COUNT; b++)
+            {
+                if (!s_figAttached[b] || BONES[b].parent < 0) continue;
+                if (BONES[b].axis == AX_HINGE)
+                    b3RevoluteJoint_SetSpringHertz(s_figJoint[b], 0.6f);
+                else
+                    b3SphericalJoint_SetSpringHertz(s_figJoint[b], 0.6f);
+            }
+            break;
+
+        case FIG_STEP:
+            s_figStride += dt * 5.0f * s_figTempo;
+            figGuard(sway * 0.4f);
+            figStride(s_figStride, 1.0f);
+            break;
+
+        case FIG_WINDUP:
+        {
+            figGuard(sway * 0.3f);
+            figStride(s_figStride, 0.0f);
+            const int a = ARM(s_figArm);
+            const float side = s_figArm == 0 ? -1.0f : 1.0f;
+            // Drawn back and out. The pose IS the telegraph — there is no
+            // separate tell to read, you read the arm.
+            figPoint(a, side * 0.55f, -0.55f, -0.62f);
+            figBend(a + 1, -2.35f);
+            figShoulderHertz(a, 17.0f);
+            break;
+        }
+
+        case FIG_STRIKE:
+        {
+            figGuard(0.0f);
+            figStride(s_figStride, 0.0f);
+            const int a = ARM(s_figArm);
+            const b3Vec3 t = figPlayerInChest();
+            figPoint(a, t.x, t.y, t.z);
+            figBend(a + 1, -0.15f);          // the elbow opens through the blow
+            figPoint(a + 2, t.x, t.y, t.z);
+            figShoulderHertz(a, 30.0f);      // this is the punch
+            break;
+        }
+
+        case FIG_RECOVER:
+        {
+            const int a = ARM(s_figArm);
+            const float side = s_figArm == 0 ? -1.0f : 1.0f;
+            figGuard(sway * 0.2f);
+            figStride(s_figStride, 0.0f);
+            // The spent arm hangs out and away, which is what leaves the ribs
+            // and the head open.
+            figPoint(a, side * 0.75f, -0.62f, 0.20f);
+            figBend(a + 1, -0.60f);
+            figShoulderHertz(a, 6.0f);
+            break;
+        }
+
+        default:
+            figGuard(sway);
+            figStride(s_figStride, 0.0f);
+            break;
+    }
+
+    // Did a hand of its own reach you? There is no body of yours in the
+    // solver to hit, so this is measured rather than collided: a hand inside
+    // a head-sized radius of your chest, moving, arriving. The page turns it
+    // into a jolt and a buzz.
+    s_figReach = 0.0f;
+    const float chestY = py - 0.25f;
+    for (int s = 0; s < 2; s++)
+    {
+        const int h = ARM(s) + 2;
+        if (!s_figAttached[h]) continue;
+        b3Pos hp = b3Body_GetPosition(s_figBone[h]);
+        const float ex = (float)hp.x - px, ey = (float)hp.y - chestY, ez = (float)hp.z - pz;
+        const float d2 = ex*ex + ey*ey + ez*ez;
+        if (d2 > 0.22f * 0.22f) continue;
+        b3Vec3 v = b3Body_GetLinearVelocity(s_figBone[h]);
+        const float speed = __builtin_sqrtf(v.x*v.x + v.y*v.y + v.z*v.z);
+        if (speed < 1.4f) continue;
+        const float m = b3Body_GetMass(s_figBone[h]) * speed;
+        if (m > s_figReach) s_figReach = m;
+    }
+}
+
+// --- holding it up ----------------------------------------------------------
+
+static float figMass(void)
+{
+    float m = 0.0f;
+    for (int b = 0; b < BONE_COUNT; b++)
+        if (s_figAttached[b]) m += b3Body_GetMass(s_figBone[b]);
+    return m;
+}
+
+// The pelvis's own rotational inertia, for the rig readout.
+static float figInertia(void)
+{
+    b3Matrix3 Ib = b3Body_GetLocalRotationalInertia(s_figBone[BONE_PELVIS]);
+    return 0.5f * (Ib.cx.x + Ib.cz.z);
+}
+
+// Holding it up, and turning it to face you.
 //
-// Only a *request*: the motor honours it up to maxMotorTorque, and against a
-// heavy segment that is not far. The shortfall is the sensation being tested.
-WASM_EXPORT("w_arm_target")
-void w_arm_target(int i, float x, float y, float z)
+// This is applied every step, before b3World_Step, and it went through three
+// wrong shapes before this one. Worth recording, because every one of them
+// looked reasonable and two of them were the same mistake in different
+// clothes:
+//
+//   1. Whole-body gains, applied to the pelvis. The gain was sized against
+//      the inertia of the whole assembly and then handed to one 4 kg bone,
+//      which multiplies the loop gain by the ratio between them — about
+//      forty. It span through two radians a second while standing still.
+//   2. Pelvis-sized gains, applied to the pelvis. Stable, and far too weak to
+//      turn a 62 kg body: 10 N m went in every step for three seconds and
+//      moved the heading a sixteenth of a radian.
+//   3. Pelvis-sized stiffness with assembly-sized damping. The damping term
+//      alone then needs c*dt/I_pelvis < 2 to survive an explicit step, and it
+//      came out at 3.2. Unstable, exactly as the arm spike found before it.
+//
+// There is no gain that satisfies both, because the premise is wrong: a body
+// does not stand and turn by torquing its own pelvis. Every part of it moves
+// together. So the controller solves for the ACCELERATION the whole body
+// should have — linear and angular — and then asks each bone for its own
+// share: force = its mass times that acceleration, torque = its inertia times
+// it. Stability now depends only on the chosen period against the timestep,
+// which is a number you can check by eye, and the gains stop being tangled up
+// in a mass ratio that changes every time a limb comes off.
+//
+// The gravity term is a consequence worth naming: the body carries its own
+// weight at every joint, so nothing sags. That is the rule this project
+// already paid for once — weight is resistance to changing velocity, never
+// static droop. A shoulder does not need to be stiff to stop an arm falling
+// off a body; it needs to be stiff to stop a PUNCH moving it.
+WASM_EXPORT("w_fig_apply")
+void w_fig_apply(void)
 {
-    if (i < 0 || i >= ARM_COUNT || !s_armExists[i])
+    if (!s_figExists || !s_figAttached[BONE_PELVIS]) return;
+    if (s_figState == FIG_DOWN || s_figState == FIG_FALLING) return;
+
+    const float support = figSupport();
+    if (support <= 0.0f) return;          // nothing left to stand on
+
+    const float H = s_figStature;
+    b3Pos p = b3Body_GetPosition(s_figBone[BONE_PELVIS]);
+    b3Vec3 v = b3Body_GetLinearVelocity(s_figBone[BONE_PELVIS]);
+    b3Vec3 w = b3Body_GetAngularVelocity(s_figBone[BONE_PELVIS]);
+
+    // --- the acceleration the whole body wants, linear ---
+    //
+    // One leg gone and the hip drops: it goes down on the good knee, and it
+    // carries only the fraction of its own weight the remaining leg can hold.
+    // That is the whole reason a leg is worth attacking.
+    const float targetY = s_figHipY * (0.45f + 0.55f * support);
+    const float wv = 6.2831853f / 0.35f;
+    float ay = (targetY - (float)p.y) * wv * wv - v.y * 2.0f * 0.9f * wv
+             + 9.81f * support;
+
+    float ax = 0.0f, az = 0.0f;
+    const float wh = 6.2831853f / 0.50f;
+    if (s_figState == FIG_STEP && support >= 1.0f)
     {
-        return;
-    }
-
-    // Where the limb currently points: its own -Z axis in world space.
-    b3Quat q = b3Body_GetRotation(s_armBody[i]);
-    b3Matrix3 m = b3MakeMatrixFromQuat(q);
-    float dx = -m.cz.x, dy = -m.cz.y, dz = -m.cz.z;
-
-    // Where it should point: from shoulder toward the hand.
-    float tx = x - s_shoulder[i].x;
-    float ty = y - s_shoulder[i].y;
-    float tz = z - s_shoulder[i].z;
-    float tl = __builtin_sqrtf(tx*tx + ty*ty + tz*tz);
-    if (tl < 1e-4f)
-    {
-        return;
-    }
-    tx /= tl; ty /= tl; tz /= tl;
-
-    // Rotation carrying the current direction onto the target: axis is their
-    // cross product, angle is the arc between them.
-    float ax = dy*tz - dz*ty;
-    float ay = dz*tx - dx*tz;
-    float az = dx*ty - dy*tx;
-    float sinA = __builtin_sqrtf(ax*ax + ay*ay + az*az);
-    float cosA = dx*tx + dy*ty + dz*tz;
-    float angle = __builtin_atan2f(sinA, cosA);
-
-    b3Vec3 w;
-    if (sinA < 1e-5f)
-    {
-        w.x = 0.0f; w.y = 0.0f; w.z = 0.0f;
+        const float reach = (BONES[BONE_L_UPPERARM].oy - 0.375f) * H;
+        const float ddx = s_figPlayer.x - (float)p.x, ddz = s_figPlayer.z - (float)p.z;
+        const float d = __builtin_sqrtf(ddx*ddx + ddz*ddz);
+        if (d > 1e-3f)
+        {
+            // Stop a reach short, and weave across the bearing on the way in,
+            // so closing reads as being hunted rather than as running on a
+            // rail.
+            const float want = reach * FIG_RANGE * 0.70f;
+            const float along = (d - want) / d;
+            const float weave = __builtin_sinf(s_figSway * 0.5f) * 0.22f;
+            const float tx = ddx * along - ddz / d * weave;
+            const float tz = ddz * along + ddx / d * weave;
+            ax = tx * wh * wh - v.x * 2.0f * 0.9f * wh;
+            az = tz * wh * wh - v.z * 2.0f * 0.9f * wh;
+        }
+        // Wherever it walks to is where it will stand when it stops.
+        s_figStanceX = (float)p.x; s_figStanceZ = (float)p.z;
     }
     else
     {
-        float rate = angle * ARM_GAIN;
-        if (rate > ARM_MAX_RATE) rate = ARM_MAX_RATE;
-        float k = rate / sinA;
-        w.x = ax * k; w.y = ay * k; w.z = az * k;
-    }
-    b3SphericalJoint_SetMotorVelocity(s_armJoint[i], w);
-}
-
-// Let the limb go slack: stop driving it and let it hang under its own weight.
-// Released grip should feel like letting go, not like a frozen arm.
-WASM_EXPORT("w_arm_relax")
-void w_arm_relax(int i)
-{
-    if (i < 0 || i >= ARM_COUNT || !s_armExists[i])
-    {
-        return;
-    }
-    b3Vec3 zero = {0.0f, 0.0f, 0.0f};
-    b3SphericalJoint_SetMotorVelocity(s_armJoint[i], zero);
-}
-
-// Retune the actuator — the upgrade slider.
-WASM_EXPORT("w_arm_limits")
-void w_arm_limits(int i, float maxTorque)
-{
-    if (i < 0 || i >= ARM_COUNT || !s_armExists[i])
-    {
-        return;
-    }
-    b3SphericalJoint_SetMaxMotorTorque(s_armJoint[i], maxTorque);
-}
-
-// Per arm: shoulder position, rotation quaternion, and length. The renderer
-// draws the segment hanging off the shoulder along the rotated -Z.
-WASM_EXPORT("w_arm_state")
-float* w_arm_state(void)
-{
-    static float out[ARM_COUNT * 8];
-    for (int i = 0; i < ARM_COUNT; i++)
-    {
-        float* o = &out[i * 8];
-        if (!s_armExists[i])
+        // Planted. Damping alone was not enough and the measurement was
+        // plain: with nothing holding a position, the smallest forward lean
+        // walked the figure a metre into the player over eight seconds and it
+        // never came back. Feet hold a spot. On top of that spot rides the
+        // sway a boxer has — weight moving between the feet, across the line
+        // to the player. Two centimetres: a shift of weight, not a step.
+        const float bx = s_figPlayer.x - (float)p.x, bz = s_figPlayer.z - (float)p.z;
+        const float bl = __builtin_sqrtf(bx*bx + bz*bz);
+        float sx = 0.0f, sz = 0.0f;
+        if (bl > 1e-3f)
         {
-            continue;
+            const float shift = __builtin_sinf(s_figSway) * 0.02f;
+            sx = -bz / bl * shift; sz = bx / bl * shift;
         }
-        b3Pos p = b3Body_GetPosition(s_armBody[i]);
-        b3Quat q = b3Body_GetRotation(s_armBody[i]);
-        o[0] = (float)p.x; o[1] = (float)p.y; o[2] = (float)p.z;
-        o[3] = q.v.x; o[4] = q.v.y; o[5] = q.v.z; o[6] = q.s;
-        o[7] = s_armLength[i];
+        ax = (s_figStanceX + sx - (float)p.x) * wh * wh - v.x * 2.0f * 0.9f * wh;
+        az = (s_figStanceZ + sz - (float)p.z) * wh * wh - v.z * 2.0f * 0.9f * wh;
+    }
+
+    // The horizontal is capped, because a hard enough shove really should move
+    // it, and losing a leg should cost it its footing. The vertical is not:
+    // that is the legs, and while they hold, they hold.
+    {
+        const float cap = 9.0f * support;
+        const float hsq = ax*ax + az*az;
+        if (hsq > cap * cap)
+        {
+            const float k = cap / __builtin_sqrtf(hsq);
+            ax *= k; az *= k;
+        }
+    }
+
+    // --- and angular ---
+    //
+    // Upright is the cross product of its own up with the world's: the axis
+    // that swings it back level, its length the sine of how far over it is.
+    // Heading is added deliberately — turning to face you is something it
+    // does, not something that happens to it.
+    b3Matrix3 m = b3MakeMatrixFromQuat(b3Body_GetRotation(s_figBone[BONE_PELVIS]));
+    const float ux = -m.cy.z, uz = m.cy.x;
+    const float facing = __builtin_atan2f(m.cz.x, m.cz.z);      // its own +Z
+    const float want = __builtin_atan2f(s_figPlayer.x - (float)p.x,
+                                        s_figPlayer.z - (float)p.z);
+    float err = want - facing;
+    while (err > 3.14159265f) err -= 6.2831853f;
+    while (err < -3.14159265f) err += 6.2831853f;
+
+    const float wa = 6.2831853f / 0.55f;      // wa*dt = 0.16 at 72 Hz
+    float rx = ux * wa * wa - w.x * 2.0f * wa;
+    float ry = err * wa * wa - w.y * 2.0f * wa;
+    float rz = uz * wa * wa - w.z * 2.0f * wa;
+    {
+        const float cap = 90.0f * support;
+        const float sq = rx*rx + ry*ry + rz*rz;
+        if (sq > cap * cap)
+        {
+            const float k = cap / __builtin_sqrtf(sq);
+            rx *= k; ry *= k; rz *= k;
+        }
+    }
+
+    s_figDbg[0] = err; s_figDbg[1] = ry; s_figDbg[2] = ay; s_figDbg[3] = ax;
+    s_figDbg[4] = support; s_figDbg[5] = az; s_figDbg[6] = w.y; s_figDbg[7] = (float)p.y;
+
+    // --- every bone takes its own share ---
+    for (int b = 0; b < BONE_COUNT; b++)
+    {
+        if (!s_figAttached[b]) continue;
+        const float mb = b3Body_GetMass(s_figBone[b]);
+        b3Vec3 f; f.x = ax * mb; f.y = ay * mb; f.z = az * mb;
+        b3Body_ApplyForceToCenter(s_figBone[b], f, true);
+
+        b3Matrix3 Ib = b3Body_GetLocalRotationalInertia(s_figBone[b]);
+        const float I = (Ib.cx.x + Ib.cy.y + Ib.cz.z) * (1.0f / 3.0f);
+        b3Vec3 t; t.x = rx * I; t.y = ry * I; t.z = rz * I;
+        b3Body_ApplyTorque(s_figBone[b], t, true);
+    }
+}
+
+// --- what breaking means ----------------------------------------------------
+
+// Called after b3World_Step (and after w_vox_post, which is where the damage
+// actually lands). A bone battered past its break point loses the joint that
+// held it, and falls — with every bone below it, because those are still
+// jointed to IT. Break an elbow and the forearm and the hand go together, and
+// nothing in this function says so; the skeleton does.
+WASM_EXPORT("w_fig_post")
+void w_fig_post(void)
+{
+    if (!s_figExists) return;
+    s_figBroke = 0;
+    for (int b = 0; b < BONE_COUNT; b++)
+    {
+        if (!s_figAttached[b] || BONES[b].parent < 0) continue;
+        if (!figBroken(b)) continue;
+        b3DestroyJoint(s_figJoint[b], true);
+        s_figAttached[b] = 0;
+        s_figBroke++;
+        // Loose now, and it should look loose: it falls, it tumbles, and it
+        // stops belonging to the team that ignores its own limbs.
+        b3Body_SetAngularDamping(s_figBone[b], 0.4f);
+        b3Body_SetLinearDamping(s_figBone[b], 0.05f);
+    }
+}
+
+// [exists, state, bonesOn, cellsAlive, cellsTotal, support, hipX, hipY, hipZ,
+//  facing, distance, windup01, arm, reachedYou, brokeThisStep, stature]
+WASM_EXPORT("w_fig_state")
+float* w_fig_state(void)
+{
+    static float out[16];
+    for (int i = 0; i < 16; i++) out[i] = 0.0f;
+    if (!s_figExists) return out;
+
+    int on = 0, alive = 0, total = 0;
+    for (int b = 0; b < BONE_COUNT; b++)
+    {
+        if (s_figAttached[b]) on++;
+        const int g = s_figGrid[b];
+        if (g < 0 || !s_vxG[g].used) continue;
+        alive += s_vxG[g].alive;
+        total += s_vxG[g].n[0] * s_vxG[g].n[1] * s_vxG[g].n[2];
+    }
+
+    b3Pos p = b3Body_GetPosition(s_figBone[BONE_PELVIS]);
+    b3Matrix3 m = b3MakeMatrixFromQuat(b3Body_GetRotation(s_figBone[BONE_PELVIS]));
+    const float dx = s_figPlayer.x - (float)p.x, dz = s_figPlayer.z - (float)p.z;
+
+    out[0] = 1.0f;
+    out[1] = (float)s_figState;
+    out[2] = (float)on;
+    out[3] = (float)alive;
+    out[4] = (float)total;
+    out[5] = figSupport();
+    out[6] = (float)p.x; out[7] = (float)p.y; out[8] = (float)p.z;
+    out[9] = __builtin_atan2f(m.cz.x, m.cz.z);
+    out[10] = __builtin_sqrtf(dx*dx + dz*dz);
+    out[11] = s_figState == FIG_WINDUP ? (s_figTimer / 0.26f) : 0.0f;
+    out[12] = (float)s_figArm;
+    out[13] = s_figReach;
+    out[14] = (float)s_figBroke;
+    out[15] = s_figStature;
+    return out;
+}
+
+// The numbers the rig is actually built from: total mass, the pelvis's mass
+// and its rotational inertia (the two the balance gains are derived from),
+// the stand height, and the reach. Exported because every controller fault
+// in this project so far has been a gain sized against the wrong quantity,
+// and the only cure is being able to read the quantity.
+WASM_EXPORT("w_fig_rig")
+float* w_fig_rig(void)
+{
+    static float out[5];
+    for (int i = 0; i < 5; i++) out[i] = 0.0f;
+    if (!s_figExists) return out;
+    out[0] = figMass();
+    out[1] = b3Body_GetMass(s_figBone[BONE_PELVIS]);
+    out[2] = figInertia();
+    out[3] = s_figHipY;
+    out[4] = (BONES[BONE_L_UPPERARM].oy - 0.375f) * s_figStature;
+    return out;
+}
+
+WASM_EXPORT("w_fig_dbg")
+float* w_fig_dbg(void) { return s_figDbg; }
+
+// Per bone: [attached, alive, total, damage 0..1]. The page draws from the
+// grid poses; this is what tells it which bones are still part of a body and
+// how far each one has been beaten in. Ask w_fig_bone_grid for the grid.
+WASM_EXPORT("w_fig_bones")
+float* w_fig_bones(void)
+{
+    static float out[BONE_COUNT * 4];
+    for (int b = 0; b < BONE_COUNT; b++)
+    {
+        float* o = &out[b * 4];
+        const int g = s_figGrid[b];
+        o[0] = (float)s_figAttached[b];
+        o[1] = o[2] = o[3] = 0.0f;
+        if (g < 0 || g >= VOX_GRIDS || !s_vxG[g].used) continue;
+        o[1] = (float)s_vxG[g].alive;
+        o[2] = (float)(s_vxG[g].n[0] * s_vxG[g].n[1] * s_vxG[g].n[2]);
+        o[3] = vxDamage(&s_vxG[g]);
     }
     return out;
 }
 
-WASM_EXPORT("w_state")
-float* w_state(void)
+// Where each bone actually is, for anything that needs geometry rather than
+// the renderer's grid poses: 8 floats — position, rotation, attached.
+WASM_EXPORT("w_fig_pose")
+float* w_fig_pose(void)
 {
-    for (int i = 0; i < s_count; i++)
+    static float out[BONE_COUNT * 8];
+    for (int b = 0; b < BONE_COUNT; b++)
     {
-        b3Pos p = b3Body_GetPosition(s_cubes[i].id);
-        b3Quat q = b3Body_GetRotation(s_cubes[i].id);
-        float* o = &s_state[i * 9];
-        o[0] = (float)p.x;
-        o[1] = (float)p.y;
-        o[2] = (float)p.z;
-        o[3] = q.v.x;
-        o[4] = q.v.y;
-        o[5] = q.v.z;
-        o[6] = q.s;
-        o[7] = s_cubes[i].half;
-        o[8] = s_cubes[i].color;
+        float* o = &out[b * 8];
+        if (!s_figExists) { for (int i = 0; i < 8; i++) o[i] = 0.0f; continue; }
+        b3Pos p = b3Body_GetPosition(s_figBone[b]);
+        b3Quat q = b3Body_GetRotation(s_figBone[b]);
+        o[0] = (float)p.x; o[1] = (float)p.y; o[2] = (float)p.z;
+        o[3] = q.v.x; o[4] = q.v.y; o[5] = q.v.z; o[6] = q.s;
+        o[7] = (float)s_figAttached[b];
     }
-    return s_state;
+    return out;
+}
+
+// What every joint is actually doing, in radians: the two hinges you can
+// name, and the shoulder cones. Guessing whether a joint is pinned at a limit
+// has wasted more time on this project than every other diagnosis combined,
+// so it is read rather than inferred.
+WASM_EXPORT("w_fig_joints")
+float* w_fig_joints(void)
+{
+    static float out[6];
+    for (int i = 0; i < 6; i++) out[i] = 0.0f;
+    if (!s_figExists) return out;
+    for (int s = 0; s < 2; s++)
+    {
+        if (s_figAttached[ARM(s) + 1])
+            out[s] = b3RevoluteJoint_GetAngle(s_figJoint[ARM(s) + 1]);
+        if (s_figAttached[LEG(s) + 1])
+            out[2 + s] = b3RevoluteJoint_GetAngle(s_figJoint[LEG(s) + 1]);
+        if (s_figAttached[ARM(s)])
+            out[4 + s] = b3Joint_GetAngularSeparation(s_figJoint[ARM(s)]);
+    }
+    return out;
 }
