@@ -2448,6 +2448,38 @@ void w_vox_scale_hp(int grid, float mul)
     g->cellHpMax *= mul;
 }
 
+// Where a grid is in the world and how big it is, so a page that draws a grid
+// ITSELF — a deforming mesh in place of the engine's boxes — can follow it.
+// This is what lets the machine's own body crumple the way the practice piece
+// does, instead of shedding cells whole.
+// 11 floats: centre x,y,z, rotation qx,qy,qz,qw, half extents hx,hy,hz, and the
+// fraction of the grid still alive.
+WASM_EXPORT("w_vox_grid_pose")
+float* w_vox_grid_pose(int grid)
+{
+    static float out[11];
+    for (int i = 0; i < 11; i++) out[i] = 0.0f;
+    out[6] = 1.0f;
+    if (grid < 0 || grid >= VOX_GRIDS || !s_vxG[grid].used) return out;
+
+    const VoxGrid* g = &s_vxG[grid];
+    const b3Transform t = vxPose(g);
+    b3Vec3 gc;
+    gc.x = g->local.x + 0.5f * (float)g->n[0] * g->size;
+    gc.y = g->local.y + 0.5f * (float)g->n[1] * g->size;
+    gc.z = g->local.z + 0.5f * (float)g->n[2] * g->size;
+    const b3Vec3 w = b3TransformPoint(t, gc);
+
+    out[0] = w.x; out[1] = w.y; out[2] = w.z;
+    out[3] = t.q.v.x; out[4] = t.q.v.y; out[5] = t.q.v.z; out[6] = t.q.s;
+    out[7] = 0.5f * (float)g->n[0] * g->size;
+    out[8] = 0.5f * (float)g->n[1] * g->size;
+    out[9] = 0.5f * (float)g->n[2] * g->size;
+    const int total = g->n[0] * g->n[1] * g->n[2];
+    out[10] = total > 0 ? (float)g->alive / (float)total : 0.0f;
+    return out;
+}
+
 WASM_EXPORT("w_vox_hit_count")
 int w_vox_hit_count(void) { return s_vxHitEvCount; }
 
@@ -2763,6 +2795,18 @@ int w_enemy_create_ex(float x, float z, int material, float scale,
 // in cells, so it can be wide and flat rather than a cube. Any argument <= 0
 // keeps the stock build. Cleared after each create, so it cannot leak into the
 // next machine.
+// The grid behind each of the fourteen parts, so the page can hide the engine's
+// boxes and draw (and crumple) the part itself. -1 if the part does not exist.
+WASM_EXPORT("w_enemy_part_grid")
+int w_enemy_part_grid(int part)
+{
+    if (part < 0 || part >= PART_COUNT) return -1;
+    return s_ePart[part];
+}
+
+WASM_EXPORT("w_enemy_part_count")
+int w_enemy_part_count(void) { return PART_COUNT; }
+
 WASM_EXPORT("w_enemy_shape")
 void w_enemy_shape(int limbCells, int headW, int headH, int headD)
 {
