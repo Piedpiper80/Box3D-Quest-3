@@ -762,6 +762,16 @@ int w_vox_create(float cx, float baseY, float cz, int nx, int ny, int nz,
 // Spend impact damage killing cells outward from the hit cell. The point
 // arrives in world space and is pulled into the body's local frame, so a
 // grid riding a swinging body still knows exactly which cell was struck.
+// A blow makes the body GIVE where it landed. Defined with the skeleton below;
+// the hit loop needs it up here. Every bone is held in its pose by a stiff
+// spring standing in for muscle, and stiff everywhere means the skeleton
+// answers a punch as one solid assembly swinging about a point — which is what
+// a playtest called floating around a midpoint. This slackens the springs at
+// the bone that was struck, less and less along the chain away from it, and
+// they tighten back over about a third of a second: it gives, then gathers
+// itself up. A boxer, not a rag doll.
+static void figSlacken(int gi, float speed);
+
 static void vxDamageAt(VoxGrid* g, float wx, float wy, float wz, float damage)
 {
     const b3Transform t = vxPose(g);
@@ -1076,6 +1086,11 @@ void w_vox_post(void)
         }
         vxDamageAt(g, (float)h->point.x, (float)h->point.y, (float)h->point.z,
                    h->approachSpeed * mass);
+
+        // Only a real strike gives — strikeMass is already gated on a moving
+        // fist, so the figure brushing your guard does not make it fold.
+        if (strikeMass > 0.0f)
+            figSlacken((int)(g - s_vxG), h->approachSpeed);
     }
 
     for (int i = 0; i < VOX_GRIDS; i++)
@@ -1496,6 +1511,53 @@ static b3BodyId s_figBone[BONE_COUNT];
 static b3JointId s_figJoint[BONE_COUNT];      // the joint to the PARENT
 static int s_figAttached[BONE_COUNT];
 static int s_figGrid[BONE_COUNT];
+
+// How slack each bone's spring currently is: 1 the instant it is struck, back
+// to 0 as it gathers itself. Applied at the end of w_fig_update, after the pose
+// for the state has been set, so being hit wins over holding a guard.
+static float s_figSlack[BONE_COUNT];
+
+// Walk the parent chain and report how many joints apart two bones are, or -1
+// if neither is an ancestor of the other. The skeleton is seventeen bones and
+// this runs only when a blow has already landed.
+static int figChainSteps(int from, int to)
+{
+    int p = from;
+    for (int n = 0; n < BONE_COUNT && p >= 0; n++)
+    {
+        if (p == to) return n;
+        p = BONES[p].parent;
+    }
+    return -1;
+}
+
+static void figSlacken(int gi, float speed)
+{
+    if (!s_figExists || gi < 0) return;
+    int hit = -1;
+    for (int b = 0; b < BONE_COUNT; b++)
+        if (s_figGrid[b] == gi) { hit = b; break; }
+    if (hit < 0) return;                       // not one of its bones
+
+    // A committed blow lands around 9 m/s. Below that it still gives a little,
+    // or a jab reads as nothing happening at all.
+    float s = speed * (1.0f / 9.0f);
+    if (s > 1.0f) s = 1.0f;
+    if (s < 0.25f) s = 0.25f;
+
+    for (int b = 0; b < BONE_COUNT; b++)
+    {
+        // Everything hanging BELOW the struck bone whips, because what was
+        // holding it just let go; everything above gives less the further up
+        // the chain it sits. Anything on another limb entirely is unmoved.
+        int steps = figChainSteps(b, hit);
+        if (steps < 0) steps = figChainSteps(hit, b);
+        if (steps < 0) continue;
+        float f = s;
+        for (int n = 0; n < steps; n++) f *= 0.55f;
+        if (f > s_figSlack[b]) s_figSlack[b] = f;
+    }
+}
 static b3Quat s_figFrame[BONE_COUNT];         // the joint frame rotation, R
 static float s_figStature = 1.75f;
 static float s_figHipY = 0.93f;               // rest hip height, world
@@ -1517,7 +1579,10 @@ static float s_figDbg[8];
 static void figWorldReset(void)
 {
     s_figExists = 0;
-    for (int i = 0; i < BONE_COUNT; i++) { s_figAttached[i] = 0; s_figGrid[i] = -1; }
+    // Slack too, or the next figure is born with the last one's punches still
+    // in its springs — it sags on its first frame and arrives already damaged.
+    for (int i = 0; i < BONE_COUNT; i++)
+    { s_figAttached[i] = 0; s_figGrid[i] = -1; s_figSlack[i] = 0.0f; }
     s_figState = FIG_WAIT;
     s_figHold = 0;
 }
@@ -1672,6 +1737,10 @@ WASM_EXPORT("w_fig_create")
 int w_fig_create(float x, float z, float stature, int material)
 {
     if (s_figExists) w_fig_destroy();
+    // The last one was probably beaten to death, which leaves its springs
+    // slack. Carried into this one it is born sagging and hits the floor on
+    // its first frame — measured as a fresh figure arriving 85/86 cells.
+    for (int i = 0; i < BONE_COUNT; i++) s_figSlack[i] = 0.0f;
     const float H = stature > 1.0f && stature < 2.4f ? stature : 1.75f;
     s_figStature = H;
     s_figHipY = s_worldFloorY + BONES[BONE_PELVIS].oy * H;
@@ -2088,6 +2157,32 @@ void w_fig_update(float px, float py, float pz, float dt)
         if (speed < 1.4f) continue;
         const float m = b3Body_GetMass(s_figBone[h]) * speed;
         if (m > s_figReach) s_figReach = m;
+    }
+
+    // --- taking a punch -----------------------------------------------------
+    //
+    // Last, so it wins over the pose the state above just set: a body that is
+    // being hit is not also holding its guard. Skipped while it is going down,
+    // because that case has already gone fully slack and should stay there —
+    // which is the difference asked for between recovering like a boxer and
+    // going down when knocked out.
+    if (s_figState != FIG_FALLING && s_figState != FIG_DOWN)
+    {
+        for (int b = 0; b < BONE_COUNT; b++)
+        {
+            if (s_figSlack[b] <= 0.0f) continue;
+            s_figSlack[b] -= dt * 3.2f;            // gathered up in ~0.31 s
+            if (s_figSlack[b] < 0.0f) s_figSlack[b] = 0.0f;
+            if (!s_figAttached[b] || BONES[b].parent < 0) continue;
+            // Reaching zero this frame restores the table value exactly, so
+            // nothing has to remember to put the stiffness back.
+            float hz = BONES[b].hertz * (1.0f - 0.88f * s_figSlack[b]);
+            if (hz < 0.6f) hz = 0.6f;
+            if (BONES[b].axis == AX_HINGE)
+                b3RevoluteJoint_SetSpringHertz(s_figJoint[b], hz);
+            else
+                b3SphericalJoint_SetSpringHertz(s_figJoint[b], hz);
+        }
     }
 }
 

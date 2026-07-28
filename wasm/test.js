@@ -351,7 +351,13 @@ const FIG = ["WAIT","STEP","WINDUP","STRIKE","RECOVER","FALLING","DOWN"];
   E.w_fig_create(0, 0, 1.75, 2);
   // Hands out of the way first: left where they were, they are buried in the
   // spot the last one stood and the new one is born being punched.
-  for (let i = 0; i < 72 * 3; i++) tick(undefined, undefined, [-0.6, 1.2, 2.2], [0.6, 1.2, 2.2]);
+  // Well clear, and further than looks necessary. At 2.2 m these were only out
+  // of the way by luck: the new figure walks toward you, and once its springs
+  // gave under a punch it arrived on a slightly different line and clipped a
+  // parked fist with its left thigh on the way in — measured as this figure
+  // being born whole and then showing L_THIGH 2/3 three seconds later, with
+  // zero debris on the floor and nothing wrong with the figure at all.
+  for (let i = 0; i < 72 * 3; i++) tick(undefined, undefined, [-0.6, 1.2, 8.0], [0.6, 1.2, 8.0]);
   check("the next one arrives whole", figState().bones === bonesBefore &&
     figState().alive === figState().total,
     `${figState().bones} bones, ${figState().alive}/${figState().total} cells`);
