@@ -1,0 +1,268 @@
+name: Build APK
+
+# Two jobs:
+#
+#   apk   — builds the native Quest app and uploads the APK as a downloadable
+#           artifact. Catches compile errors before anything reaches a headset,
+#           and means installing a build needs only adb, not Android Studio.
+#
+#   bench — builds and runs the headless physics benchmark (see bench/bench.c)
+#           across SIMD and worker-count configurations. Gives relative physics
+#           scaling and regression detection without a device in the loop. It
+#           cannot give absolute Quest numbers — CI hardware is far faster than
+#           the XR2 Gen 2 and this measures no GPU cost at all.
+#
+# Artifacts land under the run's "Artifacts" section on the Actions tab.
+
+on:
+  # Branch pushes are covered by the pull_request trigger, so this only needs to
+  # catch main directly — otherwise every PR branch builds twice per push.
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      # Pinned to match app/build.gradle's ndkVersion and the cmake version
+      # declared in its externalNativeBuild block. Bump both together.
+      - name: Install NDK and CMake
+        run: |
+          sdkmanager --install "ndk;26.3.11579264" "cmake;3.22.1"
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      # Box3D is fetched from source by CMake, so this cache saves a clone and a
+      # full engine rebuild on every run.
+      - name: Cache native build
+        uses: actions/cache@v4
+        with:
+          path: app/.cxx
+          key: cxx-${{ runner.os }}-${{ hashFiles('app/src/main/cpp/CMakeLists.txt') }}
+          restore-keys: cxx-${{ runner.os }}-
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: box3d-quest-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  bench:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build benchmark (scalar)
+        run: |
+          cmake -S bench -B build/bench-scalar \
+            -DCMAKE_BUILD_TYPE=Release -DBOX3D_DISABLE_SIMD=ON
+          cmake --build build/bench-scalar --parallel
+
+      - name: Build benchmark (SIMD)
+        run: |
+          cmake -S bench -B build/bench-simd \
+            -DCMAKE_BUILD_TYPE=Release -DBOX3D_DISABLE_SIMD=OFF
+          cmake --build build/bench-simd --parallel
+
+      # Each configuration is a separate process so a crash in one doesn't hide
+      # the others. Worker sweep shows where threading stops paying.
+      - name: Run benchmark
+        run: |
+          echo "runner: $(nproc) cores"
+          {
+            echo "## config: scalar, 1 worker"
+            ./build/bench-scalar/bench 1 3200
+            echo "## config: simd, 1 worker"
+            ./build/bench-simd/bench 1 3200
+            echo "## config: simd, 2 workers"
+            ./build/bench-simd/bench 2 3200
+            echo "## config: simd, 4 workers"
+            ./build/bench-simd/bench 4 3200
+            echo "## phase 0.5: two heavyweight mechs colliding, simd, 4 workers"
+            ./build/bench-simd/bench 4 0 mech
+          } | tee bench-results.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: bench-results.txt
+          if-no-files-found: error
+
+  # Runs the WebXR pages headlessly and checks they actually draw.
+  #
+  # docs/mech.html shipped for three commits calling a function that was never
+  # defined. Under "use strict" that throws on the first frame, before the draw
+  # call, every frame — so the headset showed a cleared buffer and nothing else.
+  # Pure black, no error anywhere, indistinguishable from a page that failed to
+  # load. Nothing in CI looked at the pages, on the assumption that testing VR
+  # needs a headset.
+  #
+  # It does not. Only the poses and the GL calls come from the headset; stub
+  # those and the wasm load, the world build, the physics and the draw list all
+  # run in Node. How it feels still needs a person in a headset, and that is the
+  # only part that does.
+  pages:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Uses the committed wasm, so this catches page regressions even when the
+      # engine has not been rebuilt.
+      - name: Check the pages draw
+        run: |
+          node wasm/page-test.js mech.html
+          node wasm/page-test.js drag.html
+          node wasm/page-test.js handtrack.html
+          node wasm/page-test.js vox.html
+          node wasm/page-test.js dummy.html
+          node wasm/page-test.js arena.html
+
+  # Rebuilds docs/box3d.wasm from wasm/bridge.c and the pinned Box3D revision,
+  # and commits it back. The browser build is the only way to measure Box3D on
+  # real Quest hardware without a PC — no sideloading, no adb, no cable — so the
+  # wasm has to track bridge.c automatically rather than by hand.
+  wasm:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+
+      # Every commit this job pushes sends the repository owner an email, and
+      # most pushes do not touch the wasm source at all. Skip unless bridge.c
+      # actually changed.
+      - name: Does the wasm source need rebuilding?
+        id: changed
+        run: |
+          git fetch --depth=2 origin "${{ github.head_ref || github.ref_name }}" || true
+          if git diff --quiet HEAD~1 HEAD -- wasm/bridge.c 2>/dev/null; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "bridge.c unchanged — skipping wasm rebuild"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.changed.outputs.needed == 'true'
+        with:
+          python-version: '3.12'
+
+      # Zig ships a complete C compiler and wasm libc as a pip wheel, so no
+      # separate toolchain install is needed. See wasm/build.md.
+      - name: Install Zig
+        if: steps.changed.outputs.needed == 'true'
+        run: pip install ziglang
+
+      # Must match the GIT_TAG in app/src/main/cpp/CMakeLists.txt and
+      # bench/CMakeLists.txt, or the three builds measure different engines.
+      - name: Fetch Box3D
+        if: steps.changed.outputs.needed == 'true'
+        run: |
+          git clone --filter=blob:none --no-checkout \
+            https://github.com/erincatto/box3d.git box3d-src
+          cd box3d-src
+          git checkout c52908c9a907714e4d3a8a30be5272a1761158e1
+
+      - name: Build box3d.wasm
+        if: steps.changed.outputs.needed == 'true'
+        run: |
+          python3 -m ziglang cc -target wasm32-wasi -Oz -mexec-model=reactor \
+            -DBOX3D_DISABLE_SIMD -DNDEBUG \
+            -Ibox3d-src/include -Ibox3d-src/src \
+            box3d-src/src/*.c wasm/bridge.c \
+            -Wl,--strip-all -o docs/box3d.wasm
+          ls -l docs/box3d.wasm
+
+      # test.js loads box3d.wasm from its own directory, while the deployed copy
+      # lives in docs/ for GitHub Pages. Give the harness the copy it expects
+      # rather than teaching it a second path.
+      - name: Sanity-check the module
+        if: steps.changed.outputs.needed == 'true'
+        run: |
+          cp docs/box3d.wasm wasm/box3d.wasm
+          node wasm/test.js
+          # And against the pages, so an engine change that leaves the headset
+          # showing nothing is caught here rather than in a headset.
+          node wasm/page-test.js mech.html
+          node wasm/page-test.js drag.html
+          node wasm/page-test.js handtrack.html
+          node wasm/page-test.js vox.html
+          node wasm/page-test.js dummy.html
+          node wasm/page-test.js arena.html
+
+      - name: Commit if changed
+        if: steps.changed.outputs.needed == 'true'
+        run: |
+          if git diff --quiet -- docs/box3d.wasm; then
+            echo "wasm unchanged"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/box3d.wasm
+          # [skip ci] stops this commit from triggering another run of this
+          # workflow, which would rebuild and commit forever.
+          git commit -m "Rebuild box3d.wasm from bridge.c [skip ci]"
+
+          # The branch often moves while this job is running, which left the
+          # checkout stale and the push rejected. Rebase onto whatever landed and
+          # retry; the wasm is a build product, so there is nothing to conflict
+          # with except an older copy of itself.
+          BRANCH="${{ github.head_ref || github.ref_name }}"
+          for attempt in 1 2 3; do
+            if git push origin "HEAD:$BRANCH"; then
+              echo "pushed on attempt $attempt"
+              exit 0
+            fi
+            echo "push rejected, rebasing and retrying"
+            git fetch origin "$BRANCH"
+            git rebase -X ours "origin/$BRANCH" || {
+              git rebase --abort || true
+              exit 1
+            }
+          done
+          echo "could not push the rebuilt wasm after 3 attempts"
+          exit 1
+
+      - name: Upload wasm
+        if: steps.changed.outputs.needed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: box3d-wasm
+          path: docs/box3d.wasm
+          if-no-files-found: error

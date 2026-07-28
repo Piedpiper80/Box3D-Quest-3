@@ -7,16 +7,57 @@ Catto, creator of Box2D). This repo is the complete home for the project: a
 
 ## ▶ Play it right now — headset only, nothing to install
 
-Open **<https://piedpiper80.github.io/Box3D-Quest-3/>** in the Meta Quest
-Browser and tap **Enter VR**. Boxes tumble and bounce around your room; pull
-either trigger to throw more.
+**The game is [CORE BREAKER](https://piedpiper80.github.io/Box3D-Quest-3/arena.html).**
+Open **<https://piedpiper80.github.io/Box3D-Quest-3/arena.html>** in the Meta
+Quest Browser and tap **Enter VR**. Your arms are the machine's arms. A
+five-chapter campaign: strip the other machine's armour, smash the core
+underneath, and take the road to the next fight — through heat that cooks
+your actuators, a collapse you can crawl back from, and an ending.
 
-That build is [`docs/index.html`](docs/index.html) + [`docs/box3d.wasm`](docs/box3d.wasm):
-the **real Box3D engine compiled to WebAssembly** (~360 KB, scalar,
-single-threaded) drives the scene, with an automatic stand-in fallback if the
-wasm can't load. The engine badge on the page shows which one is running.
-Published via GitHub Pages from the `gh-pages` branch; see [`wasm/`](wasm/)
-for the C bridge, build command, and simulation test harness.
+First time: set the floor (controller on the ground, pull the trigger), then
+your arm span (arms straight out, pull the trigger) — both remembered. Raise
+both fists above your head to start each fight.
+
+The spike pages that built it are live too:
+[`mech.html`](https://piedpiper80.github.io/Box3D-Quest-3/mech.html)
+(piloting feel),
+[`drag.html`](https://piedpiper80.github.io/Box3D-Quest-3/drag.html)
+(the knuckle-haul),
+[`handtrack.html`](https://piedpiper80.github.io/Box3D-Quest-3/handtrack.html)
+(bare hands),
+[`vox.html`](https://piedpiper80.github.io/Box3D-Quest-3/vox.html)
+(the destructible wall),
+[`dummy.html`](https://piedpiper80.github.io/Box3D-Quest-3/dummy.html)
+(armour on a moving target), and the original physics hello-world at
+[`index.html`](https://piedpiper80.github.io/Box3D-Quest-3/) (tumbling
+boxes).
+
+No headset handy? Add `?flat=1` to the arena URL for a flat in-browser
+preview with a scripted pilot, and `&ch=2` (0–4) to drop straight into a
+later chapter's arena. In VR, `?grip=` and `?spring=` (0.3–3) tune the
+punch feel live, and `?calm=1` removes all view shake.
+
+### What it looks like
+
+Flat-preview captures from the screenshot loop that reviews every visual
+change (the in-headset view is first-person from the cockpit):
+
+| The Scrapfields | Milltown |
+| --- | --- |
+| ![Chapter 1 — the rust-hulled SCRAPPER at close quarters](docs/design/shots/ch1-scrapper.png) | ![Chapter 2 — a gauntlet landing in the WARDEN's face, sparks flying](docs/design/shots/ch2-warden.png) |
+
+| Saltyard Row | The Foundry |
+| --- | --- |
+| ![Chapter 3 — the salt-green DANCER mid-stride in its crowded yard](docs/design/shots/ch3-dancer.png) | ![Chapter 4 — the JUGGERNAUT looming over a collapsed hull between foundry aisles](docs/design/shots/ch4-juggernaut.png) |
+
+| The High Dark | Victory |
+| --- | --- |
+| ![Chapter 5 — the Returned, hovering, steel-plated, arena stripped bare](docs/design/shots/ch5-thereturned.png) | ![The wreck, the green ring, fists raised](docs/design/shots/victory.png) |
+
+All of it is the **real Box3D engine compiled to WebAssembly** (~360 KB,
+scalar, single-threaded) — see [`wasm/`](wasm/) for the C bridge, build
+command, and the headless test harnesses that drive every page in CI.
+Published via GitHub Pages from the `gh-pages` branch.
 
 ## The native app (this repo's C/C++ source)
 
@@ -27,6 +68,11 @@ the headset and runs entirely on-device — no PC, no cable, no browser — but
 
 > **Status: foundation / vertical slice.** Real Box3D physics rendered in
 > stereo VR, plus controller interaction. Built to grow into a full game.
+
+Where that full game is going — a voxel mech fighter you pilot with your own
+arms — is laid out in [`docs/design/ROADMAP.md`](docs/design/ROADMAP.md), with
+the current milestone detailed in
+[`docs/design/phase-0-foundations.md`](docs/design/phase-0-foundations.md).
 
 ## What you'll see
 

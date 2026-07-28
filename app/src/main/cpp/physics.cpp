@@ -31,8 +31,8 @@ struct BodyRec
 b3WorldId            g_world = b3_nullWorldId;
 std::vector<BodyRec> g_bodies;
 
-// Cap on total bodies so runaway trigger-spam can't exhaust memory.
-constexpr int kMaxBodies = 400;
+// kMaxBodies is declared in physics.h — it is shared with the renderer, which
+// sizes its instance buffer from the same constant.
 
 // Build a column-major GL model matrix for a body: rotation (from the body's
 // quaternion) scaled by its half extents, with the body position as translation.
@@ -107,24 +107,65 @@ void addBox(b3BodyType type, const float pos[3], const float half[3], float dens
     g_bodies.push_back(rec);
 }
 
-} // namespace
-
-void Physics_Init()
+// Shared world construction, so the benchmark scene and the normal scene cannot
+// drift apart in gravity, worker count or any other world-level setting.
+void createWorld(bool enableSleep)
 {
+    // Always tear down first. Both Physics_Init and Physics_Reset route through
+    // here, and the benchmark rebuilds the world once per ramp level — without
+    // this, every rebuild would leak an entire Box3D world.
+    if (b3World_IsValid(g_world))
+    {
+        b3DestroyWorld(g_world);
+        g_world = b3_nullWorldId;
+    }
+
     b3WorldDef wd = b3DefaultWorldDef();
     wd.gravity.x  = 0.0f;
     wd.gravity.y  = -9.81f;
     wd.gravity.z  = 0.0f;
-    g_world       = b3CreateWorld(&wd);
+
+    // Multithreaded solve. Leaving enqueueTask/finishTask null makes Box3D spawn
+    // and own its worker threads, which is all this needs — a custom task system
+    // would only be worth it to share workers with other subsystems or to pin
+    // thread affinity.
+    //
+    // 4 workers: the Quest 3's XR2 Gen 2 has 8 cores, and the render thread plus
+    // the OpenXR runtime need room. Measured in CI (bench/): threading is worth
+    // up to 2.5x at high body counts, but is a small net *loss* below ~100
+    // bodies where synchronisation costs more than it saves. Real scenes are far
+    // past that crossover.
+    wd.workerCount = 4;
+    wd.enableSleep = enableSleep;
+
+    g_world = b3CreateWorld(&wd);
 
     g_bodies.clear();
     g_bodies.reserve(kMaxBodies);
 
-    // Ground: a large, thin static box centered at the floor plane (y = 0).
-    const float groundPos[3]  = {0.0f, -0.05f, 0.0f};
-    const float groundHalf[3] = {6.0f, 0.05f, 6.0f};
+    // Ground: a large, thin static box centered at the floor plane (y = 0). Wide
+    // enough to catch the benchmark's largest pile without bodies rolling off the
+    // edge and falling forever, which would quietly flatter the measurement.
+    const float groundPos[3]   = {0.0f, -0.05f, 0.0f};
+    const float groundHalf[3]  = {20.0f, 0.05f, 20.0f};
     const float groundColor[3] = {0.35f, 0.37f, 0.42f};
     addBox(b3_staticBody, groundPos, groundHalf, 1.0f, nullptr, groundColor);
+}
+
+// Deterministic PRNG: the benchmark must build an identical scene every run, or
+// its numbers wander and regressions hide in the noise.
+unsigned g_rng = 0x9e3779b9u;
+float frnd(float lo, float hi)
+{
+    g_rng = g_rng * 1664525u + 1013904223u;
+    return lo + (hi - lo) * (static_cast<float>(g_rng >> 8) / 16777216.0f);
+}
+
+} // namespace
+
+void Physics_Init()
+{
+    createWorld(true);
 
     // A tower of cubes ~1.5 m in front of the player that settles under gravity.
     // A tiny per-layer horizontal offset makes the stack lean and tumble so the
@@ -142,6 +183,42 @@ void Physics_Init()
         const float half[3] = {cube, cube, cube};
         addBox(b3_dynamicBody, pos, half, 1.0f, nullptr, palette[i % 6]);
     }
+}
+
+void Physics_Reset(bool enableSleep)
+{
+    // Reseed so every benchmark level builds a byte-identical scene; createWorld
+    // handles tearing the previous world down.
+    g_rng = 0x9e3779b9u;
+    createWorld(enableSleep);
+}
+
+void Physics_SpawnPile(int count)
+{
+    const float cube    = 0.10f;
+    const float spacing = cube * 2.6f;
+    const int   perRow  = 12;
+
+    for (int i = 0; i < count; ++i)
+    {
+        const int cx = i % perRow;
+        const int cz = (i / perRow) % perRow;
+        const int cy = i / (perRow * perRow);
+
+        const float pos[3] = {
+            (static_cast<float>(cx) - perRow * 0.5f) * spacing + frnd(-0.01f, 0.01f),
+            0.5f + static_cast<float>(cy) * spacing,
+            (static_cast<float>(cz) - perRow * 0.5f) * spacing + frnd(-0.01f, 0.01f) - 2.0f,
+        };
+        const float half[3]  = {cube, cube, cube};
+        const float color[3] = {0.55f, 0.62f, 0.78f};
+        addBox(b3_dynamicBody, pos, half, 1.0f, nullptr, color);
+    }
+}
+
+int Physics_BodyCount()
+{
+    return static_cast<int>(g_bodies.size());
 }
 
 void Physics_Shutdown()
@@ -183,6 +260,7 @@ int Physics_BuildRenderItems(RenderItem* items, int maxItems)
         items[count].color[0] = rec.color[0];
         items[count].color[1] = rec.color[1];
         items[count].color[2] = rec.color[2];
+        items[count].color[3] = 1.0f;
         ++count;
     }
     return count;

@@ -8,6 +8,8 @@
 #include <GLES3/gl3.h>
 #include <android/log.h>
 
+#include <cstdint>
+
 #define GLH_LOG_TAG "Box3DQuest"
 #define GLH_LOGI(...) __android_log_print(ANDROID_LOG_INFO, GLH_LOG_TAG, __VA_ARGS__)
 #define GLH_LOGE(...) __android_log_print(ANDROID_LOG_ERROR, GLH_LOG_TAG, __VA_ARGS__)
@@ -64,15 +66,32 @@ inline GLuint glhCreateProgram(const char* vsSrc, const char* fsSrc)
 
 // A cube spanning [-1, 1] on each axis, with per-face (flat) normals. 24 unique
 // vertices (4 per face) and 36 indices. Interleaved layout: position(3), normal(3).
+//
+// The mesh also owns the per-instance buffer. Every object in the scene is this
+// same cube at a different transform and colour, so the whole world draws in one
+// instanced call instead of one call per body.
+//
+// Attribute locations:
+//   0      vec3  position   (per vertex)
+//   1      vec3  normal     (per vertex)
+//   2..5   mat4  model      (per instance — a mat4 consumes four locations)
+//   6      vec4  colour     (per instance)
 struct CubeMesh
 {
-    GLuint  vao         = 0;
-    GLuint  vbo         = 0;
-    GLuint  ebo         = 0;
-    GLsizei indexCount  = 0;
+    GLuint  vao           = 0;
+    GLuint  vbo           = 0;
+    GLuint  ebo           = 0;
+    GLuint  instanceVbo   = 0;
+    GLsizei indexCount    = 0;
+    GLsizei maxInstances  = 0;
 };
 
-inline CubeMesh glhCreateCube()
+// Floats per instance: 16 for the model matrix, 4 for the padded colour. Must
+// match RenderItem in physics.h — that struct is written straight into this
+// buffer with no translation step.
+constexpr GLsizei kFloatsPerInstance = 20;
+
+inline CubeMesh glhCreateCube(GLsizei maxInstances)
 {
     // clang-format off
     static const float verts[] = {
@@ -100,7 +119,8 @@ inline CubeMesh glhCreateCube()
     // clang-format on
 
     CubeMesh mesh;
-    mesh.indexCount = sizeof(idx) / sizeof(idx[0]);
+    mesh.indexCount   = sizeof(idx) / sizeof(idx[0]);
+    mesh.maxInstances = maxInstances;
 
     glGenVertexArrays(1, &mesh.vao);
     glBindVertexArray(mesh.vao);
@@ -118,6 +138,31 @@ inline CubeMesh glhCreateCube()
     glEnableVertexAttribArray(1); // normal
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
 
+    // Per-instance data. Orphaned and refilled once per frame (not per eye), so
+    // GL_DYNAMIC_DRAW rather than GL_STATIC_DRAW.
+    const GLsizei instanceStride = kFloatsPerInstance * sizeof(float);
+
+    glGenBuffers(1, &mesh.instanceVbo);
+    glBindBuffer(GL_ARRAY_BUFFER, mesh.instanceVbo);
+    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)maxInstances * instanceStride, nullptr,
+                 GL_DYNAMIC_DRAW);
+
+    // A mat4 attribute is bound as four consecutive vec4 locations.
+    for (int col = 0; col < 4; ++col)
+    {
+        const GLuint loc = 2 + (GLuint)col;
+        glEnableVertexAttribArray(loc);
+        glVertexAttribPointer(loc, 4, GL_FLOAT, GL_FALSE, instanceStride,
+                              (void*)(uintptr_t)(col * 4 * sizeof(float)));
+        glVertexAttribDivisor(loc, 1); // advance once per instance, not per vertex
+    }
+
+    glEnableVertexAttribArray(6); // colour
+    glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, instanceStride,
+                          (void*)(uintptr_t)(16 * sizeof(float)));
+    glVertexAttribDivisor(6, 1);
+
     glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
     return mesh;
 }
