@@ -978,7 +978,7 @@
   // the Pages CDN both cache hard — a playtest once got the old game and,
   // fairly, could not tell), and it is printed on the card so which build
   // loaded is never a guess.
-  var BUILD = 28;
+  var BUILD = 29;
   var bTag = document.getElementById("buildTag");
   if (bTag) bTag.textContent = "(build " + BUILD + ")";
   // The ladder's length lives in one place — the blurb reads it rather than
@@ -1496,11 +1496,35 @@
       // foundry iron, the Returned's violet dark — and the core glows
       // through it as the machine weakens.
       var hC = chD.hullC;
-      items.push({ m: trs([ef[ep], ef[ep+1], ef[ep+2]],
-                          [ef[ep+3], ef[ep+4], ef[ep+5], ef[ep+6]],
-                          [0.24*eS, 0.34*eS, 0.14*eS]),
-                   c: eState === 5 ? [0.15,0.15,0.17]
-                     : [hC[0] + 0.55*(1-coreFrac), hC[1], hC[2]] });
+      var tC = eState === 5 ? [0.15,0.15,0.17]
+                            : [hC[0] + 0.55*(1-coreFrac), hC[1], hC[2]];
+      var eQ = [ef[ep+3], ef[ep+4], ef[ep+5], ef[ep+6]];
+      // A trunk drawn as ONE box is a juice box with arms and legs, however
+      // well proportioned the box is. It is drawn as a stack now — shoulder
+      // yoke, chest, waist — so the body TAPERS, and the stack takes the same
+      // per-machine proportions the physics torso does instead of the constant
+      // it used to be built from (which also meant the drawn body had stopped
+      // matching the simulated one the moment torsos became per-machine).
+      var tW = chD.torso ? chD.torso[0] : 1.0,
+          tH = chD.torso ? chD.torso[1] : 1.0,
+          tD = chD.torso ? chD.torso[2] : 1.0;
+      // offset up the body's own Y, half width, half height, half depth
+      var TRUNK = [
+        [ 0.26*tH,  0.25*tW, 0.09*tH, 0.13*tD],   // shoulder yoke, widest
+        [ 0.04*tH,  0.20*tW, 0.19*tH, 0.14*tD],   // chest
+        [-0.24*tH,  0.13*tW, 0.13*tH, 0.10*tD]    // waist, narrowest
+      ];
+      for (var tSeg = 0; tSeg < TRUNK.length; tSeg++) {
+        var T = TRUNK[tSeg], dy = T[0] * eS;
+        // rotate (0,dy,0) into world by the torso's quaternion
+        var qx = eQ[0], qy = eQ[1], qz = eQ[2], qw = eQ[3];
+        var ox = 2*(qx*qy*dy) - 2*qw*qz*dy;
+        var oy = dy - 2*(qz*qz + qx*qx)*dy;
+        var oz = 2*qw*qx*dy + 2*(qy*qz*dy);
+        items.push({ m: trs([ef[ep] + ox, ef[ep+1] + oy, ef[ep+2] + oz], eQ,
+                            [T[1]*eS, T[2]*eS, T[3]*eS]),
+                     c: tC });
+      }
       // The body is REAL now — head, pelvis, two-segment arms with fists,
       // legs — fourteen individually smashable vox parts riding physics
       // bodies, drawn by the same run renderer as every wall and plate.
