@@ -357,3 +357,56 @@ if the legs actively extend against the floor. So this wants leg actuation —
 drive the knee and hip to hold the hip at its target height, and let contact
 supply the reaction — not a relocated force. Bigger job than it looks, and it
 interacts with the joint stiffness the impact-slack now reduces.
+
+## It stands on its legs now
+
+The lift is gone. `ay` is multiplied by a carry factor that is **exactly zero**
+whenever a foot is planted — not reduced, zero. Standing is an equal-and-opposite
+pair: pelvis up, sole down, 4 Hz, push-only, capped at twice body weight, summing
+to zero over the figure. The floor supplies the rest, which is what standing is.
+
+Measured, against the previous build:
+
+| | before | after |
+|---|---|---|
+| ground reaction under the soles | **0 N** (nothing was standing) | **542.3 N** = 100.0% of its 542.1 N weight |
+| load split | — | left 251.4 N / right 290.9 N, one contact patch per foot |
+| ankle at rest | 0.0766 m, hovering | **0.0658 m, on the floor** |
+| hip at rest (target 0.9275) | 0.9275 | 0.9217 |
+| a severed hand | **−4.15 m/s² and RISING**, 1.474 → 1.533 m | **−9.87 m/s²**, free fall |
+| loose foot below a snapped thigh | 0.082 m | 0.067 m, moved 0.0000 m in half a second |
+| blows landed in a scripted fight | 58 | **70** |
+| step cost (budget 1.4 ms) | 0.321 ms | 0.345 ms |
+
+The severed-limb fix is **structural, not a flag**. Proved by rebuilding with the
+old `s_figAttached` gate restored: still 53/0, the free-fall and severed-leg
+checks both still pass. With no lift being applied there is nothing for a loose
+piece to draw, attached or not. That is the whole point of the change — the two
+playtest reports, "artificially held upwards" and "the severed limbs pulled
+upwards / the broken bone standing up", stop being possible rather than being
+special-cased.
+
+### Numbers to trust, and one that was wrong
+
+The implementation's own risk note claimed stance width collapsing 0.396 → 0.271 m.
+That was measured under `w_fig_hold(1)`, a fixture that never occurs in play, and
+it reads 0.167 there. **In a real 14-second fight it is mean 0.402 / min 0.364**,
+against the old build's mean 0.371 / min 0.181. The stance is *wider* and steadier
+than before, not narrower. Corrected here because the wrong number was about to
+enter the record.
+
+### Known limitations, recorded not hidden
+
+- **Stride is still carried** — declared as a `gap()`, the lower ankle peaks at
+  0.206 m mid-stride. Visible in every run rather than quietly passing.
+- **Yaw sits near its ceiling**: residual 0.138 rad against a 0.15 tolerance.
+  0.008 of margin is not much.
+- **The guard elbow is 0.063 rad more open** than before (−1.986 vs −2.049). The
+  guard *hand* lands within 2 mm of where it did, so the visible guard is right,
+  but this was reached by stiffening the arm springs 14 → 20 Hz, which is tuning
+  against a symptom. A net-zero muscle-tone pair is the more principled fix and is
+  worth taking from the design that was not shipped.
+- **`w_fig_ground` reads Box3D internals** (`totalNormalImpulse` spans the biased
+  solve and the relax pass, hence `FIG_IMPULSE_CAL 0.5`). 542.3 measured against a
+  542.1 N weight is good evidence the factor is right, and the check fails loudly
+  if the pinned revision moves.
