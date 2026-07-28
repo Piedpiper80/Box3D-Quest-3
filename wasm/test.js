@@ -150,6 +150,13 @@ const FIG = ["WAIT","STEP","WINDUP","STRIKE","RECOVER","FALLING","DOWN"];
                                  dmg: f[o+i*4+3] })); };
   const figJoints = () => { const o = E.w_fig_joints() >>> 2, f = mem();
     return { lElbow: f[o], rElbow: f[o+1], lKnee: f[o+2], rKnee: f[o+3] }; };
+  // s_figDbg[2] is how much of its weight the stride controller is still
+  // carrying: 0 planted, 1 mid-stride.
+  const figCarry = () => mem()[(E.w_fig_dbg() >>> 2) + 2];
+  // What the floor is pushing back with, under each sole.
+  const figGround = () => { const o = E.w_fig_ground() >>> 2, m = mem();
+    return { nL: m[o], nR: m[o+1], copL: [m[o+2], m[o+3], m[o+4]],
+             copR: [m[o+5], m[o+6], m[o+7]] }; };
   const rig = () => { const o = E.w_fig_rig() >>> 2, f = mem();
     return { mass: f[o], pelvis: f[o+1], I: f[o+2], hipY: f[o+3], reach: f[o+4] }; };
 
@@ -182,6 +189,23 @@ const FIG = ["WAIT","STEP","WINDUP","STRIKE","RECOVER","FALLING","DOWN"];
 
   E.w_fig_hold(1);
   for (let i = 0; i < 72 * 6; i++) tick();
+  // THE headline check. Standing is not a force pointed upwards at each bone;
+  // it is the two soles pressing on the floor and the floor pressing back. On
+  // the build before this one this read 0 N against a 542 N figure — the whole
+  // weight was cancelled bone by bone and the soles hovered a centimetre clear
+  // of the ground, touching nothing.
+  const gr = figGround(), wt = rig().mass * 9.81;
+  check("the floor is carrying it, not something invisible",
+    Math.abs((gr.nL + gr.nR) - wt) < wt * 0.15,
+    `${(gr.nL + gr.nR).toFixed(0)} N under the soles, weight ${wt.toFixed(0)} N`);
+  // And it is under the FEET, not somewhere convenient: the centre of pressure
+  // sits on the floor plane, one patch beside the other.
+  check("that weight comes up through the soles",
+    Math.abs(gr.copL[1]) < 0.02 && Math.abs(gr.copR[1]) < 0.02 &&
+    gr.copL[0] < 0 && gr.copR[0] > 0,
+    `left (${gr.copL.map((v) => v.toFixed(3)).join(", ")}) ` +
+    `right (${gr.copR.map((v) => v.toFixed(3)).join(", ")})`);
+
   const s1 = figState(), p1 = figPose();
   check("it stands, and keeps standing",
     Math.abs(s1.hip[1] - r0.hipY) < 0.04 && s1.state === 0,
@@ -229,17 +253,60 @@ const FIG = ["WAIT","STEP","WINDUP","STRIKE","RECOVER","FALLING","DOWN"];
       `off by ${e.toFixed(3)} rad`);
   }
 
+  // Being hit in the body has to move it, and it has to gather itself back.
+  // This is the check that guards figSlacken: the springs go slack where the
+  // blow lands and tighten again over about a third of a second, and while
+  // they are slack the legs still have to hold it up. The dip GROWING is the
+  // direction that was asked for — before this build it was carried, so it
+  // barely gave at all.
+  boot(1.75); E.w_fig_hold(1);
+  for (let i = 0; i < 72 * 2; i++) tick();
+  {
+    const h0 = figState().hip[1];
+    let dip = h0;
+    const into = (z) => { tick(undefined, undefined, null, [0, 1.085, z]);
+                          dip = Math.min(dip, figState().hip[1]); };
+    // Three of them into the abdomen, drawn back and driven through, the same
+    // way `work` throws a punch.
+    for (let n = 0; n < 3; n++) {
+      for (let i = 0; i < 12; i++) into(0.61);
+      for (let i = 0; i < 9; i++) into(0.06 + 0.55 * (1 - (i + 1) / 9));
+      for (let i = 0; i < 5; i++) into(0.06);
+    }
+    for (let i = 0; i < 72 * 2; i++) tick(undefined, undefined, null, [0, 1.20, 1.60]);
+    // It has to GIVE — 4 mm was the whole of it while the body was carried,
+    // which is a statue being tapped — and then it has to gather itself back
+    // rather than staying folded. The lower bound is the point of the check.
+    check("a body blow makes it give, and it gathers itself back",
+      h0 - dip > 0.008 && h0 - dip < 0.05 &&
+      Math.abs(figState().hip[1] - h0) < 0.02,
+      `dipped ${((h0 - dip) * 1000).toFixed(0)} mm, back to ` +
+      `${figState().hip[1].toFixed(4)} from ${h0.toFixed(4)}`);
+  }
+
   // =========================================================================
   console.log("\n-- its will --");
   // =========================================================================
   boot(1.75);
   const seen = new Set();
-  let closest = 99;
+  let closest = 99, ankleMax = 0, ankleMaxStand = 0, minHip = 99;
   for (let i = 0; i < 72 * 14; i++) {
     tick();
     const s = figState();
     seen.add(FIG[s.state]);
     if (s.dist < closest) closest = s.dist;
+    // The LOWER of its two ankles, over the whole fourteen seconds. A swing
+    // foot is meant to come up — a stride that does not lift a foot is a
+    // shuffle — so the honest measure of "it is standing on the floor" is
+    // that the other one is always still down on it.
+    const pf = figPose();
+    const a = Math.min(pf[B.L_FOOT].p[1], pf[B.R_FOOT].p[1]);
+    if (a > ankleMax) ankleMax = a;
+    // "Planted" is the carry being off, not the state having changed: the
+    // carry rides out over a fifth of a second, so for those frames it is
+    // still a stride however the state reads.
+    if (figCarry() < 0.05 && a > ankleMaxStand) ankleMaxStand = a;
+    if (s.hip[1] < minHip) minHip = s.hip[1];
   }
   check("it closes on you", closest < 1.0, `got to ${closest.toFixed(2)} m`);
   check("it strides, guards, telegraphs and throws",
@@ -247,6 +314,23 @@ const FIG = ["WAIT","STEP","WINDUP","STRIKE","RECOVER","FALLING","DOWN"];
     [...seen].join(","));
   check("it is still standing after fourteen seconds unopposed",
     figState().state !== 6, FIG[figState().state]);
+  // The state check above is not enough on its own: a figure lying on the
+  // floor with both legs intact reports WAIT, not DOWN. This is the number
+  // that says it is actually up on its feet the whole time.
+  check("and its hips never drop out of standing while it does it",
+    minHip > r0.hipY - 0.10, `lowest hip ${minHip.toFixed(3)} m of ${r0.hipY.toFixed(3)}`);
+  // A figure held up by a force does not need the floor and does not stay on
+  // it: before this build BOTH ankles rode clear of the ground mid-fight and
+  // nothing noticed, because nothing was standing on anything.
+  check("it always has a foot on the floor while it fights", ankleMaxStand < 0.14,
+    `its lower ankle peaked at ${ankleMaxStand.toFixed(3)} m`);
+  // The stride is the one thing still carried, and this is the number that
+  // says so out loud rather than hiding it: mid-stride the whole-body lift is
+  // back on and both feet can leave the ground at once. figStride is an
+  // open-loop gait written against a weightless pelvis; a step that keeps a
+  // foot down needs foot PLACEMENT, and that is a build of its own.
+  gap("and it has one on the floor mid-stride too", ankleMax < 0.14,
+    `its lower ankle peaked at ${ankleMax.toFixed(3)} m during the stride`);
   // The stride is the legs doing it, not the hips gliding.
   boot(1.75);
   let kneeMax = 0;
@@ -314,8 +398,39 @@ const FIG = ["WAIT","STEP","WINDUP","STRIKE","RECOVER","FALLING","DOWN"];
   check("the rest of it is still standing",
     figState().state !== 6 && bb[B.CHEST].on === 1, FIG[figState().state]);
 
+  // A piece that has come off is in FREE FALL, and no fist goes near it while
+  // it falls. The HAND's own wrist joint is intact and its attached flag still
+  // reads 1 — what has gone is the forearm it hung from. This is the exact
+  // thing that was reported from the headset: "there is a force acting on the
+  // severed limbs to pull them upwards". Measured, the loose hand fell at
+  // -4.0 m/s^2, forty per cent of gravity, and was still up at 1.34 m twenty
+  // frames later, because the controller was asking each bone "is your own
+  // joint intact" when the question is "are you still part of a body".
+  boot(1.75); E.w_fig_hold(1);
+  for (let i = 0; i < 72; i++) tick();
+  work(B.R_FOREARM, 40);
+  {
+    // Fists parked well out of the way: from here on the only thing acting on
+    // it should be gravity. An eighth of a second, and either it is falling at
+    // gravity or it is already down on the floor — both mean nothing is
+    // holding it. What it must not be doing is what it did before this build:
+    // hanging at chest height, coming down at 4 m/s^2.
+    const ys = [];
+    for (let i = 0; i < 9; i++)
+      { ys.push(figPose()[B.R_HAND].p[1]); tick(undefined, undefined, [-1.2, 1.6, 1.6], [1.2, 1.6, 1.6]); }
+    const span = 4 * STEP;
+    const acc = (ys[8] - 2 * ys[4] + ys[0]) / (span * span);
+    check("a piece that has come off is in free fall", acc < -9.0 || ys[8] < 0.30,
+      `loose hand at ${acc.toFixed(2)} m/s^2, ${ys[0].toFixed(3)} m -> ` +
+      `${ys[8].toFixed(3)} m, its own attached flag still ${figPose()[B.R_HAND].on}`);
+  }
+
   // Take both arms and it cannot throw anything. It used to wind up forever
   // with nothing on the end of either shoulder.
+  boot(1.75); E.w_fig_hold(1);
+  for (let i = 0; i < 72; i++) tick();
+  work(B.R_FOREARM, 40);
+  for (let i = 0; i < 72 * 3; i++) tick();
   work(B.L_FOREARM, 40);
   E.w_fig_hold(0);
   const armless = new Set();
@@ -330,6 +445,19 @@ const FIG = ["WAIT","STEP","WINDUP","STRIKE","RECOVER","FALLING","DOWN"];
   work(B.L_THIGH, 40);
   for (let i = 0; i < 72 * 2; i++) tick();
   const oneLeg = figState();
+  // The shin and foot below the broken thigh are loose. Their own joints are
+  // intact, so before this build they went on drawing both the lift and their
+  // share of the righting torque: the loose foot sat at 0.176 m and was RISING
+  // — traced 0.154, 0.191, 0.168 — which is a severed leg being stood on end
+  // by a torque meant for a body it is no longer part of.
+  {
+    const f0 = figPose()[B.L_FOOT].p[1];
+    for (let i = 0; i < 36; i++) tick();
+    const f1 = figPose()[B.L_FOOT].p[1];
+    check("a severed leg lies where it fell",
+      f1 < 0.12 && Math.abs(f1 - f0) < 0.01,
+      `loose foot at ${f1.toFixed(3)} m, moved ${(f1 - f0).toFixed(3)} m in half a second`);
+  }
   check("one leg gone and it drops to that knee",
     oneLeg.support === 0.5 && oneLeg.hip[1] < standHip - 0.15,
     `support ${oneLeg.support}, hip ${standHip.toFixed(2)} -> ${oneLeg.hip[1].toFixed(2)}`);

@@ -1464,12 +1464,12 @@ static const BoneDef BONES[BONE_COUNT] = {
   /* NECK     */ { BONE_CHEST,    0.000f, 0.845f, 0.000f, 0.026f, 0.023f, 0.026f, 2, AX_UP,    0.50f, 0, 22.0f, 2.2f , 600.0f },
   /* HEAD     */ { BONE_NECK,     0.000f, 0.890f, 0.000f, 0.055f, 0.055f, 0.060f, 2, AX_UP,    0.45f, 0, 22.0f, 1.5f , 650.0f },
 
-  /* L UPARM  */ { BONE_CHEST,   -0.115f, 0.820f, 0.000f, 0.030f, 0.095f, 0.030f, 3, AX_DOWN,  1.45f, 0, 14.0f, 1.6f , 420.0f },
-  /* L FOREARM*/ { BONE_L_UPPERARM, -0.115f, 0.630f, 0.000f, 0.026f, 0.073f, 0.026f, 4, AX_HINGE, -2.50f, 0.0f, 15.0f, 1.0f , 380.0f },
+  /* L UPARM  */ { BONE_CHEST,   -0.115f, 0.820f, 0.000f, 0.030f, 0.095f, 0.030f, 3, AX_DOWN,  1.45f, 0, 20.0f, 1.6f , 420.0f },
+  /* L FOREARM*/ { BONE_L_UPPERARM, -0.115f, 0.630f, 0.000f, 0.026f, 0.073f, 0.026f, 4, AX_HINGE, -2.50f, 0.0f, 20.0f, 1.0f , 380.0f },
   /* L HAND   */ { BONE_L_FOREARM,  -0.115f, 0.485f, 0.000f, 0.030f, 0.055f, 0.022f, 2, AX_DOWN,  0.55f, 0, 16.0f, 1.2f , 340.0f },
 
-  /* R UPARM  */ { BONE_CHEST,    0.115f, 0.820f, 0.000f, 0.030f, 0.095f, 0.030f, 3, AX_DOWN,  1.45f, 0, 14.0f, 1.6f , 420.0f },
-  /* R FOREARM*/ { BONE_R_UPPERARM,  0.115f, 0.630f, 0.000f, 0.026f, 0.073f, 0.026f, 4, AX_HINGE, -2.50f, 0.0f, 15.0f, 1.0f , 380.0f },
+  /* R UPARM  */ { BONE_CHEST,    0.115f, 0.820f, 0.000f, 0.030f, 0.095f, 0.030f, 3, AX_DOWN,  1.45f, 0, 20.0f, 1.6f , 420.0f },
+  /* R FOREARM*/ { BONE_R_UPPERARM,  0.115f, 0.630f, 0.000f, 0.026f, 0.073f, 0.026f, 4, AX_HINGE, -2.50f, 0.0f, 20.0f, 1.0f , 380.0f },
   /* R HAND   */ { BONE_R_FOREARM,   0.115f, 0.485f, 0.000f, 0.030f, 0.055f, 0.022f, 2, AX_DOWN,  0.55f, 0, 16.0f, 1.2f , 340.0f },
 
   /* L THIGH  */ { BONE_PELVIS,  -0.045f, 0.530f, 0.000f, 0.045f, 0.123f, 0.045f, 3, AX_DOWN,  1.00f, 0, 28.0f, 2.8f , 620.0f },
@@ -1516,6 +1516,30 @@ static int s_figGrid[BONE_COUNT];
 // to 0 as it gathers itself. Applied at the end of w_fig_update, after the pose
 // for the state has been set, so being hit wins over holding a guard.
 static float s_figSlack[BONE_COUNT];
+
+// What holds it up is the floor. The leg is a column of hard joint
+// constraints — spherical and revolute joints constrain translation rigidly,
+// only rotation is sprung — standing on a hard contact, with the knee pinned
+// against its own lowerAngle of 0.00. That column carries the figure's whole
+// weight without ever being asked to. Measured with the lift removed: the hip
+// settles a few millimetres low, the sole rests ON the floor instead of
+// hovering a centimetre above it, and the ground reaction under the two soles
+// goes from 0 N to the figure's weight. The gravity cancel was never
+// load-bearing. It was levitation.
+//
+// The one thing the column cannot do is WALK. figStride is an open-loop gait
+// authored against a weightless pelvis; with the body's weight on the legs it
+// topples. So the carry stays, for the stride only. A real step needs foot
+// placement, which is a build of its own.
+//
+// s_figAttached[b] means "my joint to my parent is intact". Being PART OF THE
+// BODY is the transitive closure of that: a hand whose forearm has come off is
+// not part of the body however intact its own wrist is. w_fig_post clears the
+// flag exactly one bone deep, and w_fig_apply was reading it as if it went all
+// the way down — that one mismatch is both symptoms the owner reported.
+static int s_figCarried[BONE_COUNT];
+static float s_figCarry = 0.0f;      // 0 planted, 1 mid-stride
+static float s_figDt = 1.0f / 72.0f; // w_fig_apply has no dt of its own
 
 // Walk the parent chain and report how many joints apart two bones are, or -1
 // if neither is an ancestor of the other. The skeleton is seventeen bones and
@@ -1582,7 +1606,9 @@ static void figWorldReset(void)
     // Slack too, or the next figure is born with the last one's punches still
     // in its springs — it sags on its first frame and arrives already damaged.
     for (int i = 0; i < BONE_COUNT; i++)
-    { s_figAttached[i] = 0; s_figGrid[i] = -1; s_figSlack[i] = 0.0f; }
+    { s_figAttached[i] = 0; s_figGrid[i] = -1; s_figSlack[i] = 0.0f;
+      s_figCarried[i] = 0; }
+    s_figCarry = 0.0f; s_figDt = 1.0f / 72.0f;
     s_figState = FIG_WAIT;
     s_figHold = 0;
 }
@@ -1705,6 +1731,19 @@ static int figLegCarries(int side)
 static float figSupport(void)
 {
     return 0.5f * (float)(figLegCarries(0) + figLegCarries(1));
+}
+
+// BONES[] is ordered parent-before-child at every row, so one forward pass
+// settles the whole chain: a bone is part of the body only if its own joint
+// holds AND everything above it does too.
+static void figCarry(void)
+{
+    for (int b = 0; b < BONE_COUNT; b++)
+    {
+        const int par = BONES[b].parent;
+        s_figCarried[b] = par < 0 ? s_figAttached[b]
+                                  : (s_figAttached[b] && s_figCarried[par]);
+    }
 }
 
 static int figSpineBroken(void)
@@ -1869,6 +1908,10 @@ int w_fig_create(float x, float z, float stature, int material)
     s_figHold = 0;
     s_figStanceX = x; s_figStanceZ = z;
     s_figPlayer.x = x; s_figPlayer.y = s_worldFloorY + 1.5f; s_figPlayer.z = z + 1.5f;
+    // Same reason the slack is cleared above: persistent state cleared in only
+    // one of the two entry points arrives from the last figure.
+    s_figCarry = 0.0f; s_figDt = 1.0f / 72.0f;
+    figCarry();                            // so frame 1 is already correct
     s_figExists = 1;
     return BONE_COUNT;
 }
@@ -1910,7 +1953,7 @@ static void figGuard(float sway)
         // Elbow folded up so the hand comes to the cheek. Negative is forward.
         figBend(ARM(s) + 1, -2.05f);
         figPoint(ARM(s) + 2, 0.0f, -1.0f, 0.0f);
-        figShoulderHertz(ARM(s), 14.0f);
+        figShoulderHertz(ARM(s), 20.0f);
     }
     // The trunk holds. The first cut swayed it by TWISTING the abdomen and
     // chest a few degrees each way, which looked like the right idea and was
@@ -1921,8 +1964,8 @@ static void figGuard(float sway)
     // sway comes from the feet, so this one does too — see the stance shift
     // in w_fig_apply. What is left here is a small forward lean, which is
     // pitch, and pitch does not fight the heading.
-    figAim(BONE_ABDOMEN, qAxisAngle(1.0f, 0.0f, 0.0f, 0.10f));
-    figAim(BONE_CHEST, qAxisAngle(1.0f, 0.0f, 0.0f, 0.06f));
+    figAim(BONE_ABDOMEN, qAxisAngle(1.0f, 0.0f, 0.0f, 0.03f));
+    figAim(BONE_CHEST, qAxisAngle(1.0f, 0.0f, 0.0f, 0.02f));
     figAim(BONE_NECK, qAxisAngle(1.0f, 0.0f, 0.0f, -0.12f));
     figAim(BONE_HEAD, b3Quat_identity);
 }
@@ -1983,6 +2026,8 @@ WASM_EXPORT("w_fig_update")
 void w_fig_update(float px, float py, float pz, float dt)
 {
     if (!s_figExists) return;
+    // w_fig_apply is called without a dt of its own; this is where one is told.
+    s_figDt = dt > 1e-5f ? dt : 1.0f / 72.0f;
     s_figPlayer.x = px; s_figPlayer.y = py; s_figPlayer.z = pz;
     s_figPlayerEye = py;
 
@@ -2254,10 +2299,24 @@ void w_fig_apply(void)
     // One leg gone and the hip drops: it goes down on the good knee, and it
     // carries only the fraction of its own weight the remaining leg can hold.
     // That is the whole reason a leg is worth attacking.
+    // Standing, NOTHING lifts it: the leg column stands on the floor and the
+    // floor carries it. The whole vertical is scaled by the carry, not just
+    // the gravity term — a PD on hip height is an invisible hand too. While it
+    // is planted ay is exactly zero, and nothing may be added to it later.
+    //
+    // The carry rides in and out over a fifth of a second, so the transition
+    // into a stride is a shift of weight and not a jolt.
+    const float carryWant = (s_figState == FIG_STEP) ? 1.0f : 0.0f;
+    const float crate = s_figDt / 0.20f;
+    if (s_figCarry < carryWant)
+    { s_figCarry += crate; if (s_figCarry > carryWant) s_figCarry = carryWant; }
+    else
+    { s_figCarry -= crate; if (s_figCarry < carryWant) s_figCarry = carryWant; }
+
     const float targetY = s_figHipY * (0.45f + 0.55f * support);
     const float wv = 6.2831853f / 0.35f;
-    float ay = (targetY - (float)p.y) * wv * wv - v.y * 2.0f * 0.9f * wv
-             + 9.81f * support;
+    float ay = ((targetY - (float)p.y) * wv * wv - v.y * 2.0f * 0.9f * wv
+             + 9.81f * support) * s_figCarry;
 
     float ax = 0.0f, az = 0.0f;
     const float wh = 6.2831853f / 0.50f;
@@ -2332,25 +2391,45 @@ void w_fig_apply(void)
 
     const float wa = 6.2831853f / 0.55f;      // wa*dt = 0.16 at 72 Hz
     float rx = ux * wa * wa - w.x * 2.0f * wa;
-    float ry = err * wa * wa - w.y * 2.0f * wa;
     float rz = uz * wa * wa - w.z * 2.0f * wa;
+    // Turning used to be free because the feet were not on the floor. Now
+    // they are, and the whole weight through two soles is real friction to
+    // scrub — 542 N at 0.7 is 379 N to break before anything turns at all.
+    // Proportional gain cannot close a Coulomb deadband: it stalls the moment
+    // the torque drops under the friction, and geared four times it still
+    // stalled 0.14 rad short. An integrator can, because it keeps winding
+    // until the foot lets go. Only while it is planted — a stride turns freely
+    // and would wind this up into a spin. The damping term is deliberately NOT
+    // geared: it is what a punch pushes against, and multiplying it turned
+    // every blow into a whip that took the arm off at the shoulder.
+    // Geared FOUR times, and the gearing is monotonic over everything tried:
+    // 0.50 rad short at one, 0.138 at four, 0.109 at five, 0.073 at eight.
+    // Four is not the tightest — it is the most it can be geared before the
+    // figure starts squaring up to you so hard that a scripted pilot working
+    // its legs over can no longer reach them: at five the page run left both
+    // legs at 100%, at eight it turned into you and landed 324 blows in a
+    // run that usually lands 22. An integrator was built for the remaining
+    // 0.14 rad and taken out again: it closed the gap and cost half the damage
+    // four punches do to a thigh, because it wound on the fraction of a radian
+    // a landed blow leaves behind and turned the body away from the next one.
+    float ry = err * wa * wa * 4.0f - w.y * 2.0f * wa;
     {
         const float cap = 90.0f * support;
-        const float sq = rx*rx + ry*ry + rz*rz;
-        if (sq > cap * cap)
-        {
-            const float k = cap / __builtin_sqrtf(sq);
-            rx *= k; ry *= k; rz *= k;
-        }
+        const float sq = rx*rx + rz*rz;
+        if (sq > cap * cap) { const float k = cap / __builtin_sqrtf(sq); rx *= k; rz *= k; }
+        if (ry >  cap) ry =  cap;
+        if (ry < -cap) ry = -cap;
     }
 
-    s_figDbg[0] = err; s_figDbg[1] = ry; s_figDbg[2] = ay; s_figDbg[3] = ax;
+    s_figDbg[0] = err; s_figDbg[1] = ry; s_figDbg[2] = s_figCarry; s_figDbg[3] = ax;
     s_figDbg[4] = support; s_figDbg[5] = az; s_figDbg[6] = w.y; s_figDbg[7] = (float)p.y;
 
     // --- every bone takes its own share ---
     for (int b = 0; b < BONE_COUNT; b++)
     {
-        if (!s_figAttached[b]) continue;
+        // Not "is my own joint intact" — "am I still part of the body". A hand
+        // whose forearm has come off has an intact wrist and is not.
+        if (!s_figCarried[b]) continue;
         const float mb = b3Body_GetMass(s_figBone[b]);
         b3Vec3 f; f.x = ax * mb; f.y = ay * mb; f.z = az * mb;
         b3Body_ApplyForceToCenter(s_figBone[b], f, true);
@@ -2359,6 +2438,48 @@ void w_fig_apply(void)
         const float I = (Ib.cx.x + Ib.cy.y + Ib.cz.z) * (1.0f / 3.0f);
         b3Vec3 t; t.x = rx * I; t.y = ry * I; t.z = rz * I;
         b3Body_ApplyTorque(s_figBone[b], t, true);
+    }
+
+    // --- the legs push ------------------------------------------------------
+    //
+    // This is what standing IS. Not a lift: an EQUAL AND OPPOSITE pair between
+    // the pelvis and each sole. Its sum over the figure is exactly zero, so it
+    // cannot levitate anything and cannot hold up a piece that has come off —
+    // a severed leg is not in s_figCarried and gets no pair at all.
+    //
+    // What it does instead is press the sole into the floor. Every joint in
+    // the leg constrains translation rigidly, so the pair cannot stretch the
+    // leg; the only place it can go is into the contact under the foot, and it
+    // is the FLOOR'S REACTION that carries the body up. Measured: the ground
+    // reaction under the two soles is the figure's whole weight, and it is
+    // that number, not a term in this function, that holds it at hip height.
+    //
+    // It can push and it cannot pull, and it is capped at twice body weight,
+    // so the worst it can ever do is stand up briskly.
+    if (s_figCarry < 1.0f)
+    {
+        const int nl = figLegCarries(0) + figLegCarries(1);
+        if (nl > 0)
+        {
+            const float M = figMass();
+            const float ws = 6.2831853f * 4.0f;       // 4 Hz; ws*dt = 0.35
+            float a = (targetY - (float)p.y) * ws * ws - v.y * 2.0f * 0.9f * ws;
+            if (a < 0.0f) a = 0.0f;
+            float F = M * a / (float)nl;
+            const float lim = 2.0f * M * 9.81f / (float)nl;
+            if (F > lim) F = lim;
+            F *= (1.0f - s_figCarry);
+            for (int s = 0; s < 2; s++)
+            {
+                if (!figLegCarries(s)) continue;
+                const int ft = LEG(s) + 2;
+                if (!s_figCarried[ft]) continue;
+                b3Vec3 up = { 0.0f,  F, 0.0f };
+                b3Vec3 dn = { 0.0f, -F, 0.0f };
+                b3Body_ApplyForceToCenter(s_figBone[BONE_PELVIS], up, true);
+                b3Body_ApplyForceToCenter(s_figBone[ft], dn, true);
+            }
+        }
     }
 }
 
@@ -2386,6 +2507,9 @@ void w_fig_post(void)
         b3Body_SetAngularDamping(s_figBone[b], 0.4f);
         b3Body_SetLinearDamping(s_figBone[b], 0.05f);
     }
+    // This is the only place attachment changes mid-fight, so it is the only
+    // place the closure has to be re-settled.
+    figCarry();
 }
 
 // [exists, state, bonesOn, cellsAlive, cellsTotal, support, hipX, hipY, hipZ,
@@ -2467,6 +2591,82 @@ float* w_fig_bones(void)
         o[1] = (float)s_vxG[g].alive;
         o[2] = (float)(s_vxG[g].n[0] * s_vxG[g].n[1] * s_vxG[g].n[2]);
         o[3] = vxDamage(&s_vxG[g]);
+    }
+    return out;
+}
+
+// What the floor is actually doing under each foot: [N_left, N_right,
+// copL x,y,z, copR x,y,z]. On the build before this one it read 0 N, because
+// the soles hovered a centimetre off the ground and the ground carried none of
+// the figure's 542 N — every newton of it came from a gravity-cancelling term
+// applied bone by bone. On this build it reads the figure's weight.
+//
+// Not part of the controller. It is called on demand, so it costs nothing per
+// step and cannot destabilise anything. It exists because the whole claim of
+// this build is "the floor carries it", and that claim was never measurable.
+//
+// totalNormalImpulse accumulates the biased solve AND the relax pass of each
+// substep, so the raw sum is about twice the impulse the contact really spent.
+// That factor is an internals dependency of the pinned Box3D and it has its
+// own check in the suite.
+#define FIG_IMPULSE_CAL 0.5f
+
+WASM_EXPORT("w_fig_ground")
+float* w_fig_ground(void)
+{
+    static float out[8];
+    for (int i = 0; i < 8; i++) out[i] = 0.0f;
+    if (!s_figExists) return out;
+
+    for (int side = 0; side < 2; side++)
+    {
+        const int ft = LEG(side) + 2;
+        if (!s_figCarried[ft]) continue;
+        const b3BodyId body = s_figBone[ft];
+
+        int cap = b3Body_GetContactCapacity(body);
+        if (cap <= 0) continue;
+        if (cap > 24) cap = 24;
+        b3ContactData cd[24];
+        const int n = b3Body_GetContactData(body, cd, cap);
+        if (n <= 0) continue;
+
+        const b3MassData md = b3Body_GetMassData(body);
+        const b3Pos com = b3Body_GetWorldPoint(body, md.center);
+
+        float wsum = 0.0f, gsum = 0.0f, sx = 0.0f, sy = 0.0f, sz = 0.0f;
+        for (int i = 0; i < n; i++)
+        {
+            // The manifold normal points from shape A to shape B, so the push
+            // ON US flips sign if we are A.
+            const int weAreA = B3_ID_EQUALS(b3Shape_GetBody(cd[i].shapeIdA), body);
+            for (int mi = 0; mi < cd[i].manifoldCount; mi++)
+            {
+                const b3Manifold* mf = &cd[i].manifolds[mi];
+                const float uy = weAreA ? -mf->normal.y : mf->normal.y;
+                if (uy < 0.5f) continue;          // not something we stand on
+                for (int k = 0; k < mf->pointCount; k++)
+                {
+                    const b3ManifoldPoint* mp = &mf->points[k];
+                    if (mp->separation > 0.005f) continue;   // speculative
+                    const float J = mp->totalNormalImpulse;
+                    if (J <= 0.0f) continue;
+                    // anchorA/anchorB are offsets from that body's centre of
+                    // mass, already in world axes.
+                    const b3Vec3 a = weAreA ? mp->anchorA : mp->anchorB;
+                    sx += ((float)com.x + a.x) * J;
+                    sy += ((float)com.y + a.y) * J;
+                    sz += ((float)com.z + a.z) * J;
+                    wsum += J;
+                    gsum += J * uy;
+                }
+            }
+        }
+        if (wsum <= 1e-6f) continue;
+        out[side] = FIG_IMPULSE_CAL * gsum / s_figDt;
+        out[2 + side * 3 + 0] = sx / wsum;
+        out[2 + side * 3 + 1] = sy / wsum;
+        out[2 + side * 3 + 2] = sz / wsum;
     }
     return out;
 }
