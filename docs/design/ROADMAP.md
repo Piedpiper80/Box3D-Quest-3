@@ -330,3 +330,30 @@ the same mechanism as the hit reaction rather than needing its own.
   as a way to find the feel and are invisible to someone who does not edit web
   addresses. If a number needs finding by hand, it needs to be reachable from
   inside the headset.
+
+### Standing on its feet: what the naive version does
+
+The lift is currently sprayed over every bone — each one gets force = its mass
+times the body's wanted acceleration. That is why the figure reads as suspended
+rather than standing, and why a severed limb hangs in the air and a broken bone
+stands itself up off the floor: a loose piece keeps drawing its own slice of
+lift and its own share of the righting torque.
+
+The obvious fix is to put the weight in at the FEET and let it travel up the
+skeleton through the joints. **Applying an upward force to the foot bodies does
+not do this.** Measured, with the whole body's weight split between both feet:
+
+```
+FAIL  it stands, and keeps standing        hip 0.885, want 0.927
+FAIL  its feet are on the floor            ankle at 0.206 m
+FAIL  its head is at your eye line         crown at 0.970 m
+37 passed, 9 failed
+```
+
+The feet get lifted off the floor while the body sags underneath them — force
+applied to a foot accelerates the foot, it does not push the body up. Real
+standing takes its upward push from the ground pressing BACK, which only happens
+if the legs actively extend against the floor. So this wants leg actuation —
+drive the knee and hip to hold the hip at its target height, and let contact
+supply the reaction — not a relocated force. Bigger job than it looks, and it
+interacts with the joint stiffness the impact-slack now reduces.
