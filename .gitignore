@@ -19,3 +19,6 @@ captures/
 # Local copy of the wasm module, staged only so wasm/test.js can find it.
 # The published copy is docs/box3d.wasm.
 wasm/box3d.wasm
+
+# Local tooling for the screenshot loop (playwright-core)
+node_modules/
