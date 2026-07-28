@@ -32,7 +32,7 @@
 <body>
 <div class="wrap">
   <h1>CORE BREAKER</h1>
-  <p class="sub">Five fights. Another machine wants your core. Strip its armour, smash what's underneath — before it does the same to you. <span id="buildTag"></span></p>
+  <p class="sub"><span id="fightCount">Six fights.</span> Another machine wants your core. Strip its armour, smash what's underneath — before it does the same to you. <span id="buildTag"></span></p>
 
   <div class="card">
     <button id="enter" disabled>Checking headset…</button>
@@ -611,6 +611,17 @@
   // from three metres — a machine you box has to be BUILT like a machine.
   var EBULK = 1.55;
   var CAMPAIGN = [
+    // The JAGUAR opens the ladder. In One Must Fall it is the chassis every
+    // pilot starts on — a lean security machine, the fastest thing of its
+    // size, light enough that a clean hit tells. It teaches the fight: quick
+    // enough to punish standing still, thin enough in the core to reward
+    // stripping armour properly. Ochre plate over a gunmetal frame.
+    { name: "JAGUAR", place: "The Owner's Yard",
+      story: "A rich man's bodyguard, off its leash. Fast, and it knows it.",
+      mat: 0, scale: 0.82, core: 150, hover: 0, tempo: 1.20, pillarMat: 0,
+      skyC: [0.135,0.12,0.145], skyH: 0.7, skyN: 10, floorC: [0.175,0.17,0.205],
+      hullC: [0.62,0.44,0.18], visor: 1,
+      pillars: [[-2.5,-1.5],[2.4,-1.9],[-2.0,1.5],[2.2,1.3]] },
     { name: "SCRAPPER", place: "The Scrapfields",
       story: "An old harvester frame, re-armed. It remembers being told to dig.",
       mat: 0, scale: 0.85, core: 170, hover: 0, tempo: 1.15, pillarMat: 0,
@@ -836,9 +847,16 @@
   // the Pages CDN both cache hard — a playtest once got the old game and,
   // fairly, could not tell), and it is printed on the card so which build
   // loaded is never a guess.
-  var BUILD = 20;
+  var BUILD = 22;
   var bTag = document.getElementById("buildTag");
   if (bTag) bTag.textContent = "(build " + BUILD + ")";
+  // The ladder's length lives in one place — the blurb reads it rather than
+  // claiming a number that goes stale the moment a machine is added.
+  var fTag = document.getElementById("fightCount");
+  if (fTag) {
+    var WORDS = ["No","One","Two","Three","Four","Five","Six","Seven","Eight","Nine","Ten"];
+    fTag.textContent = (WORDS[CAMPAIGN.length] || CAMPAIGN.length) + " fights.";
+  }
   fetch("box3d.wasm?v=" + BUILD)
     .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.arrayBuffer(); })
     .then(function (b) { return WebAssembly.instantiate(b, { wasi_snapshot_preview1: wasi }); })
@@ -1410,15 +1428,24 @@
         }
         // Two eyes, not one slit — "he's got one visor for an eye. It's
         // bad." Placed across the head's own x-axis so they turn with it.
+        // A machine can opt out: the Jaguar wears one wide band across the
+        // face instead, which is the thing that makes it read as a Jaguar.
+        var faceCh = CAMPAIGN[Math.min(chapter, CAMPAIGN.length - 1)];
         var exx = 1 - 2*(q[1]*q[1] + q[2]*q[2]),
             exy = 2*(q[0]*q[1] + q[3]*q[2]),
             exz = 2*(q[0]*q[2] - q[3]*q[1]);
-        for (var eyeI = -1; eyeI <= 1; eyeI += 2) {
-          items.push({ m: trs([vx2 + exx * eyeI * 0.042 * eS,
-                               vy2 + exy * eyeI * 0.042 * eS,
-                               vz2 + exz * eyeI * 0.042 * eS], q,
-                              [0.026*eS, 0.020*eS, 0.015*eS]),
+        if (faceCh.visor) {
+          items.push({ m: trs([vx2, vy2, vz2], q,
+                              [0.074*eS, 0.017*eS, 0.015*eS]),
                        c: vc, mat: eState === 5 ? 0 : 5 });
+        } else {
+          for (var eyeI = -1; eyeI <= 1; eyeI += 2) {
+            items.push({ m: trs([vx2 + exx * eyeI * 0.042 * eS,
+                                 vy2 + exy * eyeI * 0.042 * eS,
+                                 vz2 + exz * eyeI * 0.042 * eS], q,
+                                [0.026*eS, 0.020*eS, 0.015*eS]),
+                         c: vc, mat: eState === 5 ? 0 : 5 });
+          }
         }
       })();
 

@@ -10,7 +10,7 @@ Catto, creator of Box2D). This repo is the complete home for the project: a
 **The game is [CORE BREAKER](https://piedpiper80.github.io/Box3D-Quest-3/arena.html).**
 Open **<https://piedpiper80.github.io/Box3D-Quest-3/arena.html>** in the Meta
 Quest Browser and tap **Enter VR**. Your arms are the machine's arms. A
-five-chapter campaign: strip the other machine's armour, smash the core
+six-chapter campaign: strip the other machine's armour, smash the core
 underneath, and take the road to the next fight — through heat that cooks
 your actuators, a collapse you can crawl back from, and an ending.
 
@@ -33,7 +33,7 @@ The spike pages that built it are live too:
 boxes).
 
 No headset handy? Add `?flat=1` to the arena URL for a flat in-browser
-preview with a scripted pilot, and `&ch=2` (0–4) to drop straight into a
+preview with a scripted pilot, and `&ch=2` (0–5) to drop straight into a
 later chapter's arena. In VR, `?grip=` and `?spring=` (0.3–3) tune the
 punch feel live, and `?calm=1` removes all view shake.
 
@@ -42,17 +42,21 @@ punch feel live, and `?calm=1` removes all view shake.
 Flat-preview captures from the screenshot loop that reviews every visual
 change (the in-headset view is first-person from the cockpit):
 
-| The Scrapfields | Milltown |
+| The Owner's Yard | The Scrapfields |
 | --- | --- |
-| ![Chapter 1 — the rust-hulled SCRAPPER at close quarters](docs/design/shots/ch1-scrapper.png) | ![Chapter 2 — a gauntlet landing in the WARDEN's face, sparks flying](docs/design/shots/ch2-warden.png) |
+| ![Chapter 1 — the ochre JAGUAR, visor lit, armour coming off it in plates](docs/design/shots/ch1-jaguar.png) | ![Chapter 2 — the rust-hulled SCRAPPER at close quarters](docs/design/shots/ch1-scrapper.png) |
 
-| Saltyard Row | The Foundry |
+| Milltown | Saltyard Row |
 | --- | --- |
-| ![Chapter 3 — the salt-green DANCER mid-stride in its crowded yard](docs/design/shots/ch3-dancer.png) | ![Chapter 4 — the JUGGERNAUT looming over a collapsed hull between foundry aisles](docs/design/shots/ch4-juggernaut.png) |
+| ![Chapter 3 — a gauntlet landing in the WARDEN's face, sparks flying](docs/design/shots/ch2-warden.png) | ![Chapter 4 — the salt-green DANCER mid-stride in its crowded yard](docs/design/shots/ch3-dancer.png) |
 
-| The High Dark | Victory |
+| The Foundry | The High Dark |
 | --- | --- |
-| ![Chapter 5 — the Returned, hovering, steel-plated, arena stripped bare](docs/design/shots/ch5-thereturned.png) | ![The wreck, the green ring, fists raised](docs/design/shots/victory.png) |
+| ![Chapter 5 — the JUGGERNAUT looming over a collapsed hull between foundry aisles](docs/design/shots/ch4-juggernaut.png) | ![Chapter 6 — the Returned, hovering, steel-plated, arena stripped bare](docs/design/shots/ch5-thereturned.png) |
+
+| Victory | |
+| --- | --- |
+| ![The wreck, the green ring, fists raised](docs/design/shots/victory.png) |
 
 All of it is the **real Box3D engine compiled to WebAssembly** (~360 KB,
 scalar, single-threaded) — see [`wasm/`](wasm/) for the C bridge, build

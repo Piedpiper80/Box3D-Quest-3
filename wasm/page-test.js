@@ -678,24 +678,28 @@ function poseBox(f) {
     const r3 = await runPage(page, 600, pose,
       { "box3d.campaign": JSON.stringify({ c: 2, u: 3, l: 1, v: 3 }),
         "box3d.armSpan": "1.75" });
+    // What this proves is that it booted at the SAVED chapter, lap and arms —
+    // not how long the ladder happens to be, so the total is left loose.
     check("a saved campaign boots where it was left",
-          /chapter 3 of 5/.test(r3.report) && /arms unlocked: 4 of 4/.test(r3.report) &&
+          /chapter 3 of \d+/.test(r3.report) && /arms unlocked: 4 of 4/.test(r3.report) &&
           /lap 2/.test(r3.report),
           (r3.report.match(/chapter [^\n]*/) || ["no chapter line"])[0]);
 
     // Fourth run: the campaign is completable, by proof. Boot at the final
-    // chapter (index 4) with everything unlocked; the aggressive script
-    // kills the God standing (an earlier draft won from its knees — that
-    // win counts, but the provoked victor turned the route into a beating),
-    // the final win fires ENDING, and begin-again reboots the campaign on
-    // the next lap. This is the only thing that executes ENDING.
+    // chapter with everything unlocked; the aggressive script kills the God
+    // standing (an earlier draft won from its knees — that win counts, but
+    // the provoked victor turned the route into a beating), the final win
+    // fires ENDING, and begin-again reboots the campaign on the next lap.
+    // This is the only thing that executes ENDING.
+    // The saved chapter is clamped to the last one on load, so seeding it
+    // absurdly high always lands on the finale however long the ladder gets.
     const r4 = await runPage(page, 7000, poseArenaWin,
-      { "box3d.campaign": JSON.stringify({ c: 4, u: 3, l: 0, v: 3 }),
+      { "box3d.campaign": JSON.stringify({ c: 99, u: 3, l: 0, v: 3 }),
         "box3d.armSpan": "1.75" });
     const endChain = ["FIGHT", "WON", "ENDING", "READY"];
     let endAt = 0;
     for (const s of r4.matchSeq) if (s === endChain[endAt]) endAt++;
-    check("the God can be beaten, and the fifth win fires the ending",
+    check("the God can be beaten, and the last win fires the ending",
           endAt >= endChain.length, "states seen: " + r4.matchSeq.join(">"));
 
     // Fifth run: the knockdown survived, end to end. Take the beating, go
