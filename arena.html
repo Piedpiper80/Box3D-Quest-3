@@ -733,7 +733,14 @@
       // Still dying in three punches at core 260 on stone. Steel plate and a
       // core past the Juggernaut's: a narrow machine has less plate area to
       // strip, so it needs the metal to be worth stripping.
-      mat: 2, scale: 0.82, core: 420, hover: 0, tempo: 1.20, pillarMat: 0,
+      // Tempo is not just speed — bridge.c picks the attack mix from it, and
+      // only a machine UNDER 0.9 draws the heavy overhead crush as its main
+      // line. Above it, half of every eight swings is the short-telegraph JAB.
+      // At 1.20 this thing flurried at you like a person, which is the one
+      // thing a giant machine must never do. 0.78 buys both halves of what a
+      // heavy hitter is: the overhead mix, and a telegraph that runs 22%
+      // longer instead of 20% shorter, because the same tempo scales s_eTimer.
+      mat: 2, scale: 0.82, core: 420, hover: 0, tempo: 0.78, pillarMat: 0,
       skyC: [0.135,0.12,0.145], skyH: 0.7, skyN: 10, floorC: [0.175,0.17,0.205],
       // Blue, from the game's own HAR-select sprite — NOT the ochre this was
       // first built in, which was invented out of nothing. The sprite reads:
@@ -755,7 +762,13 @@
       // inertia enough that the upright spring — tuned for the stock body —
       // could not hold it, and the machine floated on its face. Narrowing is
       // safe because it does not fight that spring; shortening is not.
-      limbs: 3, head: [3,1,2], torso: [0.66, 0.98, 0.74], visor: 1,
+      // limbCells cuts a limb segment into that many cubes ALONG ITS LENGTH,
+      // so each cell — and therefore the limb — is length/N thick. More cells
+      // is a THINNER limb, not a finer one. At 3 the legs read as chicken
+      // legs; 2 keeps the Jaguar lean without the machine standing on wire.
+      // The head was [3,1,2] — one cell tall, a flap rather than a head. It
+      // needs real height before a visor band means anything on it.
+      limbs: 2, head: [3,3,3], torso: [0.66, 0.98, 0.74], visor: 1,
       pillars: [[-2.5,-1.5],[2.4,-1.9],[-2.0,1.5],[2.2,1.3]] },
     { name: "SCRAPPER", place: "The Scrapfields",
       story: "An old harvester frame, re-armed. It remembers being told to dig.",
@@ -982,7 +995,7 @@
   // the Pages CDN both cache hard — a playtest once got the old game and,
   // fairly, could not tell), and it is printed on the card so which build
   // loaded is never a guess.
-  var BUILD = 30;
+  var BUILD = 31;
   var bTag = document.getElementById("buildTag");
   if (bTag) bTag.textContent = "(build " + BUILD + ")";
   // The ladder's length lives in one place — the blurb reads it rather than
