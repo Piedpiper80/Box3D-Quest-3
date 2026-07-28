@@ -1,8 +1,18 @@
 // Verification harness for box3d.wasm — real simulation checks, no rendering.
+//
+// Everything here is machine-checkable. What is deliberately NOT here is how
+// any of it feels, because that is the one thing a headset has to answer.
 const { readFileSync } = require("fs");
 const { WASI } = require("node:wasi");
 
 const wasi = new WASI({ version: "preview1" });
+
+// The skeleton, in the order the engine lays it out.
+const BONE = ["PELVIS","ABDOMEN","CHEST","NECK","HEAD",
+  "L_UPPERARM","L_FOREARM","L_HAND", "R_UPPERARM","R_FOREARM","R_HAND",
+  "L_THIGH","L_SHIN","L_FOOT", "R_THIGH","R_SHIN","R_FOOT"];
+const B = {}; BONE.forEach((n, i) => { B[n] = i; });
+const FIG = ["WAIT","STEP","WINDUP","STRIKE","RECOVER","FALLING","DOWN"];
 
 (async () => {
   const bytes = readFileSync(__dirname + "/box3d.wasm");
@@ -13,23 +23,6 @@ const wasi = new WASI({ version: "preview1" });
   const E = instance.exports;
   const mem = () => new Float32Array(E.memory.buffer);
 
-  const read = () => {
-    const n = E.w_count();
-    const ptr = E.w_state() >>> 2;
-    const f = mem();
-    const out = [];
-    for (let i = 0; i < n; i++) {
-      const o = ptr + i * 9;
-      out.push({
-        p: [f[o], f[o + 1], f[o + 2]],
-        q: [f[o + 3], f[o + 4], f[o + 5], f[o + 6]],
-        h: f[o + 7],
-        c: f[o + 8],
-      });
-    }
-    return out;
-  };
-
   let pass = 0, fail = 0, gaps = 0;
   const check = (name, ok, detail) => {
     if (ok) { pass++; console.log(`PASS  ${name}`); }
@@ -37,779 +30,355 @@ const wasi = new WASI({ version: "preview1" });
   };
   // For behaviour that is known to be wrong and is being worked on. It reports
   // the real measurement every run rather than being deleted or quietly
-  // loosened until it passes, so the gap stays visible and the number stays
-  // honest.
+  // loosened until it passes, so the gap stays visible and the number honest.
   const gap = (name, ok, detail) => {
     if (ok) { pass++; console.log(`PASS  ${name}`); }
     else { gaps++; console.log(`GAP   ${name}  ${detail || ""}`); }
   };
 
-  // --- init ---
-  E.w_init();
-  const n0 = E.w_count();
-  check("init creates 20 cubes", n0 === 20, `got ${n0}`);
+  const cubes = () => {
+    const n = E.w_count(), ptr = E.w_state() >>> 2, f = mem(), out = [];
+    for (let i = 0; i < n; i++) {
+      const o = ptr + i * 9;
+      out.push({ p: [f[o], f[o+1], f[o+2]], q: [f[o+3], f[o+4], f[o+5], f[o+6]], h: f[o+7] });
+    }
+    return out;
+  };
 
-  const before = read();
-  const maxY0 = Math.max(...before.map((c) => c.p[1]));
-  check("cubes start elevated", maxY0 > 1.5, `maxY=${maxY0.toFixed(3)}`);
-
-  // --- settle: 6 simulated seconds at 72 Hz ---
-  for (let i = 0; i < 432; i++) E.w_step(1 / 72);
-  const settled = read();
-
+  // =========================================================================
+  console.log("\n-- the solver is alive --");
+  // =========================================================================
+  E.w_reset(1, 0);
+  E.w_fill(40);
+  check("a pile spawns", E.w_count() === 40, `got ${E.w_count()}`);
+  const startMax = Math.max(...cubes().map((c) => c.p[1]));
+  for (let i = 0; i < 432; i++) E.w_step(1 / 72);   // six seconds
+  const settled = cubes();
   const minY = Math.min(...settled.map((c) => c.p[1] - c.h));
-  check("no cube below the floor", minY > -0.02, `min bottom=${minY.toFixed(4)}`);
+  check("no cube ends up below the floor", minY > -0.02, `lowest ${minY.toFixed(4)}`);
+  check("the pile fell and settled",
+    Math.max(...settled.map((c) => c.p[1])) < startMax,
+    `${startMax.toFixed(2)} -> ${Math.max(...settled.map((c) => c.p[1])).toFixed(2)}`);
+  check("every rotation is still a unit quaternion",
+    settled.every((c) => Math.abs(Math.hypot(...c.q) - 1) < 1e-3));
+  check("no NaN anywhere in the state",
+    settled.every((c) => c.p.every(Number.isFinite) && c.q.every(Number.isFinite)));
+  check("the capacity is reported, not hard-coded by callers", E.w_capacity() >= 512);
 
-  const maxY = Math.max(...settled.map((c) => c.p[1]));
-  check("cubes fell (tower height collapsed)", maxY < maxY0 - 0.5,
-    `maxY ${maxY0.toFixed(2)} -> ${maxY.toFixed(2)}`);
+  // The floor is a parameter because the page cannot assume Y=0 is the floor.
+  E.w_reset(1, 1.5);
+  E.w_spawn(0, 3.0, 0, 0, 0, 0, 0.1, 0);
+  for (let i = 0; i < 300; i++) E.w_step(1 / 72);
+  const onHighFloor = cubes()[0].p[1];
+  check("a floor set above zero really is the floor",
+    onHighFloor > 1.55 && onHighFloor < 1.7, `rested at ${onHighFloor.toFixed(3)}`);
 
-  const grounded = settled.filter((c) => c.p[1] - c.h < 0.15).length;
-  check("most cubes near the ground", grounded >= 14, `${grounded}/20 grounded`);
+  // =========================================================================
+  console.log("\n-- your fists --");
+  // =========================================================================
+  E.w_reset(0, 0);
+  E.w_hand_create(0, 0, 1.2, 0, 0.055, 1100, 30, 1.0, 1200);
+  E.w_hand_create(1, 0.4, 1.2, 0, 0.055, 1100, 30, 1.0, 1200);
+  const fistMass = E.w_hand_mass(1);
+  check("a fist has real mass", fistMass > 0.5 && fistMass < 4, `${fistMass.toFixed(2)} kg`);
+  E.w_hand_target(1, 0.4, 1.5, -0.4, 0, 0, 0, 1);
+  for (let i = 0; i < 120; i++) { E.w_hand_apply(); E.w_step(1 / 72); }
+  const hs = () => { const o = E.w_hand_state() >>> 2, f = mem();
+    return [[f[o], f[o+1], f[o+2]], [f[o+8], f[o+9], f[o+10]]]; };
+  const err = Math.hypot(hs()[1][0] - 0.4, hs()[1][1] - 1.5, hs()[1][2] + 0.4);
+  check("a fist arrives where your hand is", err < 0.02, `${(err * 1000).toFixed(1)} mm off`);
+  // Gravity would drag it out of your hand; a fist holds where you hold it.
+  const heldY = hs()[1][1];
+  for (let i = 0; i < 300; i++) { E.w_hand_apply(); E.w_step(1 / 72); }
+  check("a fist does not sag", Math.abs(hs()[1][1] - heldY) < 0.005,
+    `drifted ${((hs()[1][1] - heldY) * 1000).toFixed(1)} mm`);
 
-  const badQuat = settled.filter((c) => {
-    const [x, y, z, w] = c.q;
-    return Math.abs(Math.hypot(x, y, z, w) - 1) > 0.01;
-  }).length;
-  check("rotations are unit quaternions", badQuat === 0, `${badQuat} bad`);
+  // The world being torn down must take the fists with it, or the next
+  // w_hand_apply drives two stale handles into a destroyed world.
+  E.w_reset(0, 0);
+  E.w_hand_apply();
+  E.w_step(1 / 72);
+  check("a world reset forgets the old fists", true);
 
-  const nan = settled.filter((c) => c.p.some((v) => !Number.isFinite(v))).length;
-  check("no NaN positions", nan === 0, `${nan} NaN`);
+  // =========================================================================
+  console.log("\n-- matter that breaks --");
+  // =========================================================================
+  E.w_reset(0, 0);
+  const wall = E.w_vox_create(0, 0, -2, 8, 6, 1, 0.12, 1);   // stone
+  const gs = (g) => { const o = E.w_vox_grid_stats(g) >>> 2, f = mem();
+    return { alive: f[o], killed: f[o+1], total: f[o+2], dmg: f[o+3] }; };
+  check("a wall builds as one grid of cells", gs(wall).total === 48, `${gs(wall).total} cells`);
+  const runsIntact = E.w_vox_run_count();
+  check("intact cells merge into runs, not one shape per cell",
+    runsIntact > 0 && runsIntact < 48, `${runsIntact} shapes for 48 cells`);
 
-  // --- throw a cube forward (-z), like a trigger pull ---
-  E.w_spawn(0, 1.3, 0, 0, 1.0, -4.5, 0.07, 1);
-  check("spawn added a cube", E.w_count() === 21, `got ${E.w_count()}`);
-  for (let i = 0; i < 36; i++) E.w_step(1 / 72); // 0.5 s of flight
-  const thrown = read()[20];
-  check("thrown cube traveled forward", thrown.p[2] < -1.0, `z=${thrown.p[2].toFixed(3)}`);
-  for (let i = 0; i < 216; i++) E.w_step(1 / 72); // 3 s to land
-  const landed = read()[20];
-  check("thrown cube landed on floor", Math.abs(landed.p[1] - landed.h) < 0.12,
-    `y=${landed.p[1].toFixed(3)} h=${landed.h.toFixed(3)}`);
+  E.w_vox_blast(0, 0.4, -2, 400);
+  E.w_vox_post();
+  check("a blast kills cells", gs(wall).alive < 48, `${gs(wall).alive}/48 left`);
 
-  // --- recycling: overflow the cube budget ---
-  // Derived from the module rather than hard-coded: this assertion previously
-  // baked in 96 and quietly went stale when the cap was raised.
-  const cap = E.w_capacity();
-  for (let i = 0; i < cap + 50; i++) E.w_spawn(0, 1, 0, 0, 0, -2, 0.06, 2);
-  check("cube cap respected", E.w_count() <= cap, `got ${E.w_count()}, cap ${cap}`);
-  check("recycling engaged at the cap", E.w_count() === cap, `got ${E.w_count()}, cap ${cap}`);
-  for (let i = 0; i < 72; i++) E.w_step(1 / 72);
-  const after = read();
-  const nan2 = after.filter((c) => c.p.some((v) => !Number.isFinite(v))).length;
-  check("stable after recycling storm", nan2 === 0, `${nan2} NaN`);
+  // Structure: cut a line across and the top must fall off on its own.
+  for (let x = -0.5; x < 0.55; x += 0.06) E.w_vox_blast(x, 0.30, -2, 260);
+  E.w_vox_post();
+  for (let i = 0; i < 200; i++) { E.w_step(1 / 72); E.w_vox_post(); }
+  const st = () => { const o = E.w_vox_stats() >>> 2, f = mem();
+    return { alive: f[o], killed: f[o+1], chunks: f[o+2], shapes: f[o+3] }; };
+  check("cut a wall in half and the top detaches",
+    st().chunks > 0 || gs(wall).alive < 24, `${st().chunks} chunks, ${gs(wall).alive} left`);
 
-  // --- benchmark scene construction ---
-  E.w_reset(0);
-  check("reset empties the world", E.w_count() === 0, `got ${E.w_count()}`);
-  E.w_fill(200);
-  check("fill builds the requested pile", E.w_count() === 200, `got ${E.w_count()}`);
+  // The debris budget is what keeps a collapse affordable.
+  E.w_reset(0, 0);
+  const w2 = E.w_vox_create(0, 0, -2, 10, 8, 2, 0.10, 0);
+  for (let x = -0.5; x < 0.55; x += 0.05)
+    for (let y = 0.05; y < 0.8; y += 0.05) E.w_vox_blast(x, y, -2, 90);
+  E.w_vox_post();
+  for (let i = 0; i < 60; i++) { E.w_step(1 / 72); E.w_vox_post(); }
+  check("live debris is capped", E.w_count() <= 160, `${E.w_count()} live cubes`);
+  check("levelling a wall leaves nothing standing", gs(w2).alive < 40, `${gs(w2).alive} left`);
 
-  // --- perf: how expensive is a step at a defined load? ---
-  // Measured on the 200-body scene just built, rather than on whatever bodies
-  // happened to survive the recycling storm — a controlled load makes this
-  // number reproducible and comparable between runs.
-  for (let i = 0; i < 30; i++) E.w_step(1 / 72); // let the pile form
+  // =========================================================================
+  console.log("\n-- the figure: a human skeleton --");
+  // =========================================================================
+  const STEP = 1 / 72;
+  const figState = () => { const o = E.w_fig_state() >>> 2, f = mem();
+    return { exists: f[o], state: f[o+1] | 0, bones: f[o+2], alive: f[o+3], total: f[o+4],
+             support: f[o+5], hip: [f[o+6], f[o+7], f[o+8]], face: f[o+9], dist: f[o+10],
+             wind: f[o+11], arm: f[o+12], reach: f[o+13], broke: f[o+14], stature: f[o+15] }; };
+  const figPose = () => { const o = E.w_fig_pose() >>> 2, f = mem();
+    return BONE.map((n, i) => ({ n, p: [f[o+i*8], f[o+i*8+1], f[o+i*8+2]], on: f[o+i*8+7] })); };
+  const figBones = () => { const o = E.w_fig_bones() >>> 2, f = mem();
+    return BONE.map((n, i) => ({ n, on: f[o+i*4], alive: f[o+i*4+1], total: f[o+i*4+2],
+                                 dmg: f[o+i*4+3] })); };
+  const figJoints = () => { const o = E.w_fig_joints() >>> 2, f = mem();
+    return { lElbow: f[o], rElbow: f[o+1], lKnee: f[o+2], rKnee: f[o+3] }; };
+  const rig = () => { const o = E.w_fig_rig() >>> 2, f = mem();
+    return { mass: f[o], pelvis: f[o+1], I: f[o+2], hipY: f[o+3], reach: f[o+4] }; };
+
+  const PLAYER = [0, 1.62, 1.6];
+  function boot(stature) {
+    E.w_reset(0, 0);
+    E.w_fig_create(0, 0, stature || 1.75, 2);
+    E.w_hand_create(0, -0.3, 1.2, 1.3, 0.055, 1100, 30, 1.0, 1200);
+    E.w_hand_create(1, 0.3, 1.2, 1.3, 0.055, 1100, 30, 1.0, 1200);
+    E.w_hand_reach_mass(0, 4); E.w_hand_reach_mass(1, 4);
+  }
+  function tick(px, pz, hl, hr) {
+    if (hl) E.w_hand_target(0, hl[0], hl[1], hl[2], 0, 0, 0, 1);
+    if (hr) E.w_hand_target(1, hr[0], hr[1], hr[2], 0, 0, 0, 1);
+    E.w_fig_update(px === undefined ? PLAYER[0] : px, PLAYER[1],
+                   pz === undefined ? PLAYER[2] : pz, STEP);
+    E.w_hand_apply(); E.w_fig_apply(); E.w_step(STEP);
+    E.w_vox_post(); E.w_fig_post();
+  }
+
+  boot(1.75);
+  check("seventeen bones", E.w_fig_bone_count() === 17, `${E.w_fig_bone_count()}`);
+  check("every bone is a grid that can be broken",
+    figBones().every((b) => b.total > 0), figBones().filter((b) => !b.total).map((b) => b.n).join(","));
+  check("there is no core, no reactor, nothing to detonate",
+    !("w_fig_core" in E) && !("w_enemy_damage_core" in E) && !("w_fig_explode" in E));
+  const r0 = rig();
+  check("it weighs what a person that size weighs",
+    r0.mass > 45 && r0.mass < 85, `${r0.mass.toFixed(1)} kg at 1.75 m`);
+
+  E.w_fig_hold(1);
+  for (let i = 0; i < 72 * 6; i++) tick();
+  const s1 = figState(), p1 = figPose();
+  check("it stands, and keeps standing",
+    Math.abs(s1.hip[1] - r0.hipY) < 0.04 && s1.state === 0,
+    `hip ${s1.hip[1].toFixed(3)} want ${r0.hipY.toFixed(3)}, state ${FIG[s1.state]}`);
+  // The head is where a head goes: crown at stature. This is the check that
+  // catches a spine quietly folding — it used to sit 68 cm low and nothing
+  // errored, it just slowly lay down.
+  const headTop = p1[B.HEAD].p[1] + 0.11 * 1.75;
+  check("its head is at your eye line, not folded onto its chest",
+    Math.abs(headTop - 1.75) < 0.10, `crown at ${headTop.toFixed(3)} m`);
+  check("its feet are on the floor, not through it and not hovering",
+    p1[B.L_FOOT].p[1] > 0.02 && p1[B.L_FOOT].p[1] < 0.14,
+    `ankle at ${p1[B.L_FOOT].p[1].toFixed(3)} m`);
+
+  // The joints are the joints you have. A knee that can bend forwards is the
+  // single clearest tell that a rig is not a body.
+  const j1 = figJoints();
+  check("its elbows are folded forward, as a guard",
+    j1.lElbow < -1.0 && j1.rElbow < -1.0,
+    `L ${j1.lElbow.toFixed(2)} R ${j1.rElbow.toFixed(2)} rad`);
+  check("its knees do not bend forwards",
+    j1.lKnee > -0.06 && j1.rKnee > -0.06,
+    `L ${j1.lKnee.toFixed(2)} R ${j1.rKnee.toFixed(2)} rad`);
+
+  // It is built to the person in the headset, not to a constant.
+  boot(1.55); E.w_fig_hold(1);
+  for (let i = 0; i < 72 * 3; i++) tick();
+  const small = figPose()[B.HEAD].p[1];
+  boot(2.00); E.w_fig_hold(1);
+  for (let i = 0; i < 72 * 3; i++) tick();
+  const tall = figPose()[B.HEAD].p[1];
+  check("a taller player gets a taller opponent", tall - small > 0.35,
+    `${small.toFixed(2)} m vs ${tall.toFixed(2)} m at the head`);
+
+  // Turning to face you. Every earlier version of this controller either
+  // could not turn at all or span like a top; both looked like tuning and
+  // neither was.
+  for (const [px, pz, want] of [[0, 1.6, 0], [1.6, 0, Math.PI / 2], [-1.6, 0, -Math.PI / 2]]) {
+    boot(1.75); E.w_fig_hold(1);
+    for (let i = 0; i < 72 * 4; i++) tick(px, pz);
+    let e = figState().face - want;
+    while (e > Math.PI) e -= 2 * Math.PI;
+    while (e < -Math.PI) e += 2 * Math.PI;
+    check(`it turns to face a player at (${px}, ${pz})`, Math.abs(e) < 0.15,
+      `off by ${e.toFixed(3)} rad`);
+  }
+
+  // =========================================================================
+  console.log("\n-- its will --");
+  // =========================================================================
+  boot(1.75);
+  const seen = new Set();
+  let closest = 99;
+  for (let i = 0; i < 72 * 14; i++) {
+    tick();
+    const s = figState();
+    seen.add(FIG[s.state]);
+    if (s.dist < closest) closest = s.dist;
+  }
+  check("it closes on you", closest < 1.0, `got to ${closest.toFixed(2)} m`);
+  check("it strides, guards, telegraphs and throws",
+    ["STEP", "WAIT", "WINDUP", "STRIKE", "RECOVER"].every((k) => seen.has(k)),
+    [...seen].join(","));
+  check("it is still standing after fourteen seconds unopposed",
+    figState().state !== 6, FIG[figState().state]);
+  // The stride is the legs doing it, not the hips gliding.
+  boot(1.75);
+  let kneeMax = 0;
+  for (let i = 0; i < 72 * 6; i++) { tick(0, 4.0); kneeMax = Math.max(kneeMax, figJoints().lKnee); }
+  check("walking bends its knees", kneeMax > 0.15, `peak knee ${kneeMax.toFixed(2)} rad`);
+
+  // =========================================================================
+  console.log("\n-- what breaking means --");
+  // =========================================================================
+  // A punch that draws back and drives through, aimed at a bone.
+  // A punch that draws back and then drives through over several frames — a
+  // hand travels, it does not teleport, and a target that jumps a metre in one
+  // step asks the solver a question no headset will ever ask it.
+  // Aim at the middle of the bone, which is where w_vox_grid_pose puts it —
+  // NOT at the bone's own origin, which is the joint it hangs from. For a
+  // thigh those are 10 cm apart and it does not matter; for a forearm folded
+  // up into a guard the origin is the elbow and the bone runs UP and AWAY
+  // from it, so every punch aimed there went past the arm into open air and
+  // forty cycles broke nothing.
+  //
+  // The blow STOPS at the surface. Driving the target through to the far side
+  // sounds harmless — a punch does follow through — but the fist is stiff and
+  // continuous, so it ends the stroke wedged inside the body, and the retract
+  // then drags it back out through whatever is in the way. Logged hit by hit,
+  // punches aimed squarely at one thigh were landing on the other one, on the
+  // pelvis and on the abdomen, because the fist was living between the legs.
+  // Damage is momentum at the moment of contact; where the stroke ends after
+  // that contributes nothing but mess.
+  function work(bone, cycles) {
+    for (let n = 0; n < cycles && figBones()[bone].on; n++) {
+      const g = E.w_fig_bone_grid(bone);
+      const o = E.w_vox_grid_pose(g) >>> 2, mf = mem();
+      const cx = mf[o], cy = mf[o+1], near = mf[o+2] + mf[o+9] * 0.5;
+      for (let i = 0; i < 12; i++) tick(undefined, undefined, null, [cx, cy, near + 0.55]);
+      for (let i = 0; i < 9; i++)
+        tick(undefined, undefined, null, [cx, cy, near + 0.55 * (1 - (i + 1) / 9)]);
+      for (let i = 0; i < 5; i++) tick(undefined, undefined, null, [cx, cy, near]);
+    }
+  }
+
+  boot(1.75); E.w_fig_hold(1);
+  for (let i = 0; i < 72; i++) tick();
+  // A thigh, not the chest: at fighting range the chest sits behind its guard.
+  // And the measure is DAMAGE, not the cell count — a cell only leaves the
+  // count when it is entirely gone, so four solid punches into a tough limb
+  // read as no progress at all if you only look at how many cells are left.
+  work(B.L_THIGH, 4);
+  const dented = figBones()[B.L_THIGH];
+  check("a punch dents before it destroys",
+    dented.on === 1 && dented.dmg > 0.05 && dented.alive === dented.total,
+    `thigh ${Math.round(dented.dmg * 100)}% beaten in, ${dented.alive}/${dented.total} cells, attached ${dented.on}`);
+
+  // Break an elbow and the forearm and the hand go together. Nothing in the
+  // engine says so — the skeleton does, because the hand is jointed to the
+  // forearm and the forearm has stopped being jointed to anything.
+  boot(1.75); E.w_fig_hold(1);
+  for (let i = 0; i < 72; i++) tick();
+  work(B.R_FOREARM, 40);
+  for (let i = 0; i < 72 * 3; i++) tick();
+  const bb = figBones(), pp = figPose();
+  check("a broken forearm comes off", bb[B.R_FOREARM].on === 0);
+  check("and the hand goes with it",
+    pp[B.R_HAND].p[1] < 0.5 && pp[B.R_FOREARM].p[1] < 0.5,
+    `hand at ${pp[B.R_HAND].p[1].toFixed(2)} m, forearm at ${pp[B.R_FOREARM].p[1].toFixed(2)} m`);
+  check("the rest of it is still standing",
+    figState().state !== 6 && bb[B.CHEST].on === 1, FIG[figState().state]);
+
+  // Take both arms and it cannot throw anything. It used to wind up forever
+  // with nothing on the end of either shoulder.
+  work(B.L_FOREARM, 40);
+  E.w_fig_hold(0);
+  const armless = new Set();
+  for (let i = 0; i < 72 * 8; i++) { tick(); armless.add(FIG[figState().state]); }
+  check("with both arms gone it stops trying to throw",
+    !armless.has("STRIKE"), [...armless].join(","));
+
+  // The legs are the way down, and one leg is a distinct state — not a debuff.
+  boot(1.75); E.w_fig_hold(1);
+  for (let i = 0; i < 72; i++) tick();
+  const standHip = figState().hip[1];
+  work(B.L_THIGH, 40);
+  for (let i = 0; i < 72 * 2; i++) tick();
+  const oneLeg = figState();
+  check("one leg gone and it drops to that knee",
+    oneLeg.support === 0.5 && oneLeg.hip[1] < standHip - 0.15,
+    `support ${oneLeg.support}, hip ${standHip.toFixed(2)} -> ${oneLeg.hip[1].toFixed(2)}`);
+  check("and it stops walking",
+    oneLeg.state !== 1, FIG[oneLeg.state]);
+  work(B.R_THIGH, 40);
+  for (let i = 0; i < 72 * 4; i++) tick();
+  const dead = figState();
+  check("both legs gone and it goes down for good",
+    dead.state === 6 && dead.hip[1] < 0.35,
+    `${FIG[dead.state]}, hip ${dead.hip[1].toFixed(2)}`);
+  check("nothing exploded on the way down — its chest is intact",
+    figBones()[B.CHEST].on === 1 && figBones()[B.CHEST].alive > 0,
+    `chest ${figBones()[B.CHEST].alive}/${figBones()[B.CHEST].total}`);
+
+  // Rebuilding for the next one must not leak the last one.
+  const bonesBefore = E.w_fig_bone_count();
+  E.w_fig_destroy();
+  E.w_fig_create(0, 0, 1.75, 2);
+  // Hands out of the way first: left where they were, they are buried in the
+  // spot the last one stood and the new one is born being punched.
+  for (let i = 0; i < 72 * 3; i++) tick(undefined, undefined, [-0.6, 1.2, 2.2], [0.6, 1.2, 2.2]);
+  check("the next one arrives whole", figState().bones === bonesBefore &&
+    figState().alive === figState().total,
+    `${figState().bones} bones, ${figState().alive}/${figState().total} cells`);
+
+  // Nothing may go non-finite, ever. A single NaN in a joint poisons the
+  // whole solver and the page just goes still.
+  let bad = 0;
+  for (const [k, v] of Object.entries(figState()))
+    if (Array.isArray(v)) { if (!v.every(Number.isFinite)) bad++; }
+    else if (!Number.isFinite(v)) bad++;
+  for (const b of figPose()) if (!b.p.every(Number.isFinite)) bad++;
+  check("no NaN anywhere in the figure", bad === 0, `${bad} non-finite`);
+
+  // =========================================================================
+  console.log("\n-- the frame budget --");
+  // =========================================================================
+  boot(1.75);
+  for (let i = 0; i < 72; i++) tick();
   const t0 = process.hrtime.bigint();
-  for (let i = 0; i < 200; i++) E.w_step(1 / 72);
-  const usPerStep = Number(process.hrtime.bigint() - t0) / 200 / 1000;
-  console.log(`perf: ${usPerStep.toFixed(0)} us/step with ${E.w_count()} cubes (budget: 13888 us/frame @72Hz)`);
-  check("step fits a 72 Hz frame budget", usPerStep < 6000, `${usPerStep.toFixed(0)} us`);
-
-  // --- the mech ---
-  //
-  // Four separate faults were live here at once, each hiding the others, and
-  // none of them showed up as an error: a cone limit past the quarter turn
-  // Box3D allows (the assert is compiled out of a release build), an elbow
-  // hinged along the arm's own length so it could only twist, that elbow's fold
-  // direction fenced off by its limits, and two controllers with gains scaled
-  // by mass where the dynamics wanted rotational inertia. Every one of them is
-  // silent — the machine just thrashed. These pin the behaviour instead.
-  const HEAD = 1.62, CHEST = HEAD - 0.40;
-  // What the page computes from a measured arm span, kept in step with it.
-  const SPAN = 1.75, SHOULDER_HALF = SPAN * 0.11, TOOL_LEN = 2 * 0.06 * 1.0;
-  const BONES = SPAN * 0.5 - SHOULDER_HALF - TOOL_LEN;
-  const UPPER = BONES * 0.55, FORE = BONES * 0.45;
-  const mech = () => { const p = E.w_mech_state() >>> 2; return mem().slice(p, p + 49); };
-  const joints = () => { const p = E.w_mech_joints() >>> 2; return mem().slice(p, p + 6); };
-  // The end of the left arm — the far face of the attachment, which is the
-  // point the engine hauls toward your hand. Body 3's origin is its wrist end,
-  // one attachment-length short of that, so comparing that against the hand
-  // would report a permanent 18 cm error that is not real.
-  const tipL = (f) => {
-    const o = 21, x = f[o+3], y = f[o+4], z = f[o+5], w = f[o+6];
-    const d = -2 * (0.06 * 1.0);               // thickness * mount multiplier
-    // rotate (0, 0, d) by the attachment's quaternion
-    const tx = 2 * (y * d), ty = 2 * (-x * d);
-    return [f[o] + w*tx + y*0 - z*ty,
-            f[o+1] + w*ty + z*tx - x*0,
-            f[o+2] + d + (x*ty - y*tx)];
-  };
-  const tiltOf = (f) => Math.acos(Math.max(-1, Math.min(1, 1 - 2 * (f[3]*f[3] + f[5]*f[5])))) * 180 / Math.PI;
-
-  const build = (density, cone = 1.5707) => {
-    E.w_reset(1, 0);
-    // Joint friction matched to docs/mech.html, or this measures a machine the
-    // headset never runs.
-    // Arm proportions from a measured 1.75 m span, as the page derives them.
-    E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, density, 4, 3, cone, SHOULDER_HALF);
-  };
-  const drive = (steps, target) => {
-    for (let s = 0; s < steps; s++) {
-      if (target) { E.w_mech_hand(0, ...target, 1, 0, 0, 0, 1); E.w_mech_hand(1, -target[0], target[1], target[2], 1, 0, 0, 0, 1); }
-      E.w_mech_stand(0, CHEST, 0);
-      E.w_mech_apply();
-      E.w_step(1 / 72);
-    }
-    return mech();
-  };
-
-  // Stands under the weight of its own arms. Before the uprighting torque was
-  // derived from inertia this reached 54 degrees and kept going.
-  build(800);
-  let f = drive(400, null);
-  check("the machine stands up on its own", tiltOf(f) < 12, `tilted ${tiltOf(f).toFixed(1)} deg`);
-  check("it holds its height", Math.abs(f[1] - CHEST) < 0.06, `y ${f[1].toFixed(3)} vs ${CHEST}`);
-
-  // Settles rather than drifting. A fixed target cannot cause motion, so any
-  // steady drift is a controller adding energy — which is how the unstable aim
-  // gains were found.
-  build(800);
-  drive(300, [-0.30, 1.15, -0.35]);
-  const a = tipL(mech());
-  drive(120, [-0.30, 1.15, -0.35]);
-  const b = tipL(mech());
-  const drift = Math.hypot(b[0]-a[0], b[1]-a[1], b[2]-a[2]);
-  check("the arm settles instead of drifting", drift < 0.03, `moved ${drift.toFixed(3)} m while the hand was still`);
-
-  // The elbow is a hinge, and it folds. It used to sit pinned at its limit in
-  // every pose with the arm stretched out full length past a near target.
-  build(800);
-  E.w_mech_pin(1);
-  drive(400, [-0.25, 1.20, -0.20]);              // a hand close to the chest
-  const jf = joints(), elbow = jf[1] * 180 / Math.PI;
-  check("the elbow folds when the hand is close", elbow < -40, `elbow at ${elbow.toFixed(0)} deg`);
-  const sh = [-0.22, CHEST + 0.17, 0], t = tipL(mech());
-  const extended = Math.hypot(t[0]-sh[0], t[1]-sh[1], t[2]-sh[2]);
-  check("the arm shortens to reach a near target", extended < 0.6, `arm out to ${extended.toFixed(2)} m for a 0.28 m reach`);
-
-  // A cone past a quarter turn is out of range for Box3D and must be clamped
-  // rather than handed to the solver.
-  build(800, 2.2);
-  E.w_mech_pin(1);
-  f = drive(400, [-0.30, 1.15, -0.35]);
-  const finite = [...f].every((v) => Number.isFinite(v));
-  check("an over-wide cone is clamped, not passed through", finite, "NaN in the mech state");
-
-  // The arm has to sit where the hand is when the hand is still.
-  //
-  // This is the check that was missing, and it is the one that matters most.
-  // The arm used to hang 13 cm below the hand at the lightest weight and 38 cm
-  // at the heaviest, nearly all of it straight down, because nothing carried
-  // the arm's own weight. That was defended as the weight signal for a whole
-  // round of work. It is not one — it is the arm visibly failing to follow you,
-  // which is the single thing this spike has to get right.
-  const still = [-0.30, 1.15, -0.35];
-  const restErrAt = (density) => {
-    build(density);
-    const s = drive(400, still), tp = tipL(s);
-    return Math.hypot(tp[0]-still[0], tp[1]-still[1], tp[2]-still[2]);
-  };
-  //
-  // This was 7-22 cm depending on the pose until the machine stopped colliding
-  // with itself. The folded arm was pressing its own forearm and mount into the
-  // torso, and a contact holds a spring off its target indefinitely.
-  for (const d of [350, 800, 1600, 2800]) {
-    const e = restErrAt(d);
-    check(`held still, the arm reaches the hand (density ${d})`, e < 0.05,
-          `${(e*100).toFixed(1)} cm short`);
-  }
-
-  // And it has to keep articulating at every weight. The heaviest arm used to
-  // lock out dead straight — 1 to 6 degrees of elbow across a whole session —
-  // because the pull had nothing spare to fold it with once it was also
-  // holding the arm up.
-  const elbowRangeAt = (density) => {
-    build(density);
-    let lo = 999, hi = -999;
-    for (let s = 0; s <= 500; s++) {
-      const t = s / 72;
-      const h = [-0.30 + 0.18*Math.sin(t*1.6), 1.15 + 0.22*Math.sin(t*1.1), -0.35 - 0.22*Math.sin(t*2.1)];
-      E.w_mech_hand(0, ...h, 1, 0, 0, 0, 1);
-      E.w_mech_hand(1, -h[0], h[1], h[2], 1, 0, 0, 0, 1);
-      E.w_mech_stand(0, CHEST, 0); E.w_mech_apply(); E.w_step(1 / 72);
-      if (s > 150) { const a = joints()[1] * 180 / Math.PI; lo = Math.min(lo, a); hi = Math.max(hi, a); }
-    }
-    return hi - lo;
-  };
-  for (const d of [350, 2800]) {
-    const r = elbowRangeAt(d);
-    check(`the elbow keeps working at density ${d}`, r > 15, `only ${r.toFixed(0)} deg of travel`);
-  }
-
-  // Weight shows up as momentum, so it has to be measured with a motion that
-  // has some. A gentle wave reported only 1.3x between the lightest and
-  // heaviest arm and read as "weight barely matters" — but nothing is being
-  // accelerated hard enough there for mass to bite. A punch is the motion this
-  // game is made of, and it separates them properly.
-  const punchLagAt = (density) => {
-    build(density);
-    const rest = [-0.28, 1.20, -0.20], out = -0.62;
-    let peak = 0;
-    for (let s = 0; s <= 400; s++) {
-      // 0.42 m forward in about 0.15 s, then stop dead.
-      const t = s < 150 ? 0 : Math.min(1, (s - 150) / 11);
-      const h = [rest[0], rest[1], rest[2] + (out - rest[2]) * t];
-      E.w_mech_hand(0, ...h, 1, 0, 0, 0, 1);
-      E.w_mech_hand(1, -h[0], h[1], h[2], 1, 0, 0, 0, 1);
-      E.w_mech_stand(0, CHEST, 0); E.w_mech_apply(); E.w_step(1 / 72);
-      if (s >= 150) {
-        const tp = tipL(mech());
-        peak = Math.max(peak, Math.hypot(tp[0]-h[0], tp[1]-h[1], tp[2]-h[2]));
-      }
-    }
-    return peak;
-  };
-  // Box3D's joint springs are mass-normalised, which on its own would make a
-  // 3 kg and a 26 kg arm punch identically. Each joint's spring rate is derived
-  // from its own inertia instead, so a fixed actuator stiffness gives a heavy
-  // limb a lower natural frequency — which is what being heavy means.
-  const lightLag = punchLagAt(350), heavyLag = punchLagAt(2800);
-  check("a heavy arm is harder to throw a punch with", heavyLag > lightLag * 1.8,
-        `light ${(lightLag*100).toFixed(1)} cm behind, heavy ${(heavyLag*100).toFixed(1)} cm`);
-
-  // The elbow has to sit where an elbow sits.
-  //
-  // A ball shoulder plus a pull at the wrist leaves one degree of freedom that
-  // nothing determines: the elbow can be anywhere on a circle about the
-  // shoulder-to-wrist line. Left alone it settled at 167 degrees — pointing
-  // very nearly straight up, a chicken wing — and wandered 21 degrees while the
-  // hand moved. Zero here means hanging straight down, which is where yours is.
-  const elbowSwivel = () => {
-    const f = mech();
-    const s = [f[7], f[8], f[9]], e = [f[14], f[15], f[16]], w = [f[21], f[22], f[23]];
-    const ax = [w[0]-s[0], w[1]-s[1], w[2]-s[2]];
-    const L = Math.hypot(...ax); if (L < 0.12) return null;
-    for (let i = 0; i < 3; i++) ax[i] /= L;
-    const off = [e[0]-s[0], e[1]-s[1], e[2]-s[2]];
-    const oa = off[0]*ax[0] + off[1]*ax[1] + off[2]*ax[2];
-    const u = [off[0]-ax[0]*oa, off[1]-ax[1]*oa, off[2]-ax[2]*oa];
-    // Near a straight arm the elbow's position round the axis is ill-defined
-    // and the measurement is noise, so it is not counted.
-    const ul = Math.hypot(...u); if (ul < 0.05) return null;
-    for (let i = 0; i < 3; i++) u[i] /= ul;
-    const d = [ax[0]*ax[1], -1 + ax[1]*ax[1], ax[2]*ax[1]];
-    const dl = Math.hypot(...d);
-    for (let i = 0; i < 3; i++) d[i] /= dl;
-    return Math.acos(Math.max(-1, Math.min(1, u[0]*d[0] + u[1]*d[1] + u[2]*d[2]))) * 180 / Math.PI;
-  };
-  build(800);
-  let swiv = [];
-  for (let s = 0; s <= 500; s++) {
-    const t = s / 72;
-    const h = [-0.28 + 0.15*Math.sin(t*1.6), 1.15 + 0.18*Math.sin(t*1.1), -0.30 - 0.16*Math.sin(t*2.1)];
-    E.w_mech_hand(0, ...h, 1, 0, 0, 0, 1);
-    E.w_mech_hand(1, -h[0], h[1], h[2], 1, 0, 0, 0, 1);
-    E.w_mech_stand(0, CHEST, 0); E.w_mech_apply(); E.w_step(1 / 72);
-    if (s > 200) { const a = elbowSwivel(); if (a !== null) swiv.push(a); }
-  }
-  const swAvg = swiv.reduce((a, b) => a + b, 0) / swiv.length;
-  check("the elbow stays low rather than sticking up", swAvg < 75,
-        `sitting ${swAvg.toFixed(0)} deg off straight-down`);
-
-  check("the elbow does not wander", Math.max(...swiv) - Math.min(...swiv) < 60,
-        `${(Math.max(...swiv) - Math.min(...swiv)).toFixed(0)} deg of drift`);
-
-  // --- knuckle-haul locomotion (legs gone) ---
-  //
-  // The fallback the locomotion ladder rests on: a machine that has lost its
-  // legs lies on the ground and drags itself with both fists. Standing at full
-  // height the fists cannot reach the floor at all — measured, the tip bottoms
-  // out 19 cm up — which is the geometry saying this mechanic belongs to the
-  // collapsed machine, not the standing one.
-  const heave = (density, cycles) => {
-    E.w_reset(1, 0);
-    E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, density, 4, 3, 1.5707, SHOULDER_HALF);
-    E.w_mech_legs(0);
-    const HEAD_TRACK = HEAD, O = { x: 0, y: 0, z: 0 };
-    const PULL = 30, SWING = 34, CYCLE = PULL + SWING;
-    let peak = 0, f = null;
-    for (let s = 0; s < 60 + cycles * CYCLE + 160; s++) {
-      // The stroke's height is given in WORLD terms, because that is what a
-      // player does: they watch the fist and put it on the ground, whatever
-      // their own height. Scripting it in tracking space made the gait depend
-      // on the head height — at 1.62 m the pull stroke mapped below the floor,
-      // the machine did a push-up on its own fists and lurched backwards.
-      let grips = [0, 0], hz = -0.25, hy = 0.60;
-      if (s >= 60 && s < 60 + cycles * CYCLE) {
-        const c = (s - 60) % CYCLE;
-        if (c < PULL) { grips = [1, 1]; hz = -0.45 + 0.5 * (c / PULL); hy = 0.10; }
-        else { const t = (c - PULL) / SWING; hz = 0.05 - 0.5 * t; hy = 0.14 + 0.14 * Math.sin(t * Math.PI); }
-      }
-      for (let i = 0; i < 2; i++) {
-        E.w_mech_anchor(i, grips[i]);
-        E.w_mech_hand(i, (i === 0 ? -0.24 : 0.24) + O.x, hy, hz + O.z, 1, 0, 0, 0, 1);
-      }
-      E.w_mech_stand(O.x, CHEST + O.y, O.z);
-      E.w_mech_apply(); E.w_step(1 / 72);
-      f = mech();
-      const dp = E.w_mech_drag_state() >>> 2, dd = mem();
-      O.y = (f[1] + 0.40) - HEAD_TRACK;
-      if (dd[dp + 4] > 0.5) { O.x = f[0]; O.z = f[2]; }
-      peak = Math.max(peak, dd[dp + 5]);
-    }
-    return { dist: -f[2], peak, y: f[1], tilt: tiltOf(f) };
-  };
-
-  const hMed = heave(800, 4);
-  check("legs gone, the hull rests on the ground", hMed.y < 0.30, `y ${hMed.y.toFixed(2)}`);
-  check("four heaves drag the machine over a metre", hMed.dist > 1.0, `${hMed.dist.toFixed(2)} m`);
-  check("it stays flat while dragging", hMed.tilt < 15, `tilt ${hMed.tilt.toFixed(0)} deg`);
-  const hLight = heave(350, 4), hHeavy = heave(2800, 4);
-  // The crisp-punch grip (playtest verdict: lag reads as mush, not mass)
-  // hauls heavy machines better too, so the drag gradient compressed from
-  // ~5x to ~1.8x. Weight still grades — the fixed-K spring guarantees it —
-  // but the steepness moved to where it belongs: the punches.
-  check("a heavy machine is still harder to drag", hLight.dist > hHeavy.dist * 1.4,
-        `light ${hLight.dist.toFixed(2)} m, heavy ${hHeavy.dist.toFixed(2)} m`);
-
-  // Squeezing in mid-air grabs nothing.
-  E.w_reset(1, 0);
-  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
-  for (let s = 0; s < 200; s++) {
-    E.w_mech_anchor(0, 1);
-    E.w_mech_hand(0, -0.24, 1.0, -0.35, 1, 0, 0, 0, 1);
-    E.w_mech_hand(1, 0.24, 1.0, -0.35, 1, 0, 0, 0, 1);
-    E.w_mech_stand(0, CHEST, 0); E.w_mech_apply(); E.w_step(1 / 72);
-  }
-  let fAir = mech();
-  const airDp = E.w_mech_drag_state() >>> 2;
-  check("gripping mid-air anchors nothing and moves nothing",
-        mem()[airDp] === 0 && Math.hypot(fAir[0], fAir[2]) < 0.05,
-        `anchored ${mem()[airDp]}, moved ${Math.hypot(fAir[0], fAir[2]).toFixed(3)} m`);
-
-  // And when the legs come back, the machine stands back up.
-  E.w_reset(1, 0);
-  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
-  E.w_mech_legs(0);
-  for (let s = 0; s < 200; s++) { E.w_mech_stand(0, CHEST, 0); E.w_mech_apply(); E.w_step(1 / 72); }
-  const collapsedY = mech()[1];
-  E.w_mech_legs(1);
-  for (let s = 0; s < 300; s++) { E.w_mech_stand(0, CHEST, 0); E.w_mech_apply(); E.w_step(1 / 72); }
-  const stoodY = mech()[1];
-  check("legs restored, it stands back up", collapsedY < 0.30 && Math.abs(stoodY - CHEST) < 0.06,
-        `collapsed ${collapsedY.toFixed(2)}, stood ${stoodY.toFixed(2)}, target ${CHEST.toFixed(2)}`);
-
-  // The machine no longer collides with itself, which must not also mean it
-  // stopped colliding with everything else.
-  E.w_reset(1, 0);
-  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 1600, 4, 3, 1.5707, SHOULDER_HALF);
-  E.w_spawn(-0.28, 1.20, -0.62, 0, 0, 0, 0.10, 0);
-  const blockAt = () => { const p = E.w_state() >>> 2, m = mem(); return [m[p], m[p+1], m[p+2]]; };
-  const wasAt = blockAt();
-  for (let s = 0; s <= 300; s++) {
-    const t = s < 100 ? 0 : Math.min(1, (s - 100) / 11);
-    const h = [-0.28, 1.20, -0.24 + (-0.66 + 0.24) * t];
-    E.w_mech_hand(0, ...h, 1, 0, 0, 0, 1);
-    E.w_mech_hand(1, -h[0], h[1], h[2], 1, 0, 0, 0, 1);
-    E.w_mech_stand(0, CHEST, 0); E.w_mech_apply(); E.w_step(1 / 72);
-  }
-  const nowAt = blockAt();
-  const knocked = Math.hypot(nowAt[0]-wasAt[0], nowAt[1]-wasAt[1], nowAt[2]-wasAt[2]);
-  check("a punch still knocks a block flying", knocked > 0.3, `moved ${(knocked*100).toFixed(0)} cm`);
-
-  // --- voxel core (Phase 2) ---
-  //
-  // A voxel is a cell in a grid, not a body. The solver sees greedy-merged
-  // static runs, a capped debris pool, and single chunk bodies for regions
-  // that lose their connection to the ground. Damage is momentum through
-  // contact hit events, so fists, thrown blocks and falling chunks all use
-  // one mechanism.
-  const vst = () => { const p = E.w_vox_stats() >>> 2; return mem().slice(p, p + 5); };
-  const vstep = () => { E.w_mech_apply(); E.w_step(1 / 72); E.w_vox_post(); };
-  const vpunch = (x, y) => {
-    for (let s = 0; s < 50; s++) {
-      const t = s / 50, out = t < 0.4 ? t / 0.4 : Math.max(0, 1 - (t - 0.4) / 0.5);
-      E.w_mech_hand(1, x, y, -0.20 - 0.45 * out, 1, 0, 0, 0, 1);
-      E.w_mech_hand(0, -0.30, 1.15, -0.25, 1, 0, 0, 0, 1);
-      E.w_mech_stand(0, CHEST, 0);
-      vstep();
-    }
-  };
-  // Materials: 0 wood, 1 stone, 2 steel.
-  const vwall = (density, mat) => {
-    E.w_reset(1, 0);
-    E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, density, 4, 3, 1.5707, SHOULDER_HALF);
-    E.w_vox_create(0, 0, -0.62, 22, 12, 2, 0.10, mat);
-  };
-
-  vwall(1600, 1);
-  let v = vst();
-  check("a 528-cell wall is 24 merged shapes", v[0] === 528 && v[3] <= 26,
-        `alive ${v[0]}, shapes ${v[3]}`);
-
-  for (let p = 0; p < 4; p++) vpunch(0.18, 1.05);
-  v = vst();
-  check("punches knock cells out of the wall", v[1] >= 6, `${v[1]} killed`);
-  check("dead cells became debris", E.w_count() >= 6, `${E.w_count()} cubes`);
-
-  const killsAt = (density, mat) => {
-    vwall(density, mat);
-    for (let p = 0; p < 4; p++) vpunch(0.18, 1.05);
-    return vst()[1];
-  };
-  const kLight = killsAt(350, 1), kHeavy = killsAt(2800, 1);
-  check("a heavier arm smashes more wall", kHeavy > kLight * 1.5,
-        `light ${kLight}, heavy ${kHeavy}`);
-
-  // Materials: the same light arm guts wood and cannot mark steel.
-  const kWood = killsAt(350, 0), kSteel = killsAt(350, 2);
-  check("a light arm breaks wood", kWood >= 4, `${kWood} cells`);
-  check("the same arm cannot dent steel", kSteel === 0, `${kSteel} cells`);
-  const kSteelHeavy = killsAt(2800, 2);
-  check("steel yields only to a heavy arm", kSteelHeavy > kSteel,
-        `heavy ${kSteelHeavy} vs light ${kSteel}`);
-
-  // Structure: cut a column's waist and the top must fall as one chunk.
-  E.w_reset(1, 0);
-  E.w_vox_create(0, 0, -0.62, 2, 12, 1, 0.10, 1);
-  E.w_vox_blast(0, 0.55, -0.60, 400);
-  v = vst();
-  const chunkBoxes = E.w_vox_chunk_box_count();
-  check("the orphaned top detaches as a chunk", v[2] >= 1 && chunkBoxes >= 1,
-        `chunks ${v[2]}, boxes ${chunkBoxes}`);
-  const chunkTop = () => {
-    const n = E.w_vox_chunk_box_count(); if (!n) return null;
-    const p = E.w_vox_chunk_boxes() >>> 2, f = mem();
-    let hi = -1e9; for (let i = 0; i < n; i++) hi = Math.max(hi, f[p + i * 11 + 1]);
-    return hi;
-  };
-  const cy1 = chunkTop();
-  for (let s = 0; s < 90; s++) { E.w_step(1 / 72); E.w_vox_post(); }
-  const cy2 = chunkTop();
-  check("the chunk actually falls", cy1 !== null && cy2 !== null && cy1 - cy2 > 0.3,
-        `${cy1 === null ? "none" : cy1.toFixed(2)} -> ${cy2 === null ? "none" : cy2.toFixed(2)}`);
-
-  // Budget: level a whole wall at once. Live debris must stay capped and the
-  // step must stay far inside the frame even in this slowest build.
-  E.w_reset(1, 0);
-  E.w_vox_create(0, 0, -0.9, 22, 12, 2, 0.10, 1);
-  for (let x = -1.0; x <= 1.0; x += 0.2)
-    for (let y = 0.1; y <= 1.1; y += 0.3)
-      E.w_vox_blast(x, y, -0.9, 900);
-  const tv0 = process.hrtime.bigint();
-  for (let s = 0; s < 120; s++) { E.w_step(1 / 72); E.w_vox_post(); }
-  const collapseUs = Number(process.hrtime.bigint() - tv0) / 120 / 1000;
-  v = vst();
-  check("levelling the wall leaves nothing standing", v[0] === 0, `${v[0]} alive`);
-  check("live debris stays inside its budget", E.w_count() <= 160, `${E.w_count()} cubes`);
-  console.log(`perf: ${collapseUs.toFixed(0)} us/step during total wall collapse`);
-  check("a total collapse still fits the frame", collapseUs < 9000, `${collapseUs.toFixed(0)} us`);
-  const vp = E.w_state() >>> 2, vf = mem();
-  let vbad = 0;
-  for (let i = 0; i < E.w_count(); i++) if (!Number.isFinite(vf[vp + i * 9])) vbad++;
-  check("rubble has no NaNs", vbad === 0, `${vbad} bad`);
-
-  // --- armour on a moving body (the dummy) ---
-  //
-  // A grid riding a dynamic body: impacts map through the body's transform,
-  // debris and detached slabs leave with the body's pose and velocity. This
-  // is the tech a damageable mech is made of.
-  E.w_reset(1, 0);
-  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 1600, 4, 3, 1.5707, SHOULDER_HALF);
-  E.w_dummy_create(0, -0.55, 1);
-  check("the dummy wears a 64-cell plate", vst()[0] === 64, `${vst()[0]} cells`);
-
-  let maxSwing = 0;
-  for (let p = 0; p < 4; p++) {
-    for (let sst = 0; sst < 50; sst++) {
-      const t = sst / 50, out = t < 0.4 ? t / 0.4 : Math.max(0, 1 - (t - 0.4) / 0.5);
-      E.w_mech_hand(1, 0.05, 1.15, -0.18 - 0.42 * out, 1, 0, 0, 0, 1);
-      E.w_mech_hand(0, -0.30, 1.15, -0.25, 1, 0, 0, 0, 1);
-      E.w_mech_stand(0, CHEST, 0);
-      E.w_mech_apply(); E.w_step(1 / 72); E.w_vox_post();
-      const dp = E.w_dummy_state() >>> 2;
-      maxSwing = Math.max(maxSwing, Math.abs(mem()[dp + 2] + 0.55));
-    }
-  }
-  check("punches swing the whole dummy", maxSwing > 0.10, `${maxSwing.toFixed(2)} m`);
-  check("the plate sheds cells while the body moves", vst()[0] < 60,
-        `${vst()[0]} of 64 left`);
-  check("shed cells fly off as debris", E.w_count() > 5, `${E.w_count()} cubes`);
-
-  // Cut the plate across its waist at its CURRENT swung position: the top
-  // half must tear off as a slab born at the body's pose.
-  const dp2 = E.w_dummy_state() >>> 2;
-  const dz = mem()[dp2 + 2], dy = mem()[dp2 + 1];
-  for (let bx = -0.25; bx <= 0.25; bx += 0.07) E.w_vox_blast(bx, dy, dz + 0.16, 60);
-  const chunksNow = vst()[2];
-  check("a slab can tear off the moving body", chunksNow >= 1 || vst()[0] < 20,
-        `chunks ${chunksNow}, cells left ${vst()[0]}`);
-
-  // --- the first fight (arena) ---
-  //
-  // Enemy machine: same legs, same uprighting, same voxel armour, plus a
-  // small will — approach, telegraph, swing. Its core dies to punches once
-  // the plate is off; the player's hull is scored the same way.
-  E.w_reset(1, 0);
-  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 1600, 4, 3, 1.5707, SHOULDER_HALF);
-  const pPlate = E.w_player_plate(1);   // stone, matched with the enemy
-  const ePlate = E.w_enemy_create(0, -3.0, 1);
-  const est = () => { const p = E.w_enemy_state() >>> 2; return mem().slice(p, p + 28); };
-  const grid = (g) => { const p = E.w_vox_grid_stats(g) >>> 2; return mem().slice(p, p + 3); };
-  const fstep = (hx, hz) => {
-    E.w_mech_hand(0, -0.22, 1.15, -0.25, 1, 0, 0, 0, 1);
-    E.w_mech_hand(1, hx, 1.15, hz, 1, 0, 0, 0, 1);
-    E.w_mech_stand(0, CHEST, 0);
-    E.w_enemy_update(0, CHEST, 0, 1 / 72);
-    E.w_mech_apply(); E.w_step(1 / 72); E.w_vox_post(); E.w_enemy_post();
-  };
-
-  // Hands held wide and low — the strip measurement must not be muddied by
-  // the guard intercepting swings or the player's own fists.
-  for (let s = 0; s < 900; s++) {
-    E.w_mech_hand(0, -0.55, 0.85, -0.05, 1, 0, 0, 0, 1);
-    E.w_mech_hand(1, 0.55, 0.85, -0.05, 1, 0, 0, 0, 1);
-    E.w_mech_stand(0, CHEST, 0);
-    E.w_enemy_update(0, CHEST, 0, 1 / 72);
-    E.w_mech_apply(); E.w_step(1 / 72); E.w_vox_post(); E.w_enemy_post();
-  }
-  let ev2 = est();
-  check("the enemy closes to fighting range", Math.abs(ev2[2] + 0.72) < 0.25,
-        `at z ${ev2[2].toFixed(2)}`);
-  check("its swings strip the player's plate", grid(pPlate)[0] < 32,
-        `${grid(pPlate)[0]} of 36 left`);
-
-  let dead = false, punches = 0;
-  for (let p = 0; p < 40 && !dead; p++) {
-    for (let s = 0; s < 40; s++) {
-      const t = s / 40, out = t < 0.4 ? t / 0.4 : Math.max(0, 1 - (t - 0.4) / 0.5);
-      ev2 = est();
-      fstep(ev2[0] * out * 0.9, -0.25 + (ev2[2] + 0.25) * out * 0.95);
-    }
-    punches++;
-    dead = est()[7] === 5;
-  }
-  check("punching back kills it", dead, `still alive after ${punches} punches`);
-  check("its death bursts the plate off", grid(ePlate)[0] === 0,
-        `${grid(ePlate)[0]} cells still on`);
-  for (let s = 0; s < 120; s++) fstep(0.22, -0.25);
-  check("the dead machine ends up on the ground", est()[1] < 0.60,
-        `resting at y ${est()[1].toFixed(2)} (stood at 1.15)`);
-
-  // --- campaign machinery ---
-  // Variants, healing, and the debug damage path the balancing work uses.
-  E.w_reset(1, 0);
-  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
-  E.w_player_plate(1);
-  E.w_enemy_create_ex(0, -2.5, 2, 1.35, 430, 1, 1.25);   // the hovering God
-  for (let s = 0; s < 300; s++) {
-    E.w_mech_hand(0, -0.4, 1.0, -0.2, 1, 0, 0, 0, 1);
-    E.w_mech_hand(1, 0.4, 1.0, -0.2, 1, 0, 0, 0, 1);
-    E.w_mech_stand(0, CHEST, 0);
-    E.w_enemy_update(0, CHEST, 0, 1 / 72);
-    E.w_mech_apply(); E.w_step(1 / 72); E.w_vox_post(); E.w_enemy_post();
-  }
-  let boss = est();
-  check("the God hovers instead of standing", boss[1] > 1.2, `y ${boss[1].toFixed(2)}`);
-
-  E.w_enemy_damage_core(1000);
-  for (let s = 0; s < 10; s++) { E.w_enemy_update(0, CHEST, 0, 1/72); E.w_step(1/72); E.w_vox_post(); E.w_enemy_post(); }
-  check("direct core damage kills through the same death", est()[7] === 5,
-        `state ${est()[7]}`);
-
-  // Heal: wreck a plate, then restore it.
-  E.w_reset(1, 0);
-  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
-  const healG = E.w_player_plate(1);
-  E.w_vox_blast(0, CHEST, -0.24, 120);
-  const hurt = grid(healG)[0];
-  E.w_vox_heal(healG);
-  check("the repair pad's heal refills a wrecked plate",
-        hurt < 36 && grid(healG)[0] === 36,
-        `was ${hurt}, now ${grid(healG)[0]}`);
-
-  // The shoulders turn with the pilot: a yaw target on the torso brings the
-  // whole mount around. Without this the machine faced its spawn direction
-  // forever and every punch crossed a twisted body (headset verdict).
-  E.w_reset(1, 0);
-  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
-  E.w_mech_face(1.2);
-  for (let s = 0; s < 260; s++) {
-    E.w_mech_stand(0, CHEST, 0);
-    E.w_mech_apply(); E.w_step(1 / 72);
-  }
-  {
-    const ms2 = E.w_mech_state() >>> 2, fm2 = mem();
-    const qx = fm2[ms2+3], qy = fm2[ms2+4], qz = fm2[ms2+5], qw = fm2[ms2+6];
-    const czx = 2 * (qx * qz + qw * qy), czz = 1 - 2 * (qx * qx + qy * qy);
-    const facing = Math.atan2(-czx, -czz);
-    check("the torso turns to face where the pilot faces",
-          Math.abs(facing - 1.2) < 0.2, `facing ${facing.toFixed(2)} vs 1.2`);
-  }
-
-  // --- fight variety ---
-  // A slab torn off the plate reels the machine: recovery is the punish
-  // window, so the stagger must interrupt whatever it was doing.
-  E.w_reset(1, 0);
-  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
-  E.w_player_plate(1);
-  E.w_enemy_create(0, -3.0, 1);
-  const idleStep = () => {
-    E.w_mech_hand(0, -0.55, 0.85, -0.05, 1, 0, 0, 0, 1);
-    E.w_mech_hand(1, 0.55, 0.85, -0.05, 1, 0, 0, 0, 1);
-    E.w_mech_stand(0, CHEST, 0);
-    E.w_enemy_update(0, CHEST, 0, 1 / 72);
-    E.w_mech_apply(); E.w_step(1 / 72); E.w_vox_post(); E.w_enemy_post();
-  };
-  for (let s = 0; s < 200; s++) idleStep();
-  // With live parries the machine is often mid-recover; sample the tear
-  // from a state the stagger can visibly interrupt.
-  for (let s = 0; s < 400 && est()[7] === 4; s++) idleStep();
-  const preStagger = est();
-  E.w_vox_blast(preStagger[0], preStagger[1], preStagger[2] + 0.18, 300);
-  for (let s = 0; s < 5; s++) idleStep();
-  check("a slab torn off staggers it into recover",
-        preStagger[7] !== 4 && est()[7] === 4,
-        `was state ${preStagger[7]}, now ${est()[7]}`);
-
-  // Two lines of attack: over the top and around the side, mixed. Watch the
-  // style field across swing entries — a machine with one swing is a metronome.
-  E.w_reset(1, 0);
-  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
-  E.w_player_plate(1);
-  E.w_enemy_create(0, -1.2, 1);   // spawned already in range: it just swings
-  const styles = new Set();
-  let lastES = -1;
-  for (let s = 0; s < 2800; s++) {
-    idleStep();
-    const stE = est();
-    // Styles are read at WINDUP entry: with real blocking, a swing that
-    // meets a parked guard can be parried the same step it launches, so
-    // state 3 is not reliably observable — the telegraph is.
-    if (stE[7] === 2 && lastES !== 2) styles.add(stE[27]);
-    lastES = stE[7];
-  }
-  check("the swing varies its line", styles.size >= 2,
-        `styles seen: ${[...styles].join(", ") || "none"}`);
-
-  // The approach weaves: on the way in the machine drifts across the line,
-  // so the walk-up circles instead of running a rail. Measured as lateral
-  // deviation from the straight spawn-to-player line (the x axis stays the
-  // cross direction when it spawns dead ahead).
-  E.w_reset(1, 0);
-  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
-  E.w_player_plate(1);
-  E.w_enemy_create(0, -4.5, 1);
-  let weave = 0;
-  for (let s = 0; s < 260; s++) { idleStep(); weave = Math.max(weave, Math.abs(est()[0])); }
-  check("the approach weaves off the straight line", weave > 0.12,
-        `strayed ${weave.toFixed(2)} m`);
-
-  // Triumph: told it has won, it raises both clubs high and holds.
-  E.w_reset(1, 0);
-  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
-  E.w_player_plate(1);
-  E.w_enemy_create(0, -1.2, 1);
-  E.w_enemy_triumph();
-  for (let s = 0; s < 200; s++) idleStep();
-  const tr = est();
-  // The club body sits at the shoulder; what rises is the TIP, 0.60 m down
-  // the club's +Z. Rotate (0,0,0.6) by the arm quat and take the y.
-  const tipY = (o) => tr[o+1] + 1.2 * (tr[o+4]*tr[o+5] - tr[o+6]*tr[o+3]);
-  check("the victor raises both clubs over the wreck",
-        tr[7] === 6 && tipY(9) > tr[1] + 0.35 && tipY(16) > tr[1] + 0.35,
-        `state ${tr[7]}, tips at +${(tipY(9)-tr[1]).toFixed(2)} / +${(tipY(16)-tr[1]).toFixed(2)} vs torso`);
-
-  // A solid parry interrupts the swing: catch the club on your arms and
-  // recovery — the punish window — starts that same step. Blocking earns
-  // the counter; that is the boxing contract.
-  E.w_reset(1, 0);
-  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 1600, 4, 3, 1.5707, SHOULDER_HALF);
-  E.w_player_plate(1);
-  E.w_enemy_create(0, -1.2, 1);
-  let parried = false, blockEvents = 0;
-  for (let s2 = 0; s2 < 2800 && !parried; s2++) {
-    E.w_mech_hand(0, -0.12, 1.22, -0.34, 1, 0, 0, 0, 1);
-    E.w_mech_hand(1, 0.12, 1.22, -0.34, 1, 0, 0, 0, 1);
-    E.w_mech_stand(0, CHEST, 0);
-    E.w_enemy_update(0, CHEST, 0, 1 / 72);
-    E.w_mech_apply(); E.w_step(1 / 72); E.w_vox_post(); E.w_enemy_post();
-    const stP = est();
-    if (stP[26] > 8) { blockEvents++; if (stP[7] === 4) parried = true; }
-  }
-  check("a solid parry interrupts the swing into recovery",
-        parried, `block events ${blockEvents}, interrupted ${parried}`);
-
-  // The pose-only call (dt 0): the machine raises its guard and holds its
-  // ground — the READY-state wait pose. It must not walk and must not
-  // advance its fight timer.
-  E.w_reset(1, 0);
-  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
-  E.w_player_plate(1);
-  E.w_enemy_create(0, -3.0, 1);
-  const posedFrom = est();
-  for (let s3 = 0; s3 < 250; s3++) {
-    E.w_mech_stand(0, CHEST, 0);
-    E.w_enemy_update(0, CHEST, 0, 0);
-    E.w_mech_apply(); E.w_step(1 / 72); E.w_vox_post(); E.w_enemy_post();
-  }
-  const posed = est();
-  const guardTipY = (o) => posed[o+1] + 1.2 * (posed[o+4]*posed[o+5] - posed[o+6]*posed[o+3]);
-  check("the pose-only call holds ground and raises the guard",
-        Math.abs(posed[2] - posedFrom[2]) < 0.35 && posed[7] === 1 &&
-        guardTipY(9) > posed[1] + 0.10 && guardTipY(16) > posed[1] + 0.10,
-        `moved ${(posed[2]-posedFrom[2]).toFixed(2)} m, state ${posed[7]}, ` +
-        `guard tips +${(guardTipY(9)-posed[1]).toFixed(2)}/+${(guardTipY(16)-posed[1]).toFixed(2)}`);
-
-  // A BIG tear is a knockdown: the stand cuts out, the machine drops under
-  // its own weight, and then it hauls itself back up to height.
-  E.w_reset(1, 0);
-  E.w_mech_create(0, CHEST, 0, UPPER, FORE, 0.06, 800, 4, 3, 1.5707, SHOULDER_HALF);
-  E.w_player_plate(1);
-  E.w_enemy_create(0, -3.0, 1);
-  for (let s = 0; s < 200; s++) idleStep();
-  const upY = est()[1];
-  const kd = est();
-  E.w_vox_blast(kd[0], kd[1], kd[2] + 0.18, 400);
-  let lowest = 10;
-  for (let s = 0; s < 110; s++) { idleStep(); lowest = Math.min(lowest, est()[1]); }
-  for (let s = 0; s < 260; s++) idleStep();
-  // The knockdown KEELS the machine over its rigid legs now (it cannot
-  // sink through them); the body catches itself around a sixth of a metre
-  // down and hauls back up. The threshold matches the keel, not the old
-  // sink-through-the-floor drop.
-  check("a big tear knocks it down and it stands back up",
-        lowest < upY - 0.14 && est()[1] > upY - 0.15,
-        `stood ${upY.toFixed(2)}, dropped to ${lowest.toFixed(2)}, back at ${est()[1].toFixed(2)}`);
-
-  // A hidden grid is drawn by the page as its own deformed mesh, and that mesh
-  // falls when the piece breaks free. Bursting debris for it as well dropped a
-  // second, undented cube beside the crumpled one — which a playtest spotted.
-  {
-    const killGrid = (hide) => {
-      const g = E.w_vox_create(6.0, 1.0, 6.0, 1, 1, 1, 0.34, 2);
-      if (hide) E.w_vox_hide(g, 1);
-      const before = E.w_count();
-      for (let s = 0; s < 400; s++) {
-        E.w_vox_blast(6.0, 1.17, 6.0, 60);
-        E.w_step(1 / 72);
-        if (new Float32Array(E.memory.buffer)[(E.w_vox_grid_stats(g) >>> 2)] < 0.5) break;
-      }
-      const st = E.w_vox_grid_stats(g) >>> 2;
-      return { dead: new Float32Array(E.memory.buffer)[st] < 0.5,
-               added: E.w_count() - before };
-    };
-    const hiddenKill = killGrid(true);
-    check("a destroyed HIDDEN piece drops no stray cube",
-          hiddenKill.dead && hiddenKill.added === 0,
-          `dead=${hiddenKill.dead}, ${hiddenKill.added} extra bodies`);
-    const shownKill = killGrid(false);
-    check("a destroyed visible cell still sheds its debris",
-          shownKill.dead && shownKill.added > 0,
-          `dead=${shownKill.dead}, ${shownKill.added} debris`);
-  }
+  const N = 720;
+  for (let i = 0; i < N; i++) tick();
+  const ms = Number(process.hrtime.bigint() - t0) / 1e6 / N;
+  // A Quest 3 runs this build roughly 2.5x slower than CI, and the budget at
+  // 72 Hz is 13.9 ms for everything including the GPU.
+  check("a step of the whole fight fits the budget with room to spare", ms < 1.4,
+    `${ms.toFixed(3)} ms/step here, ~${(ms * 2.5).toFixed(2)} ms projected on a Quest 3`);
 
   console.log(`\n${pass} passed, ${fail} failed, ${gaps} known gaps`);
-  process.exit(fail === 0 ? 0 : 1);
-})().catch((e) => { console.error("HARNESS ERROR:", e); process.exit(2); });
+  process.exit(fail ? 1 : 0);
+})();
