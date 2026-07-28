@@ -282,12 +282,19 @@
     harMeshes = [];
   }
 
-  function buildHarMeshes(hullC) {
+  function buildHarMeshes(hullC, plateGrid) {
     releaseHarMeshes();
     if (!E.w_enemy_part_grid || !E.w_vox_grid_pose) return;
     var n = E.w_enemy_part_count ? E.w_enemy_part_count() : 14;
-    for (var p = 0; p < n; p++) {
-      var g = E.w_enemy_part_grid(p);
+    // The fourteen parts AND the chest plate. The plate is a separate 7x7 grid
+    // and it is the biggest thing on the machine — leaving it on the engine's
+    // box renderer meant the one surface you punch most was the one surface
+    // that still broke into chunks instead of caving.
+    var grids = [];
+    for (var q = 0; q < n; q++) grids.push(E.w_enemy_part_grid(q));
+    if (plateGrid !== undefined && plateGrid !== null && plateGrid >= 0) grids.push(plateGrid);
+    for (var p = 0; p < grids.length; p++) {
+      var g = grids[p];
       if (g < 0) continue;
       var f = new Float32Array(E.memory.buffer);
       var o = E.w_vox_grid_pose(g) >>> 2;
@@ -964,7 +971,7 @@
   // the Pages CDN both cache hard — a playtest once got the old game and,
   // fairly, could not tell), and it is printed on the card so which build
   // loaded is never a guess.
-  var BUILD = 25;
+  var BUILD = 26;
   var bTag = document.getElementById("buildTag");
   if (bTag) bTag.textContent = "(build " + BUILD + ")";
   // The ladder's length lives in one place — the blurb reads it rather than
@@ -1061,7 +1068,7 @@
     E.w_vox_hide(practiceGrid, 1);
     if (defBox) { gl.deleteVertexArray(defBox.vao); gl.deleteBuffer(defBox.vbo); }
     defBox = buildDeformMesh(hx + 0.75, floorY + 1.02, hz + 0.35, 0.17);
-    buildHarMeshes(ch2.hullC);
+    buildHarMeshes(ch2.hullC, enemyGrid);
     heat = 0; overheated = false;
     if (KNOB_GRIP !== 1)
       E.w_mech_tune(5200 * KNOB_GRIP, 1.0, 7800 * KNOB_GRIP, 14000);
