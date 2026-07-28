@@ -19,3 +19,13 @@ captures/
 # Local copy of the wasm module, staged only so wasm/test.js can find it.
 # The published copy is docs/box3d.wasm.
 wasm/box3d.wasm
+
+# Box3D source, cloned on demand to rebuild the wasm (see wasm/build.md).
+# 15 MB of someone else's repository; CI clones its own copy.
+wasm/box3d-src/
+
+# Isolated worktrees used when several agents build in parallel.
+.claude/
+
+# Local tooling for the screenshot loop (playwright-core).
+node_modules/
