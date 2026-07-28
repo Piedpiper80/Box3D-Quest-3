@@ -3063,36 +3063,14 @@ static int w_enemy_create_inner(float x, float z, int material)
         }
     }
 
-    // The chest IS the machine's body, not a slab bolted to the front of it.
-    //
-    // Every other part of this machine is a deformable voxel grid. The chest
-    // was the exception: a 7x7x1 plate standing one cell proud of the torso,
-    // square, covering half the body's height and — because its cell size came
-    // off a constant rather than the body — coming out WIDER than the machine
-    // itself on a narrow chassis (0.411 against a 0.403 torso on the Jaguar).
-    // That slab is what a playtest kept reading instead of a robot.
-    //
-    // Filling the torso volume instead makes the chest cubes like the other
-    // thirteen parts, so the silhouette is the machine rather than its armour,
-    // and a punch dents the body it looks like it hit.
-    const float chW = 0.48f * sc * s_eTorsoW;   // the torso hull, full extents
-    const float chH = 0.68f * sc * s_eTorsoH;
-    const float chD = 0.28f * sc * s_eTorsoD;
-    // Eight cells up the chest sets the grain; width and depth then follow the
-    // body's own proportions, so a narrow machine gets a narrow chest instead
-    // of a square one. Depth is never allowed to reach one — a one-cell chest
-    // is a plate again, which is the whole thing being fixed here.
-    const int chNY = 8;
-    const float plCell = chH / (float)chNY;
-    int chNX = (int)(chW / plCell + 0.5f);
-    int chNZ = (int)(chD / plCell + 0.5f);
-    if (chNX < 2) chNX = 2; else if (chNX > 6) chNX = 6;
-    if (chNZ < 2) chNZ = 2; else if (chNZ > 4) chNZ = 4;
-    // Centred on the torso body's own origin, which is the middle of its hull.
-    b3Vec3 local = { -0.5f * chNX * plCell, -0.5f * chNY * plCell,
-                     -0.5f * chNZ * plCell };
-    s_eGrid = vxBuild(s_eTorso, local, chNX, chNY, chNZ, plCell, material, 2,
-                      ENEMY_CATEGORY);
+    // Its armour: a plate over the chest, facing the player side (+z).
+    // The plate is cut to the chest it covers. Sized to a constant, a narrow
+    // machine wore a slab wider than its own body — which is exactly what a
+    // playtest kept seeing instead of a robot.
+    const float plW = 0.07f * sc * s_eTorsoW, plH = 0.07f * sc * s_eTorsoH;
+    const float plCell = plW < plH ? plW : plH;
+    b3Vec3 local = { -3.5f * plCell, -3.5f * plCell, 0.14f * sc * s_eTorsoD };
+    s_eGrid = vxBuild(s_eTorso, local, 7, 7, 1, plCell, material, 2, ENEMY_CATEGORY);
 
     s_eCoreHp = s_eCoreHpMax;
     s_eState = E_APPROACH;
