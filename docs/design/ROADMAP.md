@@ -271,3 +271,62 @@ Nothing here is committed. Written down so it is not re-invented.
 - **Weight in the fist.** Your fist currently sits exactly where your hand is.
   Whether a *heavier* fist that lags is better is a headset question, and the
   old project's answer was that lag read as mush rather than as mass.
+
+---
+
+## Next: the body has to take a punch
+
+**Asked for, in his words:** *"take the hit and recover like a boxer, but also go
+down when knocked down or out."* So: an active ragdoll. A blow makes the body
+give, it gathers itself back into its stance, and when it is finished it stops
+gathering and falls.
+
+### What was already tried, and why it is not the answer
+
+`w_fig_apply` accelerates the whole body back toward a stance point every frame.
+That looked like the cause — hit it, and the controller hauls it straight back
+the same frame, which is what "floating around a midpoint" describes.
+
+Fading that controller out on impact and back in over a stagger **makes it
+worse**, measured on a scripted straight punch into a thigh:
+
+| | hip displacement |
+|---|---|
+| stance controller untouched | **104 mm** |
+| controller faded on impact | **68 mm** |
+
+Less, not more — because that same controller is what walks it toward you, so
+switching it off mostly stopped it closing. The stance point is not the lump.
+
+### What the lump actually is
+
+Every bone is held in its pose by a joint spring standing in for muscle, and
+those springs are stiff by design — see *"Joint springs are muscle, and muscle is
+stiff"* above, where a soft spine folded the figure onto its own face in four
+seconds. Stiff everywhere means the whole skeleton answers a punch as one solid
+assembly swinging about a point, instead of a body that gives where it was hit.
+
+**So the ragdoll lives in the joint springs, not in the stance controller.**
+Slacken them on impact — hardest at the bone that was struck and falling off
+along the chain away from it — then stiffen back over roughly the length of a
+stagger. The head snaps, the arm whips, the torso gives, and then it gathers
+itself up. That is the boxer.
+
+### Going down is probably already there
+
+`w_fig_apply` returns early on `FIG_FALLING` and `FIG_DOWN`, so a finished figure
+already stops driving itself and falls. If the joint springs also go slack — and
+stay slack — on entry to those states, "goes down when knocked out" comes out of
+the same mechanism as the hit reaction rather than needing its own.
+
+### Also outstanding, from the same session
+
+- **The telegraph is too fast to read.** The arm draws back for 0.26 s and the
+  verdict was that it could not be seen at all. Lengthen it. This is a number,
+  not a design question.
+- **Taking a leg works.** Punch one off and it drops to that knee — confirmed in
+  the headset, leave it alone.
+- **Do not ask him to type URL parameters.** `?tempo=` and `?power=` were offered
+  as a way to find the feel and are invisible to someone who does not edit web
+  addresses. If a number needs finding by hand, it needs to be reachable from
+  inside the headset.
