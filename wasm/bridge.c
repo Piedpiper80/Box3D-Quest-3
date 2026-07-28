@@ -3033,7 +3033,12 @@ static int w_enemy_create_inner(float x, float z, int material)
         // get nobody anywhere.
         float legLen = (ENEMY_STAND_Y - s_worldFloorY) - 0.56f * sc - 0.10f;
         if (legLen < 0.12f) legLen = 0.12f;
-        float uSz = legLen * 0.40f; if (uSz > 0.13f * sc) uSz = 0.13f * sc;
+        // The cap keeps a leg from becoming a tree trunk, but it has to
+        // scale with the TORSO: shorten the trunk and the legs must be
+        // free to grow into the gap, or the machine hangs its feet above
+        // the floor and reads as a box on stubs.
+        const float legCap = 0.13f * sc / (s_eTorsoH > 0.2f ? s_eTorsoH : 1.0f);
+        float uSz = legLen * 0.40f; if (uSz > legCap) uSz = legCap;
         float lSz = uSz;
         float fSz = legLen * 0.20f; if (fSz > 0.10f * sc) fSz = 0.10f * sc;
         for (int L = 0; L < 2; L++)
