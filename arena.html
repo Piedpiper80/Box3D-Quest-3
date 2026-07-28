@@ -266,6 +266,93 @@
              hits: 0, deepest: 0, busted: false, rested: false, vy: 0, fallA: 0,
              m: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, cx, cy, cz, 1]) };
   }
+  // ---- the opponent's body, in deformable mesh -------------------------------
+  // Every part of the machine is a vox grid in the engine. Hidden from the
+  // engine's box renderer, each is drawn here as a subdivided mesh that caves
+  // where it is hit — the practice piece's treatment, on the thing you fight.
+  // The mesh lives in the part's LOCAL frame (centre 0,0,0) and the part's world
+  // pose goes into its model matrix, so it follows a swinging limb for free.
+  var harMeshes = [];
+
+  function releaseHarMeshes() {
+    for (var i = 0; i < harMeshes.length; i++) {
+      var m = harMeshes[i].mesh;
+      if (m) { gl.deleteVertexArray(m.vao); gl.deleteBuffer(m.vbo); }
+    }
+    harMeshes = [];
+  }
+
+  function buildHarMeshes(hullC) {
+    releaseHarMeshes();
+    if (!E.w_enemy_part_grid || !E.w_vox_grid_pose) return;
+    var n = E.w_enemy_part_count ? E.w_enemy_part_count() : 14;
+    for (var p = 0; p < n; p++) {
+      var g = E.w_enemy_part_grid(p);
+      if (g < 0) continue;
+      var f = new Float32Array(E.memory.buffer);
+      var o = E.w_vox_grid_pose(g) >>> 2;
+      var ex = f[o+7], ey = f[o+8], ez = f[o+9];
+      var big = Math.max(ex, Math.max(ey, ez));
+      if (!(big > 0)) continue;
+      // One cube mesh at the part's largest half extent; the model matrix
+      // squashes it to the real proportions, so a 1x1x4 limb reads as a limb.
+      var mesh = buildDeformMesh(0, 0, 0, big);
+      mesh.cx = 0; mesh.cy = 0; mesh.cz = 0;
+      harMeshes.push({ grid: g, mesh: mesh, alive: 1,
+                       sx: ex/big, sy: ey/big, sz: ez/big,
+                       q: [0,0,0,1], wx: 0, wy: 0, wz: 0,
+                       color: hullC || [0.55,0.58,0.64] });
+      E.w_vox_hide(g, 1);     // the engine stops drawing boxes for it
+    }
+  }
+
+  // Follow the parts. Called every frame the enemy exists.
+  function updateHarMeshes() {
+    if (!harMeshes.length) return;
+    var f = new Float32Array(E.memory.buffer);
+    for (var i = 0; i < harMeshes.length; i++) {
+      var h = harMeshes[i];
+      var o = E.w_vox_grid_pose(h.grid) >>> 2;
+      h.alive = f[o+10];
+      var qx = f[o+3], qy = f[o+4], qz = f[o+5], qw = f[o+6];
+      h.q[0]=qx; h.q[1]=qy; h.q[2]=qz; h.q[3]=qw;
+      h.wx = f[o]; h.wy = f[o+1]; h.wz = f[o+2];
+      var xx=qx*qx, yy=qy*qy, zz=qz*qz, xy=qx*qy, xz=qx*qz, yz=qy*qz,
+          wx=qw*qx, wy=qw*qy, wz=qw*qz, m = h.mesh.m;
+      m[0]=(1-2*(yy+zz))*h.sx; m[1]=(2*(xy+wz))*h.sx;   m[2]=(2*(xz-wy))*h.sx;   m[3]=0;
+      m[4]=(2*(xy-wz))*h.sy;   m[5]=(1-2*(xx+zz))*h.sy; m[6]=(2*(yz+wx))*h.sy;   m[7]=0;
+      m[8]=(2*(xz+wy))*h.sz;   m[9]=(2*(yz-wx))*h.sz;   m[10]=(1-2*(xx+yy))*h.sz; m[11]=0;
+      m[12]=h.wx; m[13]=h.wy; m[14]=h.wz; m[15]=1;
+    }
+  }
+
+  // Rotate a world vector into a part's local frame (conjugate rotation).
+  function intoLocal(q, x, y, z, out) {
+    var ix=-q[0], iy=-q[1], iz=-q[2], w=q[3];
+    var tx = 2*(iy*z - iz*y), ty = 2*(iz*x - ix*z), tz = 2*(ix*y - iy*x);
+    out[0] = x + w*tx + (iy*tz - iz*ty);
+    out[1] = y + w*ty + (iz*tx - ix*tz);
+    out[2] = z + w*tz + (ix*ty - iy*tx);
+    return out;
+  }
+
+  var HL = [0,0,0], HD = [0,0,0];
+  // Route one engine impact to the part it landed on and crumple it there.
+  function dentHarPart(grid, wx, wy, wz, force, svx, svy, svz) {
+    for (var i = 0; i < harMeshes.length; i++) {
+      var h = harMeshes[i];
+      if (h.grid !== grid || h.alive <= 0) continue;
+      intoLocal(h.q, wx - h.wx, wy - h.wy, wz - h.wz, HL);
+      intoLocal(h.q, svx || 0, svy || 0, svz || 0, HD);
+      // The mesh is drawn squashed, so undo that squash on the way in or the
+      // crater lands off the spot on any part that is not a cube.
+      deformAt(h.mesh, HL[0]/(h.sx||1), HL[1]/(h.sy||1), HL[2]/(h.sz||1),
+               force, HD[0], HD[1], HD[2]);
+      return true;
+    }
+    return false;
+  }
+
   // An impact: cave every vertex near the contact point inward along the
   // hit direction, with a raised rim around the crater. Permanent.
   function deformAt(mesh, wx, wy, wz, force, svx, svy, svz) {
@@ -345,6 +432,20 @@
       gl.uniform3fv(uC, [0.62, 0.66, 0.74]);
       gl.uniform1f(uMat, 3);
       gl.drawElements(gl.TRIANGLES, defBox.n, gl.UNSIGNED_SHORT, 0);
+      gl.bindVertexArray(vao);
+    }
+    // The opponent's own body, part by part, in the same deforming mesh as the
+    // practice piece — so punches CRUMPLE the machine you are fighting instead
+    // of chipping cells off it.
+    for (var hm = 0; hm < harMeshes.length; hm++) {
+      var HM = harMeshes[hm];
+      if (HM.alive <= 0) continue;              // torn off: the engine drew it away
+      if (HM.mesh.dirty) refreshDeformMesh(HM.mesh);
+      gl.bindVertexArray(HM.mesh.vao);
+      gl.uniformMatrix4fv(uM, false, HM.mesh.m);
+      gl.uniform3fv(uC, HM.color);
+      gl.uniform1f(uMat, 3);
+      gl.drawElements(gl.TRIANGLES, HM.mesh.n, gl.UNSIGNED_SHORT, 0);
       gl.bindVertexArray(vao);
     }
     gl.bindVertexArray(null);
@@ -863,7 +964,7 @@
   // the Pages CDN both cache hard — a playtest once got the old game and,
   // fairly, could not tell), and it is printed on the card so which build
   // loaded is never a guess.
-  var BUILD = 24;
+  var BUILD = 25;
   var bTag = document.getElementById("buildTag");
   if (bTag) bTag.textContent = "(build " + BUILD + ")";
   // The ladder's length lives in one place — the blurb reads it rather than
@@ -960,6 +1061,7 @@
     E.w_vox_hide(practiceGrid, 1);
     if (defBox) { gl.deleteVertexArray(defBox.vao); gl.deleteBuffer(defBox.vbo); }
     defBox = buildDeformMesh(hx + 0.75, floorY + 1.02, hz + 0.35, 0.17);
+    buildHarMeshes(ch2.hullC);
     heat = 0; overheated = false;
     if (KNOB_GRIP !== 1)
       E.w_mech_tune(5200 * KNOB_GRIP, 1.0, 7800 * KNOB_GRIP, 14000);
@@ -1500,6 +1602,21 @@
         mm2[4] = -fz2*sa2;          mm2[5] = ca2;            mm2[6] = fx2*sa2;
         mm2[8] = tt2*fx2*fz2;       mm2[9] = -fx2*sa2;       mm2[10] = tt2*fz2*fz2 + ca2;
         mm2[13] = defBox.cy;
+      }
+
+      // The machine's parts follow their bodies every frame, and every impact
+      // into one crumples that part's own mesh where it landed.
+      updateHarMeshes();
+      if (harMeshes.length && stepped) {
+        var nH2 = E.w_vox_hit_count();
+        if (nH2 > 0) {
+          var hb2 = E.w_vox_hit_events() >>> 2, hf2 = new Float32Array(E.memory.buffer);
+          for (var h2 = 0; h2 < nH2; h2++) {
+            var o2 = hb2 + h2 * 8;
+            dentHarPart(hf2[o2+4] | 0, hf2[o2], hf2[o2+1], hf2[o2+2], hf2[o2+3],
+                        hf2[o2+5], hf2[o2+6], hf2[o2+7]);
+          }
+        }
       }
 
       // Impacts into the practice box crumple its mesh where they landed.
