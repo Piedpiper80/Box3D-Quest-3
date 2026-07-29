@@ -87,7 +87,7 @@
   function setStatus(m, warn) { statusEl.textContent = m; statusEl.className = warn ? "status warn" : "status"; }
   function report(txt) { reportEl.textContent = txt; }
 
-  var BUILD = 4;
+  var BUILD = 5;
   var tagEl = document.getElementById("buildTag");
   if (tagEl) tagEl.textContent = "Build " + BUILD + ".";
 
@@ -513,7 +513,7 @@
   // trailing it, which an implicit joint spring can do and an explicit force
   // cannot. The force ceiling is what stops your fist driving through
   // something it cannot move.
-  var FIST_HZ = 30, FIST_MAXF = 1200;
+  var FIST_HZ = 30, FIST_MAXF = 700;
 
   function buildWorld() {
     E.w_reset(0, floorY === null ? 0 : floorY);
