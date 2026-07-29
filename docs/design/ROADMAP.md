@@ -410,3 +410,66 @@ enter the record.
   solve and the relax pass, hence `FIG_IMPULSE_CAL 0.5`). 542.3 measured against a
   542.1 N weight is good evidence the factor is right, and the check fails loudly
   if the pinned revision moves.
+
+## Build 4: it can be knocked down
+
+The second report was that it is "still being suspended like a magic force is
+holding him up and not falling down when knocked off balance or his legs are
+swept from under him". Two causes were found and both are addressed.
+
+**Support meant "are the legs still attached", not "are the feet on the floor".**
+`figSupport()` read the parent-chain attachment and never consulted contact, so
+sweeping the legs out changed nothing — the figure was still, as far as the code
+knew, solidly planted. **And the righting torque was unconditional**: the term
+that swings the body back to vertical was applied every frame with no gate on
+contact at all. A real body cannot torque itself upright in mid-air. This one did.
+
+Balance authority is now a measured newton count times a lever arm inside a sole.
+
+### The complaint, as numbers
+
+A ram driven through the body, with bones made unbreakable so this measures
+balance and not damage:
+
+| | before | after |
+|---|---|---|
+| shin sweep, 83 kg | **held at 2, 4, 7, 12, 20 m/s** | **falls at 2, 4, 7 and 12** (holds at 20 — the ram punches through rather than toppling) |
+| chest shove, 6 m/s | **held at every mass 20–400 kg**, lowest hip 0.32 | **falls at 250 and 400 kg** |
+| chest shove, 250 kg | held at every speed | falls from 6 m/s up |
+| airborne righting, will frozen | 0.830° / 0.337° / 5.428° | **0.000° at 0.28 s, 0.42 s and worst over 1.8 s** |
+
+The old build could not be knocked over by anything that was tried. This one goes
+down. The airborne figure has zero righting authority from frame one, before any
+state machine can intervene — verified by ablation: restoring the ungated torque
+makes that check fail at 29.41°.
+
+### It did not get worse to fight
+
+| | before | after |
+|---|---|---|
+| blows the scripted pilot lands | 70 | **95** |
+| unprovoked falls, 15 unopposed scenarios | 0/15 | 0/15 |
+| peak closing speed | 8.10 m/s | 3.19 m/s |
+| worst overshoot past the player | +1.438 m | −0.126 m |
+
+An intermediate version broke the fight badly — 15 blows and the figure still
+standing after 36 s — because the pilot's fist wedged in at close range and a
+contact that never separates fires no new hit event. Fixed, and the fix was
+verified across a cross-matrix of every pilot against every engine build so the
+blow count could not come from a pilot co-tuned to its own engine.
+
+### Known, and left visible
+
+- **It lands 4 blows on you, against 22 before.** That is the biggest behavioural
+  change in this build and **nothing checks it**. Only the headset can say whether
+  it now reads as tame.
+- **The gravity-cancelling term is still gated on attachment and state, not on
+  measured sole load.** `ay` is scaled by `figSupport()` (which answers "are the
+  legs attached") times `s_figCarry` (which is 1 whenever the state is
+  `FIG_STEP`). This is pre-existing — it is in the old build too — and it means
+  that with the will running, over empty space, the figure still holds its height.
+  The airborne result above is measured with the will frozen. **This is the next
+  job, and it is the last of the magic force.**
+- Two declared gaps, both honest numbers and both slightly worse than before:
+  mid-stride ankle peaks at 0.227 m (was 0.206), and the capture point is inside
+  the soles for 87% of planted frames, worst −0.135 m.
