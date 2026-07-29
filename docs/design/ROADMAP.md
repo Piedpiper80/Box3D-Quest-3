@@ -473,3 +473,63 @@ blow count could not come from a pilot co-tuned to its own engine.
 - Two declared gaps, both honest numbers and both slightly worse than before:
   mid-stride ankle peaks at 0.227 m (was 0.206), and the capture point is inside
   the soles for 87% of planted frames, worst −0.135 m.
+
+## Build 5: your fist stops being a hydraulic ram
+
+The playtest note was "it shouldnt be so easy to knock him down", and then, when
+the fall threshold was blamed: **"i dont think its the 4cm its the unrealistic
+amount of force"**. That was right.
+
+`FIST_MAXF` was **1200 N**. The figure weighs **542 N**. The fist has
+`gravityScale = 0` and is held to your hand by a motor joint, so it is not a mass
+you swing — it is a ram that can push **2.2× the machine's entire body weight**,
+sustained, for as long as your hand stays there. Of course it could be shoved over.
+
+### What that force actually bought
+
+A 0.6 m punch stroke in 0.18 s, measuring how far the fist lags the hand:
+
+| cap | lag | | cap | lag |
+|---|---|---|---|---|
+| 1200 N | 24.4 mm | | 400 N | 27.1 mm |
+| 900 N | 24.4 mm | | 300 N | 28.8 mm |
+| 700 N | 24.8 mm | | 200 N | 30.0 mm |
+| 500 N | 26.1 mm | | 120 N | **572.8 mm** — mush |
+
+**1200 → 300 costs four millimetres.** The crispness does not come from that
+force at all; it survives to 200. Everything above ~300 N was shove authority
+that did nothing for feel.
+
+### But it is not a free dial — the floor is the damage
+
+Lowering the cap lowers impact speed, and impact speed is damage. Swept through
+the page suite:
+
+| cap | you land | it lands | outcome |
+|---|---|---|---|
+| 1200 | 95 | 4 | all 15 pass |
+| **700** | **68** | **26** | **all 15 pass** |
+| 600 | 73 | 29 | FAILS — the pilot can no longer take a leg |
+| 500 | 53 | 33 | FAILS — same |
+
+Below 700 the punches are too weak to sever a leg, and "taking the legs is the
+way down" breaks. **700 N** is the floor: 42% less shove authority, 1.29× body
+weight instead of 2.2×, which is roughly the top of what a person can deliver
+leaning into a punch.
+
+A second effect worth naming: **it lands 26 blows on you instead of 4.** The
+previous build had made it read as tame — a fist that can shove it around keeps
+it permanently on the back foot. This restores the exchange without touching its
+attack rate.
+
+### Still outstanding from the same playtest
+
+Four of the five reported problems are **not** addressed here:
+
+- **It cannot get back up.** `FIG_DOWN` is still terminal.
+- **The upright seeking is still an outside force.** The horizontal drive and the
+  turning are still `force = bone mass × the body's wanted acceleration`, sprayed
+  over every bone (`w_fig_apply`, ~line 3211). The legs are not carrying it.
+- **The trunk trails when it walks** — same cause.
+- **The head bobbles** — likely the 22 Hz neck spring being excited by a
+  whole-body drive it takes no part in producing.
