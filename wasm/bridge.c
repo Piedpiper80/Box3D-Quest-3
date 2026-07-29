@@ -1600,6 +1600,11 @@ static int s_figBroke = 0;                    // bones lost this step
 static float s_figTempo = 1.0f;
 static float s_figDbg[8];
 
+// Everything the contact-limited balance remembers between steps. Cleared in
+// both entry points, because persistent state cleared in only one of them
+// arrives from the last figure — this project has paid for that twice.
+static void figBalReset(void);
+
 static void figWorldReset(void)
 {
     s_figExists = 0;
@@ -1611,6 +1616,7 @@ static void figWorldReset(void)
     s_figCarry = 0.0f; s_figDt = 1.0f / 72.0f;
     s_figState = FIG_WAIT;
     s_figHold = 0;
+    figBalReset();
 }
 
 // --- small quaternion helpers ----------------------------------------------
@@ -1749,6 +1755,570 @@ static void figCarry(void)
 static int figSpineBroken(void)
 {
     return figBroken(BONE_ABDOMEN) || figBroken(BONE_CHEST);
+}
+
+// --- balance, and where its authority comes from ----------------------------
+//
+// figSupport() answers "are the legs still attached". That is a STRUCTURAL
+// question and it stays exactly as it is — it is what stops the walk, what
+// drops the hip to a knee, and what the HUD reads. It is not, and never was,
+// an answer to "are the feet on the floor", and using it as one is why the
+// figure could be swept off its legs, thrown into the air, or knocked flat and
+// still behave as though solidly planted.
+//
+// Everything below measures the floor instead. The rule the whole thing is
+// built on: a standing body balances with ANKLE TORQUE, and ankle torque is
+// bounded by the size of the foot and the load on it. Put the centre of
+// pressure where the body needs it, clamp it inside the sole, and the
+// authority is a measured newton count times a lever that cannot leave the
+// footprint. In the air both are zero — not gated to zero, ARE zero — so
+// there is nothing left that can right it in mid-air.
+//
+// Once the capture point (where the body would have to put its foot to stop)
+// leaves the area between the soles, no admissible pressure brings it back and
+// it MUST topple. That is not a rule bolted on top; it is the same inequality
+// the controller is already solving, read out.
+
+#define FIG_LOAD_TAU   0.10f  /* s   sole-load RISE; the fall is instant       */
+#define FIG_GND_UP     0.030f /* s   grounded licence, believes contact fast   */
+#define FIG_GND_DN     0.120f /* s   ... and forgets it slowly                 */
+#define FIG_VEL_TAU    0.06f  /* s   CoM velocity: the body rings at 3.5 Hz,
+                                     toppling is 0.45 Hz                       */
+#define FIG_ICP_K      1.8f   /* -   capture-point gain; k*w*dt = 0.077        */
+#define FIG_COP_INSET  0.012f /* m   how far inside the sole the pressure may
+                                     be commanded. Never on the boundary: a
+                                     foot rolled onto its own edge destroys the
+                                     contact that authorises the torque         */
+#define FIG_LOAD_MIN   0.06f  /* -   of body weight, for a sole to count as
+                                     part of the support polygon                */
+#define FIG_MU         0.7f   /* -   the floor's friction (see w_reset)         */
+#define FIG_HIP_MAX    0.0f   /* N.m the trunk pair. ZERO, and measured: at 60 and
+                                     at 130 N.m the figure took two punches
+                                     fewer before it went over, not more. It
+                                     borrows momentum it then has to pay back,
+                                     and this body has to pay it back through a
+                                     hip spring that is already carrying the
+                                     trunk. Kept, named, and off              */
+#define FIG_SHIFT_TAU  0.15f  /* s   weight-split slew; inert while FIG_SPLIT is 0 */
+#define FIG_STANCE_TAU 8.00f  /* s   how fast the held spot forgets where it was
+                                     and drifts onto the ANKLE LINE. Slow, and
+                                     measured: at 0.6 s the spot followed the
+                                     body backwards under a punch, so it had no
+                                     memory of where it had been standing and
+                                     walked 0.1 m back per blow until it went
+                                     over. At 8 s a punch exchange keeps its
+                                     ground                                     */
+#define FIG_CARRY_OUT  0.45f  /* s   carry ramp-out (in stays at 0.20)          */
+#define FIG_OUT_BAND   0.040f /* m   capture point outside the base by          */
+#define FIG_OUT_HOLD   0.45f  /* s   ... and for this long, before it is a fall */
+#define FIG_AIR_HOLD   0.50f  /* s   no sole loaded at all, and not striding    */
+#define FIG_DOWN_COS   0.2588f/* -   chest up.y, i.e. 75 degrees over           */
+#define FIG_DOWN_HOLD  0.20f  /* s   contiguous                                 */
+#define FIG_STEP_HOLD  0.15f  /* s   a third of the way to falling, and it puts
+                                     a foot down instead. 0 disables            */
+#define FIG_STEP_COOL  0.00f  /* s   refractory between saving steps. ZERO, and
+                                     measured: at 1.1 s it could not take the
+                                     second step a walk-in needs and went down
+                                     after three landed blows                   */
+#define FIG_SHEAR      0.5f   /* -   how much of the shear the commanded
+                                     pressure implies is pushed through the
+                                     soles rather than left to the leg column
+                                     to transmit. Half, and measured: at zero
+                                     the figure could not hold its spot while
+                                     it turned and toppled backwards inside
+                                     two seconds; at one it double-counts what
+                                     the column already carries              */
+#define FIG_SPLIT      0.0f   /* -   how far the leg push may lean onto one
+                                     foot. ZERO, and measured: the pair goes in
+                                     at the pelvis CENTRE and comes out under
+                                     one sole 79 mm off the midline, so loading
+                                     the foot the body is falling toward rolls
+                                     it further that way. Positive feedback with
+                                     542 N behind it                            */
+#define FIG_GATE_W     0.20f  /* -   of body weight a sole must carry before its
+                                     leg may push at all; 0 disables            */
+#define FIG_STAND_OFF  0.70f  /* -   of its own range, where a stride stops     */
+#define FIG_WALK_LEAD  0.40f  /* m   how far ahead of the centre of mass the
+                                     stride may aim, which is what sets the
+                                     speed it settles at                        */
+#define FIG_HOLD_SLACK 0.00f  /* -   how much of the hold a blow takes away. ZERO,
+                                     and measured: the joint springs already go
+                                     slack where the blow lands, and taking the
+                                     station-keeping away on top of that cost
+                                     the figure its footing rather than its
+                                     stiffness                                  */
+#define FIG_ARRIVE_E   0.30f  /* m   how far onto its own feet the hand-back pulls */
+#define FIG_HOLD_A     3.5f   /* m/s2 how hard it may hold its spot, at full contact */
+#define FIG_ANKLE_K    1.0f   /* -   fraction of the sole's full moment the
+                                     ankle is allowed to ask for                */
+
+// totalNormalImpulse accumulates the biased solve AND the relax pass of each
+// substep, so the raw sum is about twice the impulse the contact really spent.
+// That factor is an internals dependency of the pinned Box3D and it has its
+// own check in the suite.
+#define FIG_IMPULSE_CAL 0.5f
+
+static float s_figLoad[2] = { 0.0f, 0.0f };   // filtered normal load per sole, N
+static int   s_figLoaded[2] = { 0, 0 };       // and whether it counts as support
+static float s_figGnd = 0.0f;                 // grounded licence, 0..1
+static float s_figMassC = 0.0f;               // carried mass
+static float s_figComX = 0.0f, s_figComY = 0.0f, s_figComZ = 0.0f;
+static float s_figVelX = 0.0f, s_figVelZ = 0.0f;
+static float s_figIcpX = 0.0f, s_figIcpZ = 0.0f;
+static float s_figMargin = 0.0f;              // + inside the support polygon
+static float s_figCopX = 0.0f, s_figCopZ = 0.0f;   // commanded pressure
+static float s_figWantX = 0.0f, s_figWantZ = 0.0f; // ... before it was clamped
+static float s_figTgtX = 0.0f, s_figTgtZ = 0.0f;   // the spot it is holding
+static float s_figAnkX[2], s_figAnkZ[2];
+static float s_figFootPX[2], s_figFootPZ[2];  // per-sole clamped pressure
+static float s_figFootEX[2][2], s_figFootEZ[2][2];
+static float s_figSoleLo[2][2], s_figSoleHi[2][2]; // alive footprint, inset
+static float s_figSoleCX = 0.0f, s_figSoleCZ = 0.0f;
+static float s_figFeetX = 0.0f, s_figFeetZ = 0.0f;  // both ankles, load or no load
+static int   s_figNQ = 0;                     // corners in the support polygon
+static float s_figOmega = 3.07f;
+static float s_figOut = 0.0f;                 // how long past the point of no return
+static float s_figAir = 0.0f;                 // how long with nothing under it
+static float s_figCollapse = 0.0f;            // how long the trunk has been over
+static float s_figShift = 0.5f;               // weight split, left share
+static float s_figSlackLeg = 0.0f;            // worst slack in either leg
+static float s_figSlackAny = 0.0f;            // and anywhere in the body
+static float s_figTauA = 0.0f, s_figTauH = 0.0f;
+static int   s_figRecover = 0;                // this step is a step to save itself
+static float s_figRecX = 0.0f, s_figRecZ = 0.0f;   // and where it is stepping to
+static float s_figStepCool = 0.0f;            // and how long before it may take another
+
+static void figBalReset(void)
+{
+    s_figLoad[0] = s_figLoad[1] = 0.0f;
+    s_figLoaded[0] = s_figLoaded[1] = 0;
+    s_figGnd = 0.0f; s_figMassC = 0.0f;
+    s_figComX = s_figComY = s_figComZ = 0.0f;
+    s_figVelX = s_figVelZ = 0.0f;
+    s_figIcpX = s_figIcpZ = 0.0f;
+    s_figMargin = 0.0f;
+    s_figCopX = s_figCopZ = 0.0f;
+    s_figWantX = s_figWantZ = 0.0f;
+    s_figTgtX = s_figTgtZ = 0.0f;
+    s_figSoleCX = s_figSoleCZ = 0.0f;
+    s_figFeetX = s_figFeetZ = 0.0f;
+    s_figNQ = 0; s_figOmega = 3.07f;
+    s_figOut = s_figAir = s_figCollapse = 0.0f;
+    s_figShift = 0.5f; s_figSlackLeg = 0.0f; s_figSlackAny = 0.0f;
+    s_figTauA = s_figTauH = 0.0f;
+    s_figRecover = 0; s_figRecX = 0.0f; s_figRecZ = 0.0f; s_figStepCool = 0.0f;
+    for (int s = 0; s < 2; s++)
+    {
+        s_figAnkX[s] = s_figAnkZ[s] = 0.0f;
+        s_figFootPX[s] = s_figFootPZ[s] = 0.0f;
+        s_figFootEX[s][0] = 1.0f; s_figFootEX[s][1] = 0.0f;
+        s_figFootEZ[s][0] = 0.0f; s_figFootEZ[s][1] = 1.0f;
+        s_figSoleLo[s][0] = s_figSoleHi[s][0] = 0.0f;
+        s_figSoleLo[s][1] = s_figSoleHi[s][1] = 0.0f;
+    }
+}
+
+// Normal load through one bone's contacts with whatever it is standing on, and
+// where that load acts. Factored out of w_fig_ground so the controller reads
+// exactly the number the suite reads — not a second opinion of it.
+static int figPartLoad(int bone, float* N, float* cx, float* cy, float* cz)
+{
+    *N = 0.0f; *cx = 0.0f; *cy = 0.0f; *cz = 0.0f;
+    if (!s_figExists || bone < 0 || bone >= BONE_COUNT) return 0;
+    if (!s_figCarried[bone]) return 0;
+    const b3BodyId body = s_figBone[bone];
+
+    int cap = b3Body_GetContactCapacity(body);
+    if (cap <= 0) return 0;
+    if (cap > 24) cap = 24;
+    b3ContactData cd[24];
+    const int n = b3Body_GetContactData(body, cd, cap);
+    if (n <= 0) return 0;
+
+    const b3MassData md = b3Body_GetMassData(body);
+    const b3Pos com = b3Body_GetWorldPoint(body, md.center);
+
+    float wsum = 0.0f, gsum = 0.0f, sx = 0.0f, sy = 0.0f, sz = 0.0f;
+    for (int i = 0; i < n; i++)
+    {
+        // The manifold normal points from shape A to shape B, so the push
+        // ON US flips sign if we are A.
+        const int weAreA = B3_ID_EQUALS(b3Shape_GetBody(cd[i].shapeIdA), body);
+        for (int mi = 0; mi < cd[i].manifoldCount; mi++)
+        {
+            const b3Manifold* mf = &cd[i].manifolds[mi];
+            const float uy = weAreA ? -mf->normal.y : mf->normal.y;
+            if (uy < 0.5f) continue;          // not something we stand on
+            for (int k = 0; k < mf->pointCount; k++)
+            {
+                const b3ManifoldPoint* mp = &mf->points[k];
+                if (mp->separation > 0.005f) continue;   // speculative
+                const float J = mp->totalNormalImpulse;
+                if (J <= 0.0f) continue;
+                // anchorA/anchorB are offsets from that body's centre of mass,
+                // already in world axes.
+                const b3Vec3 a = weAreA ? mp->anchorA : mp->anchorB;
+                sx += ((float)com.x + a.x) * J;
+                sy += ((float)com.y + a.y) * J;
+                sz += ((float)com.z + a.z) * J;
+                wsum += J;
+                gsum += J * uy;
+            }
+        }
+    }
+    if (wsum <= 1e-6f) return 0;
+    *N = FIG_IMPULSE_CAL * gsum / s_figDt;
+    *cx = sx / wsum; *cy = sy / wsum; *cz = sz / wsum;
+    return 1;
+}
+
+// How far inside the convex hull of `n` points a query point sits. Positive
+// inside, negative outside and equal to the real distance to the boundary.
+// n is at most ten, so gift-wrapping is cheaper than being clever.
+static float figPolyMargin(const float* px, const float* pz, int n,
+                           float qx, float qz)
+{
+    if (n <= 0) return -1e9f;
+
+    float best = 1e9f;
+    for (int i = 0; i < n; i++)
+    {
+        const float dx = qx - px[i], dz = qz - pz[i];
+        const float d = __builtin_sqrtf(dx*dx + dz*dz);
+        if (d < best) best = d;
+    }
+    if (n < 3) return -best;
+
+    int hull[16], hn = 0, start = 0;
+    for (int i = 1; i < n; i++)
+        if (px[i] < px[start] || (px[i] == px[start] && pz[i] < pz[start])) start = i;
+    int cur = start;
+    for (int guard = 0; guard < n + 2 && hn < 15; guard++)
+    {
+        hull[hn++] = cur;
+        int next = (cur + 1) % n;
+        for (int i = 0; i < n; i++)
+        {
+            if (i == cur || i == next) continue;
+            const float ax = px[next] - px[cur], az = pz[next] - pz[cur];
+            const float bx = px[i] - px[cur], bz = pz[i] - pz[cur];
+            const float cr = ax * bz - az * bx;
+            if (cr < -1e-9f) next = i;
+            else if (cr < 1e-9f && bx*bx + bz*bz > ax*ax + az*az) next = i;
+        }
+        cur = next;
+        if (cur == start) break;
+    }
+    if (hn < 3) return -best;
+
+    float area2 = 0.0f;
+    for (int i = 0; i < hn; i++)
+    {
+        const int j = (i + 1) % hn;
+        area2 += px[hull[i]] * pz[hull[j]] - px[hull[j]] * pz[hull[i]];
+    }
+    const float sgn = area2 >= 0.0f ? 1.0f : -1.0f;
+
+    float minSigned = 1e9f, minDist = 1e9f;
+    for (int i = 0; i < hn; i++)
+    {
+        const int j = (i + 1) % hn;
+        const float ax = px[hull[i]], az = pz[hull[i]];
+        const float ex = px[hull[j]] - ax, ez = pz[hull[j]] - az;
+        const float len2 = ex*ex + ez*ez;
+        if (len2 < 1e-12f) continue;
+        const float len = __builtin_sqrtf(len2);
+        const float sd = (ex * (qz - az) - ez * (qx - ax)) * sgn / len;
+        if (sd < minSigned) minSigned = sd;
+        float t = ((qx - ax) * ex + (qz - az) * ez) / len2;
+        if (t < 0.0f) t = 0.0f; else if (t > 1.0f) t = 1.0f;
+        const float dx = qx - (ax + t * ex), dz = qz - (az + t * ez);
+        const float d = __builtin_sqrtf(dx*dx + dz*dz);
+        if (d < minDist) minDist = d;
+    }
+    return minSigned >= 0.0f ? minSigned : -minDist;
+}
+
+// Read the floor, once a step, before anything decides anything. Everything
+// after this — the will, the forces, whether it is going down — sees one
+// consistent picture of what is under it.
+static void figSense(float dt)
+{
+    if (!s_figExists) return;
+    const float floorY = s_worldFloorY;
+
+    // --- the body that is actually still a body ---
+    float M = 0.0f, cx = 0.0f, cy = 0.0f, cz = 0.0f, vx = 0.0f, vz = 0.0f;
+    for (int b = 0; b < BONE_COUNT; b++)
+    {
+        if (!s_figCarried[b]) continue;
+        const float mb = b3Body_GetMass(s_figBone[b]);
+        const b3Pos wc = b3Body_GetWorldCenter(s_figBone[b]);
+        const b3Vec3 vb = b3Body_GetLinearVelocity(s_figBone[b]);
+        M += mb;
+        cx += mb * (float)wc.x; cy += mb * (float)wc.y; cz += mb * (float)wc.z;
+        vx += mb * vb.x;        vz += mb * vb.z;
+    }
+    if (M <= 1e-6f) { s_figMassC = 0.0f; s_figNQ = 0; return; }
+    cx /= M; cy /= M; cz /= M; vx /= M; vz /= M;
+    s_figMassC = M;
+    s_figComX = cx; s_figComY = cy; s_figComZ = cz;
+    const float av = dt / (dt + FIG_VEL_TAU);
+    s_figVelX += (vx - s_figVelX) * av;
+    s_figVelZ += (vz - s_figVelZ) * av;
+    const float W = M * 9.81f;
+
+    // --- what each sole and each shin is carrying ---
+    //
+    // The rise is filtered and the FALL IS NOT. A foot that has left the floor
+    // has left it this frame, and sixty newton-metres still going into a one
+    // kilogram foot a tenth of a second later is ten thousand radians per
+    // second squared of nothing useful.
+    float rawFoot[2], rawShin[2], scx[2], scz[2];
+    int hasShin[2];
+    for (int s = 0; s < 2; s++)
+    {
+        float N, ax, ay, az;
+        rawFoot[s] = figPartLoad(LEG(s) + 2, &N, &ax, &ay, &az) ? N : 0.0f;
+        hasShin[s] = figPartLoad(LEG(s) + 1, &N, &ax, &ay, &az);
+        rawShin[s] = hasShin[s] ? N : 0.0f;
+        scx[s] = ax; scz[s] = az;
+        if (rawFoot[s] < s_figLoad[s]) s_figLoad[s] = rawFoot[s];
+        else s_figLoad[s] += (rawFoot[s] - s_figLoad[s]) * (dt / (dt + FIG_LOAD_TAU));
+    }
+
+    // The grounded licence is the opposite filter, and deliberately: it
+    // BELIEVES contact fast and forgets it slowly, so two frames of contact
+    // dropout cannot read as flight. It scales caps, never magnitudes.
+    // The shins count. Without them a figure down on one knee reads as having
+    // left the ground entirely.
+    float gRaw = (rawFoot[0] + rawFoot[1] + rawShin[0] + rawShin[1]) /
+                 (W > 1e-3f ? W : 1.0f);
+    if (gRaw > 1.0f) gRaw = 1.0f;
+    const float gTau = gRaw > s_figGnd ? FIG_GND_UP : FIG_GND_DN;
+    s_figGnd += (gRaw - s_figGnd) * (dt / (dt + gTau));
+
+    // --- the support polygon, from the ALIVE footprints ---
+    //
+    // A foot beaten down to two cells has two cells' worth of balance. The
+    // rectangle is read out of the grid the collision shapes are made of, so
+    // it cannot drift from the bone.
+    float qx[12], qz[12];
+    int nq = 0;
+    for (int s = 0; s < 2; s++)
+    {
+        s_figLoaded[s] = 0;
+        const int ft = LEG(s) + 2;
+        s_figAnkX[s] = cx; s_figAnkZ[s] = cz;
+        s_figFootEX[s][0] = 1.0f; s_figFootEX[s][1] = 0.0f;
+        s_figFootEZ[s][0] = 0.0f; s_figFootEZ[s][1] = 1.0f;
+        s_figSoleLo[s][0] = s_figSoleHi[s][0] = 0.0f;
+        s_figSoleLo[s][1] = s_figSoleHi[s][1] = 0.0f;
+        if (!s_figCarried[ft]) continue;
+
+        const b3Pos ap = b3Body_GetPosition(s_figBone[ft]);   // the ankle IS the origin
+        s_figAnkX[s] = (float)ap.x; s_figAnkZ[s] = (float)ap.z;
+        b3Vec3 fwd = { 0.0f, 0.0f, 1.0f };
+        fwd = b3Body_GetWorldVector(s_figBone[ft], fwd);
+        float fl = __builtin_sqrtf(fwd.x * fwd.x + fwd.z * fwd.z);
+        float ezx = 0.0f, ezz = 1.0f;
+        if (fl > 1e-4f) { ezx = fwd.x / fl; ezz = fwd.z / fl; }
+        const float exx = ezz, exz = -ezx;
+        s_figFootEX[s][0] = exx; s_figFootEX[s][1] = exz;
+        s_figFootEZ[s][0] = ezx; s_figFootEZ[s][1] = ezz;
+
+        const int g = s_figGrid[ft];
+        if (g < 0 || g >= VOX_GRIDS || !s_vxG[g].used) continue;
+        const VoxGrid* vg = &s_vxG[g];
+        int i0 = 99, i1 = -1, k0 = 99, k1 = -1;
+        for (int ix = 0; ix < vg->n[0]; ix++)
+            for (int iz = 0; iz < vg->n[2]; iz++)
+            {
+                int any = 0;
+                for (int iy = 0; iy < vg->n[1]; iy++)
+                    if (vxAliveAt(vg, ix, iy, iz)) { any = 1; break; }
+                if (!any) continue;
+                if (ix < i0) i0 = ix;
+                if (ix > i1) i1 = ix;
+                if (iz < k0) k0 = iz;
+                if (iz > k1) k1 = iz;
+            }
+        if (i1 < 0) continue;
+        float ulo = vg->local.x + (float)i0 * vg->size;
+        float uhi = vg->local.x + (float)(i1 + 1) * vg->size;
+        float wlo = vg->local.z + (float)k0 * vg->size;
+        float whi = vg->local.z + (float)(k1 + 1) * vg->size;
+        const float um = 0.5f * (ulo + uhi), wm = 0.5f * (wlo + whi);
+        ulo += FIG_COP_INSET; uhi -= FIG_COP_INSET;
+        wlo += FIG_COP_INSET; whi -= FIG_COP_INSET;
+        if (ulo > uhi) { ulo = um; uhi = um; }
+        if (wlo > whi) { wlo = wm; whi = wm; }
+        s_figSoleLo[s][0] = ulo; s_figSoleHi[s][0] = uhi;
+        s_figSoleLo[s][1] = wlo; s_figSoleHi[s][1] = whi;
+
+        if (s_figLoad[s] < FIG_LOAD_MIN * W) continue;
+        s_figLoaded[s] = 1;
+        for (int a = 0; a < 2; a++)
+            for (int c = 0; c < 2; c++)
+            {
+                const float u = a ? uhi : ulo, wv = c ? whi : wlo;
+                qx[nq] = s_figAnkX[s] + u * exx + wv * ezx;
+                qz[nq] = s_figAnkZ[s] + u * exz + wv * ezz;
+                nq++;
+            }
+    }
+    for (int s = 0; s < 2; s++)
+        if (hasShin[s] && rawShin[s] >= FIG_LOAD_MIN * W && nq < 12)
+        { qx[nq] = scx[s]; qz[nq] = scz[s]; nq++; }
+    s_figNQ = nq;
+
+    // --- the capture point: where it would have to put a foot to stop ---
+    float Hc = cy - floorY;
+    if (Hc < 0.30f) Hc = 0.30f;
+    s_figOmega = __builtin_sqrtf(9.81f / Hc);
+    s_figIcpX = cx + s_figVelX / s_figOmega;
+    s_figIcpZ = cz + s_figVelZ / s_figOmega;
+    s_figMargin = figPolyMargin(qx, qz, nq, s_figIcpX, s_figIcpZ);
+
+    // Where the loaded ANKLES are: the pressure point that costs no ankle
+    // moment at all, and therefore the spot this leg column actually rests
+    // over. Not the centroid of the soles — that sits 66 mm in front of the
+    // ankle line, and holding the body over it means commanding a heel-ward
+    // pressure for ever, which measured as a permanent saturated ankle and a
+    // slow topple backwards.
+    {
+        float ax = 0.0f, az = 0.0f, wsum = 0.0f;
+        for (int s = 0; s < 2; s++)
+        {
+            if (!s_figLoaded[s]) continue;
+            ax += s_figLoad[s] * s_figAnkX[s];
+            az += s_figLoad[s] * s_figAnkZ[s];
+            wsum += s_figLoad[s];
+        }
+        if (wsum > 1e-6f) { s_figSoleCX = ax / wsum; s_figSoleCZ = az / wsum; }
+        else { s_figSoleCX = cx; s_figSoleCZ = cz; }
+        // And where the feet are whether they are carrying or not. A stride
+        // spends a third of itself with a foot in the air, and the walk has to
+        // be steered by where the feet ARE — the body leads them by a third of
+        // a metre, and a walk aimed with the body stops the FEET a third of a
+        // metre past where it meant to.
+        int nf = 0; float fx = 0.0f, fz = 0.0f;
+        for (int s = 0; s < 2; s++)
+        {
+            if (!s_figCarried[LEG(s) + 2]) continue;
+            fx += s_figAnkX[s]; fz += s_figAnkZ[s]; nf++;
+        }
+        if (nf > 0) { s_figFeetX = fx / (float)nf; s_figFeetZ = fz / (float)nf; }
+        else { s_figFeetX = cx; s_figFeetZ = cz; }
+    }
+    if (s_figCarry < 0.05f && (s_figLoaded[0] || s_figLoaded[1]))
+    {
+        const float a = dt / (dt + FIG_STANCE_TAU);
+        s_figStanceX += (s_figSoleCX - s_figStanceX) * a;
+        s_figStanceZ += (s_figSoleCZ - s_figStanceZ) * a;
+    }
+
+    // On top of the spot rides the sway a boxer has — weight moving between
+    // the feet, across the line to the player. Two centimetres: a shift of
+    // weight, not a step. It used to be a wobble in a position spring; it is
+    // now a wobble in where the pressure is put, which is what it always was.
+    float tx = s_figStanceX, tz = s_figStanceZ;
+    {
+        const float bx = s_figPlayer.x - cx, bz = s_figPlayer.z - cz;
+        const float bl = __builtin_sqrtf(bx*bx + bz*bz);
+        if (bl > 1e-3f)
+        {
+            const float shift = __builtin_sinf(s_figSway) * 0.02f;
+            tx += -bz / bl * shift; tz += bx / bl * shift;
+        }
+    }
+    s_figTgtX = tx; s_figTgtZ = tz;
+
+    // --- the law ---
+    //
+    // p* = icp + k(icp - target). Closed on the capture point this is FIRST
+    // ORDER — icp' = -w k (icp - target), 0.181 s — so there is no spring to
+    // ring and no second-order stability condition to satisfy. Each foot then
+    // offers only what is inside its own sole. The clamp is PER FOOT and that
+    // is a stability requirement, not a refinement: commanded between the two
+    // feet, one sole was asked for 163 N.m when it could absorb 18, and it
+    // went 0.39 m into the air in four frames.
+    s_figWantX = s_figIcpX + FIG_ICP_K * (s_figIcpX - tx);
+    s_figWantZ = s_figIcpZ + FIG_ICP_K * (s_figIcpZ - tz);
+
+    // How the two feet share it. The net pressure the body needs is NOT put
+    // under each sole separately: a body standing with its weight between its
+    // feet has each foot's pressure under its own ankle and the two AVERAGE to
+    // the midline, with no ankle moment anywhere. Projecting the net point
+    // onto both soles instead asks each foot for its full inward moment for
+    // ever — measured as 20 N.m per ankle of permanent inward roll, both feet
+    // up on their inner edges, and a topple as soon as anything else happened.
+    //
+    // So what each ankle is asked for is the SHIFT: how far the pressure has
+    // to move from the ankle line, applied about each of its own ankles and
+    // clamped to its own sole.
+    const float shX = s_figWantX - s_figSoleCX;
+    const float shZ = s_figWantZ - s_figSoleCZ;
+    float bxs = 0.0f, bzs = 0.0f, lsum = 0.0f;
+    for (int s = 0; s < 2; s++)
+    {
+        s_figFootPX[s] = s_figAnkX[s]; s_figFootPZ[s] = s_figAnkZ[s];
+        if (!s_figLoaded[s]) continue;
+        const float exx = s_figFootEX[s][0], exz = s_figFootEX[s][1];
+        const float ezx = s_figFootEZ[s][0], ezz = s_figFootEZ[s][1];
+        const float dx = shX, dz = shZ;
+        float du = dx * exx + dz * exz;
+        float dw = dx * ezx + dz * ezz;
+        if (du < s_figSoleLo[s][0]) du = s_figSoleLo[s][0];
+        if (du > s_figSoleHi[s][0]) du = s_figSoleHi[s][0];
+        if (dw < s_figSoleLo[s][1]) dw = s_figSoleLo[s][1];
+        if (dw > s_figSoleHi[s][1]) dw = s_figSoleHi[s][1];
+        s_figFootPX[s] = s_figAnkX[s] + du * exx + dw * ezx;
+        s_figFootPZ[s] = s_figAnkZ[s] + du * exz + dw * ezz;
+        bxs += s_figLoad[s] * s_figFootPX[s];
+        bzs += s_figLoad[s] * s_figFootPZ[s];
+        lsum += s_figLoad[s];
+    }
+    if (lsum > 1e-6f) { s_figCopX = bxs / lsum; s_figCopZ = bzs / lsum; }
+    else { s_figCopX = cx; s_figCopZ = cz; }
+
+    // --- going down is a consequence, not a script ---
+    //
+    // Two doors, because the physics does the toppling either way and the
+    // trigger only NAMES the state.
+    s_figSlackLeg = 0.0f;
+    for (int s = 0; s < 2; s++)
+        for (int k = 0; k < 3; k++)
+            if (s_figSlack[LEG(s) + k] > s_figSlackLeg) s_figSlackLeg = s_figSlack[LEG(s) + k];
+    s_figSlackAny = 0.0f;
+    for (int b = 0; b < BONE_COUNT; b++)
+        if (s_figCarried[b] && s_figSlack[b] > s_figSlackAny) s_figSlackAny = s_figSlack[b];
+
+    // The capture point has left the base and stayed out. The band, the dwell
+    // and both suppressions are measured: the command is a few millimetres
+    // noisy so a zero crossing chatters; 35% of stride frames have no sole
+    // loaded, because walking IS controlled falling; and being HIT is not the
+    // same as being off balance, which is what the slack term says.
+    // Asked only while both legs still carry, for the same reason the backstop
+    // is: down on one knee the body is permanently outside what one sole can
+    // hold, and that is a distinct state this game already has — not a fall.
+    if (nq > 0 && figSupport() >= 1.0f && s_figMargin < -FIG_OUT_BAND
+        && s_figCarry < 0.05f && s_figSlackLeg < 0.20f)
+        s_figOut += dt;
+    else if (s_figMargin > 0.005f || s_figCarry >= 0.05f || s_figSlackLeg >= 0.20f)
+    { s_figOut -= dt * 2.0f; if (s_figOut < 0.0f) s_figOut = 0.0f; }
+
+    if (nq == 0 && s_figCarry < 0.05f) s_figAir += dt; else s_figAir = 0.0f;
+
+    // The backstop: the trunk has gone over 75 degrees and stayed there.
+    // Contiguous, reset rather than decayed. Asked only while both legs still
+    // carry, because kneeling on one reads 3.7 s past 75 and is not a fall.
+    if (figSupport() >= 1.0f && s_figCarried[BONE_CHEST])
+    {
+        b3Matrix3 cm = b3MakeMatrixFromQuat(b3Body_GetRotation(s_figBone[BONE_CHEST]));
+        if (cm.cy.y < FIG_DOWN_COS) s_figCollapse += dt; else s_figCollapse = 0.0f;
+    }
+    else s_figCollapse = 0.0f;
 }
 
 WASM_EXPORT("w_fig_destroy")
@@ -1911,6 +2481,9 @@ int w_fig_create(float x, float z, float stature, int material)
     // Same reason the slack is cleared above: persistent state cleared in only
     // one of the two entry points arrives from the last figure.
     s_figCarry = 0.0f; s_figDt = 1.0f / 72.0f;
+    figBalReset();
+    s_figTgtX = x; s_figTgtZ = z;
+    s_figSoleCX = x; s_figSoleCZ = z;
     figCarry();                            // so frame 1 is already correct
     s_figExists = 1;
     return BONE_COUNT;
@@ -2031,6 +2604,10 @@ void w_fig_update(float px, float py, float pz, float dt)
     s_figPlayer.x = px; s_figPlayer.y = py; s_figPlayer.z = pz;
     s_figPlayerEye = py;
 
+    // Read the floor first. The will, the forces and the question of whether
+    // it is still standing all see one picture of what is under it.
+    figSense(s_figDt);
+
     const float H = s_figStature;
     // Shoulder to fingertip: how far it can actually reach you.
     const float reach = (BONES[BONE_L_UPPERARM].oy - 0.375f) * H;
@@ -2039,15 +2616,53 @@ void w_fig_update(float px, float py, float pz, float dt)
     const float dx = px - (float)hip.x, dz = pz - (float)hip.z;
     const float dist = __builtin_sqrtf(dx*dx + dz*dz);
 
+    if (s_figStepCool > 0.0f) { s_figStepCool -= dt; }
     s_figSway += dt * 1.7f * s_figTempo;
     if (s_figSway > 6.2831853f) s_figSway -= 6.2831853f;
     s_figTimer += dt * s_figTempo;
 
     // Standing is not a decision it gets to make. Legs gone or spine gone and
-    // it is going down, whatever it was in the middle of.
-    if (s_figState != FIG_DOWN && (figSupport() <= 0.0f || figSpineBroken()))
+    // it is going down, whatever it was in the middle of — and now also when
+    // the body itself has gone past the point where any admissible pressure
+    // under its feet could bring it back, when there is nothing under it at
+    // all, or when the trunk has gone over and stayed there.
+    //
+    // None of these is "if pushed hard, fall". Each is a CONSEQUENCE, measured
+    // after the physics has already done the toppling; the trigger only names
+    // the state so the springs can let go and the will can stop.
+    if (s_figState != FIG_DOWN && (figSupport() <= 0.0f || figSpineBroken()
+        || s_figOut > FIG_OUT_HOLD || s_figAir > FIG_AIR_HOLD
+        || s_figCollapse > FIG_DOWN_HOLD))
     {
         if (s_figState != FIG_FALLING) { s_figState = FIG_FALLING; s_figTimer = 0.0f; }
+    }
+    // A step you take because you had to, not because you were closing. A body
+    // whose pressure has run out of sole has exactly one honest answer left,
+    // and it is to put a foot down somewhere else — a spring that hauls it
+    // back is the invisible hand again. It abandons a punch to do it, which is
+    // what a person does; and it comes a third of the way to the fall, so the
+    // step gets a chance before the topple is called. Both legs only, and never
+    // while it is already stepping.
+    else if (FIG_STEP_HOLD > 0.0f && s_figOut > FIG_STEP_HOLD
+             && s_figStepCool <= 0.0f
+             && s_figState != FIG_STEP && s_figState != FIG_FALLING
+             && s_figState != FIG_DOWN
+             && figSupport() >= 1.0f && s_figCarry < 0.05f)
+    {
+        s_figState = FIG_STEP; s_figTimer = 0.0f; s_figRecover = 1;
+        // One step, then stand and let the ankles work. Without the cooldown
+        // it re-triggered the frame the last one finished and the figure spent
+        // the whole fight stepping instead of fighting — 20 blows landed on it
+        // where a fight lands 70.
+        s_figStepCool = FIG_STEP_COOL; s_figOut = 0.0f;
+        // FROZEN at entry, and no further than a stride is worth. Tracked live
+        // the capture point runs away from a body that is walking toward it —
+        // it is where you are going, so chasing it is a walk with no end, and
+        // it measured as the figure striding five metres out of the fight.
+        float rx = s_figIcpX - s_figComX, rz = s_figIcpZ - s_figComZ;
+        const float rl = __builtin_sqrtf(rx*rx + rz*rz);
+        if (rl > 0.40f) { rx *= 0.40f / rl; rz *= 0.40f / rl; }
+        s_figRecX = s_figComX + rx; s_figRecZ = s_figComZ + rz;
     }
 
     switch (s_figState)
@@ -2061,11 +2676,37 @@ void w_fig_update(float px, float py, float pz, float dt)
 
         case FIG_WAIT:
             if (s_figHold) break;
+            // A step you take because you had to, not because you were
+            // closing. A body whose pressure has run out of sole has exactly
+            // one honest answer left and it is to put a foot down somewhere
+            // else — a spring that hauls it back is the invisible hand again.
+            // Only with both legs, only with a polygon to be outside of, never
+            // while already stepping, and never while it is still giving from
+            // a blow: being HIT is not the same as being off balance.
             // Hysteresis, or it flaps: step out at range, stop well inside it.
             // Without the gap it spent the whole fight alternating STEP and
             // WAIT every few frames on the boundary, which reads as a twitch
             // rather than as footwork.
-            if (dist > reach * FIG_RANGE) { s_figState = FIG_STEP; s_figTimer = 0.0f; }
+            //
+            // And it does not START a stride it cannot take. FIG_STEP already
+            // aborts on one leg, but only on the frame AFTER it is entered, so
+            // a one-legged figure standing out of range entered STEP and left
+            // it again on every single frame — measured at 2198 state changes
+            // in 2200 frames of the scripted fight. That is not a cosmetic
+            // twitch. carryWant is 1 in STEP and 0 in WAIT, and the carry ramps
+            // IN over 0.20 s and OUT over 0.45 s, so alternating every frame
+            // ratchets it: +0.0069 up, -0.0031 down, saturated at 1.0 inside
+            // five seconds. A saturated carry hands a kneeling figure the whole
+            // vertical hip PD (`ay` is multiplied by it — "while it is planted
+            // ay is exactly zero" stopped being true), the whole stride-arrival
+            // authority, and it freezes the held spot, which only tracks the
+            // feet while the carry is under 0.05. Traced consequence: the leg
+            // came off at 7.2 s with the figure 0.76 m away, three punches slid
+            // it to 1.20 m, and the spot it was holding was welded there for
+            // the remaining 26 s. It never came back into reach, the second leg
+            // was never taken, and it was still up at the end of the fight.
+            if (dist > reach * FIG_RANGE && figSupport() >= 1.0f)
+            { s_figState = FIG_STEP; s_figTimer = 0.0f; }
             else if (s_figTimer > 0.55f && !(figArmGone(0) && figArmGone(1)))
             {
                 // Take both its arms off and it cannot throw anything: it
@@ -2079,6 +2720,15 @@ void w_fig_update(float px, float py, float pz, float dt)
             break;
 
         case FIG_STEP:
+            // A recovery step ends when it has its balance back, not when it
+            // has arrived somewhere — and it is capped, so a figure that
+            // cannot recover falls rather than walking for ever.
+            if (s_figRecover)
+            {
+                if (figSupport() < 1.0f || s_figMargin > 0.02f || s_figTimer > 0.80f)
+                { s_figState = FIG_WAIT; s_figTimer = 0.0f; s_figRecover = 0; }
+                break;
+            }
             if (s_figHold) { s_figState = FIG_WAIT; s_figTimer = 0.0f; break; }
             // It cannot step on one leg. Losing a leg is not a debuff, it is
             // the end of walking.
@@ -2110,6 +2760,8 @@ void w_fig_update(float px, float py, float pz, float dt)
             if (s_figTimer > 0.42f) { s_figState = FIG_WAIT; s_figTimer = 0.0f; }
             break;
     }
+
+    if (s_figState != FIG_STEP) s_figRecover = 0;
 
     // Pose for the state it is now in.
     const float sway = __builtin_sinf(s_figSway);
@@ -2304,10 +2956,12 @@ void w_fig_apply(void)
     // the gravity term — a PD on hip height is an invisible hand too. While it
     // is planted ay is exactly zero, and nothing may be added to it later.
     //
-    // The carry rides in and out over a fifth of a second, so the transition
-    // into a stride is a shift of weight and not a jolt.
+    // The carry rides in over a fifth of a second and OUT over nearly half of
+    // one, because the last thing a step does is put the weight over the foot
+    // it has just planted. Handed back sooner than that, the body arrived at
+    // its new spot still travelling and stood there leaning.
     const float carryWant = (s_figState == FIG_STEP) ? 1.0f : 0.0f;
-    const float crate = s_figDt / 0.20f;
+    const float crate = s_figDt / (s_figCarry < carryWant ? 0.20f : FIG_CARRY_OUT);
     if (s_figCarry < carryWant)
     { s_figCarry += crate; if (s_figCarry > carryWant) s_figCarry = carryWant; }
     else
@@ -2318,60 +2972,157 @@ void w_fig_apply(void)
     float ay = ((targetY - (float)p.y) * wv * wv - v.y * 2.0f * 0.9f * wv
              + 9.81f * support) * s_figCarry;
 
+    // The horizontal is solved for the CENTRE OF MASS, not for the pelvis.
+    // The pelvis is 117 mm above the CoM of a body whose legs weigh as much as
+    // its trunk, and holding the pelvis over a spot leaves the body 0.19 m
+    // past its own feet.
     float ax = 0.0f, az = 0.0f;
+    int planted = 0;
     const float wh = 6.2831853f / 0.50f;
     if (s_figState == FIG_STEP && support >= 1.0f)
     {
-        const float reach = (BONES[BONE_L_UPPERARM].oy - 0.375f) * H;
-        const float ddx = s_figPlayer.x - (float)p.x, ddz = s_figPlayer.z - (float)p.z;
-        const float d = __builtin_sqrtf(ddx*ddx + ddz*ddz);
-        if (d > 1e-3f)
+        float tx = 0.0f, tz = 0.0f, have = 0;
+        if (s_figRecover)
         {
-            // Stop a reach short, and weave across the bearing on the way in,
-            // so closing reads as being hunted rather than as running on a
-            // rail.
-            const float want = reach * FIG_RANGE * 0.70f;
-            const float along = (d - want) / d;
-            const float weave = __builtin_sinf(s_figSway * 0.5f) * 0.22f;
-            const float tx = ddx * along - ddz / d * weave;
-            const float tz = ddz * along + ddx / d * weave;
-            ax = tx * wh * wh - v.x * 2.0f * 0.9f * wh;
-            az = tz * wh * wh - v.z * 2.0f * 0.9f * wh;
+            // A step to save itself walks to the CAPTURE POINT: the place
+            // where, if it put a foot, it would come to rest. That is the
+            // whole content of "it steps to keep its balance".
+            tx = s_figRecX - s_figComX; tz = s_figRecZ - s_figComZ; have = 1;
         }
-        // Wherever it walks to is where it will stand when it stops.
-        s_figStanceX = (float)p.x; s_figStanceZ = (float)p.z;
-    }
-    else
-    {
-        // Planted. Damping alone was not enough and the measurement was
-        // plain: with nothing holding a position, the smallest forward lean
-        // walked the figure a metre into the player over eight seconds and it
-        // never came back. Feet hold a spot. On top of that spot rides the
-        // sway a boxer has — weight moving between the feet, across the line
-        // to the player. Two centimetres: a shift of weight, not a step.
-        const float bx = s_figPlayer.x - (float)p.x, bz = s_figPlayer.z - (float)p.z;
-        const float bl = __builtin_sqrtf(bx*bx + bz*bz);
-        float sx = 0.0f, sz = 0.0f;
-        if (bl > 1e-3f)
+        else
         {
-            const float shift = __builtin_sinf(s_figSway) * 0.02f;
-            sx = -bz / bl * shift; sz = bx / bl * shift;
+            const float reach = (BONES[BONE_L_UPPERARM].oy - 0.375f) * H;
+            const float ddx = s_figPlayer.x - s_figComX, ddz = s_figPlayer.z - s_figComZ;
+            const float d = __builtin_sqrtf(ddx*ddx + ddz*ddz);
+            if (d > 1e-3f)
+            {
+                // Stop a reach short, and weave across the bearing on the way
+                // in, so closing reads as being hunted rather than as running
+                // on a rail.
+                const float want = reach * FIG_RANGE * FIG_STAND_OFF;
+                const float along = (d - want) / d;
+                const float weave = __builtin_sinf(s_figSway * 0.5f) * 0.22f;
+                tx = ddx * along - ddz / d * weave;
+                tz = ddz * along + ddx / d * weave;
+                have = 1;
+            }
         }
-        ax = (s_figStanceX + sx - (float)p.x) * wh * wh - v.x * 2.0f * 0.9f * wh;
-        az = (s_figStanceZ + sz - (float)p.z) * wh * wh - v.z * 2.0f * 0.9f * wh;
-    }
-
-    // The horizontal is capped, because a hard enough shove really should move
-    // it, and losing a leg should cost it its footing. The vertical is not:
-    // that is the legs, and while they hold, they hold.
-    {
+        if (have)
+        {
+            // A WALK, not a sprint. This is a position spring with a cap on
+            // its output, so the further away you stood the longer it spent
+            // saturated at 9 m/s2 and the faster it arrived: from four metres
+            // it reached the player doing 4.3 m/s with a capture point 1.4 m
+            // in front of its own feet, and nothing that respects a support
+            // polygon can stop that. Nothing could have. Clamping how far
+            // ahead the target may sit clamps the speed it settles at —
+            // 0.17 m of lead is about 1.2 m/s, which is a person walking.
+            {
+                const float tl = __builtin_sqrtf(tx*tx + tz*tz);
+                if (tl > FIG_WALK_LEAD)
+                { const float k = FIG_WALK_LEAD / tl; tx *= k; tz *= k; }
+            }
+            ax = tx * wh * wh - s_figVelX * 2.0f * 0.9f * wh;
+            az = tz * wh * wh - s_figVelZ * 2.0f * 0.9f * wh;
+        }
+        // Wherever it walks to is where it will stand when it stops, and the
+        // spot is where its FEET are, not where its body is. Stopping a walk
+        // leaves the body 0.3 m behind its own feet — you lean back when you
+        // stop — and the ankles can only reach 55 mm behind them, so a body
+        // handed a spot under its trunk is handed one it cannot hold. The spot
+        // is a WORLD point, frozen the moment the stride ends: aimed at the
+        // feet themselves it drags them, the target moves with them, and the
+        // figure walked itself twenty metres out of the room.
+        s_figStanceX = s_figComX; s_figStanceZ = s_figComZ;
         const float cap = 9.0f * support;
         const float hsq = ax*ax + az*az;
         if (hsq > cap * cap)
+        { const float k = cap / __builtin_sqrtf(hsq); ax *= k; az *= k; }
+    }
+    else
+    {
+        // Planted. What used to be here was a position spring on the pelvis at
+        // 158 per second squared — twelve to twenty-seven times what two feet
+        // can supply, with no contact term anywhere in it. That was the second
+        // invisible hand, and half of a permanent thirty-degree lean.
+        //
+        // What holds the spot now is the pressure under the soles, commanded
+        // in figSense and delivered by the ankle pair below. What is left here
+        // is the shear that pressure implies — paid for out of friction, and
+        // worth exactly zero with no sole on the floor.
+        planted = 1;
+        const float hc = s_figComY - s_worldFloorY > 0.30f
+                       ? s_figComY - s_worldFloorY : 0.30f;
+        ax = FIG_SHEAR * (9.81f / hc) * (s_figComX - s_figCopX);
+        az = FIG_SHEAR * (9.81f / hc) * (s_figComZ - s_figCopZ);
+        // Holding the spot, out of friction.
+        //
+        // The pressure under the soles is the primary and it is what makes the
+        // topple honest, but two feet 0.24 m long can only move the centre of
+        // mass at 1.75 m/s^2 and that is not enough for this rig to survive
+        // its own walk: stopping a stride leaves the body 0.3 m behind its
+        // feet and the ankles reach 55 mm. What was here before was 158 per
+        // second squared with no contact term in it at all — the invisible
+        // hand the headset kept reporting.
+        //
+        // This is the same idea at a twentieth of the size and scaled by the
+        // MEASURED grounded licence, so it is worth exactly nothing in the
+        // air, nothing with the legs swept, and nothing lying on the floor.
+        // It is applied as a pair against the loaded soles below, so it sums
+        // to zero over the figure and cannot hold anything up.
+        if (FIG_HOLD_A > 0.0f)
         {
-            const float k = cap / __builtin_sqrtf(hsq);
-            ax *= k; az *= k;
+            const float wp = 6.2831853f;             // 1 s period; wp*dt = 0.087
+            float hx = (s_figTgtX - s_figComX) * wp * wp - s_figVelX * 2.0f * 0.9f * wp;
+            float hz = (s_figTgtZ - s_figComZ) * wp * wp - s_figVelZ * 2.0f * 0.9f * wp;
+            // And it lets go where it has been hit. The joint springs already
+            // go slack under a blow so the body GIVES; a station-keeper that
+            // did not give with them would haul the body straight back the
+            // same frame, which is the complaint this whole build exists to
+            // answer, one level down.
+            const float hcap = FIG_HOLD_A * s_figGnd * support
+                             * (1.0f - FIG_HOLD_SLACK * s_figSlackAny);
+            const float hsq2 = hx*hx + hz*hz;
+            if (hsq2 > hcap * hcap)
+            { const float k = hcap / __builtin_sqrtf(hsq2); hx *= k; hz *= k; }
+            ax += hx; az += hz;
         }
+        // The last thing a step does is put the weight over the foot it has
+        // just planted. This rides out with the carry — it is the STRIDE's
+        // authority being handed back, not a standing controller — and without
+        // it the body arrived at its new spot still travelling, walked through
+        // the player and went over: the walk-in ended 0.9 m past him, down.
+        if (s_figCarry > 0.001f)
+        {
+            // Only so far onto them. Stopping a stride leaves the feet a third
+            // of a metre in front of the body, and hauling the body all the
+            // way onto them walks it that much closer than the stride meant to
+            // stop — measured as the figure standing 0.43 m from the player
+            // where it means to stand 0.62, close enough that a punch thrown
+            // at it never breaks contact and never registers as a blow at all.
+            float ex = s_figSoleCX - s_figComX, ez = s_figSoleCZ - s_figComZ;
+            const float el = __builtin_sqrtf(ex*ex + ez*ez);
+            if (el > FIG_ARRIVE_E) { ex *= FIG_ARRIVE_E / el; ez *= FIG_ARRIVE_E / el; }
+            const float kx = ex * wh * wh - s_figVelX * 2.0f * 0.9f * wh;
+            const float kz = ez * wh * wh - s_figVelZ * 2.0f * 0.9f * wh;
+            const float kcap = 9.0f * support * s_figCarry;
+            const float ksq = kx*kx + kz*kz;
+            float kk = 1.0f;
+            if (ksq > kcap * kcap) kk = kcap / __builtin_sqrtf(ksq);
+            ax += kx * kk; az += kz * kk;
+        }
+        // Friction is the whole budget: 0.7 of what the soles are carrying.
+        // Nothing on the floor, nothing to push against. What the stride is
+        // still carrying is exempt, because that is not being paid for out of
+        // contact — it is the same carried authority the walk had, handing
+        // itself back.
+        float cap = FIG_MU * 9.81f * s_figGnd;
+        const float carried = 9.0f * support * s_figCarry;
+        if (carried > cap) cap = carried;
+        if (cap > 9.0f * support) cap = 9.0f * support;
+        const float hsq = ax*ax + az*az;
+        if (hsq > cap * cap)
+        { const float k = cap / __builtin_sqrtf(hsq); ax *= k; az *= k; }
     }
 
     // --- and angular ---
@@ -2390,8 +3141,24 @@ void w_fig_apply(void)
     while (err < -3.14159265f) err += 6.2831853f;
 
     const float wa = 6.2831853f / 0.55f;      // wa*dt = 0.16 at 72 Hz
-    float rx = ux * wa * wa - w.x * 2.0f * wa;
-    float rz = uz * wa * wa - w.z * 2.0f * wa;
+    // THE MAGIC FORCE, and what is left of it.
+    //
+    // This term used to be applied unconditionally to every carried bone. It
+    // is a torque that swings the body back level, with no contact anywhere in
+    // it, so a figure thrown clear of the floor rolled itself upright in
+    // mid-air — measured at 355 degrees of pelvis rotation over 1.8 s of free
+    // fall, ending vertical with 0 N under it. That is exactly the thing the
+    // headset kept reporting: held up by something that is not there.
+    //
+    // It survives multiplied by the carry, which means it survives ONLY for
+    // the stride. figStride is an authored gait against a force-carried pelvis
+    // with no foot placement; it cannot balance and never could, and pretending
+    // otherwise is what put the invisible hand there in the first place. The
+    // carry is exactly zero the moment a foot is planted, so standing gets none
+    // of this at all: upright is the leg column, the joint springs, and the
+    // ankle pair, all of which need the floor.
+    float rx = (ux * wa * wa - w.x * 2.0f * wa) * s_figCarry;
+    float rz = (uz * wa * wa - w.z * 2.0f * wa) * s_figCarry;
     // Turning used to be free because the feet were not on the floor. Now
     // they are, and the whole weight through two soles is real friction to
     // scrub — 542 N at 0.7 is 379 N to break before anything turns at all.
@@ -2414,11 +3181,21 @@ void w_fig_apply(void)
     // a landed blow leaves behind and turned the body away from the next one.
     float ry = err * wa * wa * 4.0f - w.y * 2.0f * wa;
     {
-        const float cap = 90.0f * support;
+        const float capR = 90.0f * support * s_figCarry;
         const float sq = rx*rx + rz*rz;
-        if (sq > cap * cap) { const float k = cap / __builtin_sqrtf(sq); rx *= k; rz *= k; }
-        if (ry >  cap) ry =  cap;
-        if (ry < -cap) ry = -cap;
+        if (sq > capR * capR)
+        { const float k = capR / __builtin_sqrtf(sq); rx *= k; rz *= k; }
+        // Turning is something it DOES, and what it does it with is friction
+        // under its own soles. The gate saturates rather than scaling: at a
+        // quarter of body weight on the floor it has all the heading authority
+        // it ever had, so standing is untouched — a proportional gate cost
+        // 0.014 rad of a 0.15 rad budget that only has 0.008 to give.
+        float lic = s_figGnd > s_figCarry ? s_figGnd : s_figCarry;
+        lic *= 4.0f;                              // saturates at 0.25
+        if (lic > 1.0f) lic = 1.0f;
+        const float capY = 90.0f * support * lic;
+        if (ry >  capY) ry =  capY;
+        if (ry < -capY) ry = -capY;
     }
 
     s_figDbg[0] = err; s_figDbg[1] = ry; s_figDbg[2] = s_figCarry; s_figDbg[3] = ax;
@@ -2438,6 +3215,117 @@ void w_fig_apply(void)
         const float I = (Ib.cx.x + Ib.cy.y + Ib.cz.z) * (1.0f / 3.0f);
         b3Vec3 t; t.x = rx * I; t.y = ry * I; t.z = rz * I;
         b3Body_ApplyTorque(s_figBone[b], t, true);
+    }
+
+    // --- and the soles take the reaction for the shear -----------------------
+    //
+    // The horizontal above was applied to every carried bone; this is the
+    // other half of it, so the pair sums to exactly zero over the figure and
+    // the only place it can go is into friction under a loaded sole. Never
+    // during a stride: 497 N of shear into a one kilogram swing foot launches
+    // it, measured.
+    if (planted)
+    {
+        const float lsum = s_figLoad[0] + s_figLoad[1];
+        if (lsum > 1e-3f)
+            for (int s = 0; s < 2; s++)
+            {
+                if (!s_figLoaded[s]) continue;
+                const int ft = LEG(s) + 2;
+                if (!s_figCarried[ft]) continue;
+                const float lam = s_figLoad[s] / lsum;
+                b3Vec3 f;
+                f.x = -lam * s_figMassC * ax; f.y = 0.0f; f.z = -lam * s_figMassC * az;
+                b3Body_ApplyForceToCenter(s_figBone[ft], f, true);
+            }
+    }
+
+    // --- the ankles ----------------------------------------------------------
+    //
+    // This is the whole answer to "it is being held up by a magic force".
+    //
+    // A standing body balances at the ankle, and what an ankle can do is
+    // bounded by the size of the foot and the load on it. The torque here IS
+    // a measured newton count times a lever that has already been clamped
+    // inside the sole in figSense — there is no `if`, no flag, no gate. With
+    // nothing under the foot the load is zero and the torque is zero, which is
+    // why nothing in the air can be righted by it.
+    //
+    // It is applied as a PAIR between the two bodies the ankle joins, so it
+    // sums to zero over the figure and cannot lift anything. No joint spring
+    // sits in its transmission path, so a punch that slackens the leg costs it
+    // nothing — a slack ankle actually makes the command more exact, because
+    // the passive spring torque that subtracts from it goes to zero.
+    s_figTauA = 0.0f;
+    for (int s = 0; s < 2; s++)
+    {
+        if (!s_figLoaded[s]) continue;
+        const int ft = LEG(s) + 2, sh = LEG(s) + 1;
+        if (!s_figCarried[ft] || !s_figCarried[sh]) continue;
+        // Faded out with the carry. A stride is controlled falling: mid-step
+        // the capture point is most of a metre in front of the stance foot, so
+        // an ankle asked to bring it back saturates against the toe and pitches
+        // the foot up under a gait that is not listening. The walk is authored
+        // and says so; standing is physics.
+        const float N = s_figLoad[s] * FIG_ANKLE_K * (1.0f - s_figCarry);
+        const float lx = s_figFootPX[s] - s_figAnkX[s];
+        const float lz = s_figFootPZ[s] - s_figAnkZ[s];
+        // The moment the ground reaction at that pressure point makes about
+        // the ankle: r x (0, N, 0).
+        b3Vec3 t; t.x = -lz * N; t.y = 0.0f; t.z = lx * N;
+        b3Vec3 nt; nt.x = lz * N; nt.y = 0.0f; nt.z = -lx * N;
+        b3Body_ApplyTorque(s_figBone[sh], t, true);
+        b3Body_ApplyTorque(s_figBone[ft], nt, true);
+        const float mag = __builtin_sqrtf(t.x*t.x + t.z*t.z);
+        if (mag > s_figTauA) s_figTauA = mag;
+    }
+
+    // --- and the hips, for what the ankles could not reach --------------------
+    //
+    // Ankles alone give this body 1.75 m/s^2 forward, because that is what a
+    // 0.18 m foot in front of the ankle is worth. Past that a person uses
+    // their trunk: pitch it and the pressure moves further than the sole
+    // allows. Internal pair, zero-sum, multiplied by the measured load so it
+    // is identically zero in the air, and faded out as the trunk goes over so
+    // the borrowed momentum has to be paid back.
+    s_figTauH = 0.0f;
+    {
+        const float Ntot = s_figLoad[0] + s_figLoad[1];
+        int nth = 0;
+        for (int s = 0; s < 2; s++) if (s_figCarried[LEG(s)]) nth++;
+        if (planted && Ntot > 1e-3f && nth > 0)
+        {
+            float fx = 0.0f, fz = 0.0f;
+            for (int s = 0; s < 2; s++)
+            {
+                if (!s_figCarried[LEG(s) + 2]) continue;
+                fx += s_figFootEZ[s][0]; fz += s_figFootEZ[s][1];
+            }
+            const float fl = __builtin_sqrtf(fx*fx + fz*fz);
+            if (fl > 1e-3f) { fx /= fl; fz /= fl; } else { fx = 0.0f; fz = 1.0f; }
+            const float lx = -fz, lz = fx;
+            const float res = (s_figWantX - s_figCopX) * fx
+                            + (s_figWantZ - s_figCopZ) * fz;
+            float th = res * Ntot;
+            if (th >  FIG_HIP_MAX) th =  FIG_HIP_MAX;
+            if (th < -FIG_HIP_MAX) th = -FIG_HIP_MAX;
+            b3Matrix3 pm = b3MakeMatrixFromQuat(b3Body_GetRotation(s_figBone[BONE_PELVIS]));
+            float lean = pm.cy.x * fx + pm.cy.z * fz;
+            if (lean < 0.0f) lean = -lean;
+            float room = 1.0f - lean / 0.55f;
+            if (room < 0.0f) room = 0.0f;
+            th *= room;
+            s_figTauH = th;
+            if (th > 1e-4f || th < -1e-4f)
+            {
+                b3Vec3 tp; tp.x = -th * lx; tp.y = 0.0f; tp.z = -th * lz;
+                b3Body_ApplyTorque(s_figBone[BONE_PELVIS], tp, true);
+                b3Vec3 tt; tt.x = th * lx / (float)nth; tt.y = 0.0f;
+                tt.z = th * lz / (float)nth;
+                for (int s = 0; s < 2; s++)
+                    if (s_figCarried[LEG(s)]) b3Body_ApplyTorque(s_figBone[LEG(s)], tt, true);
+            }
+        }
     }
 
     // --- the legs push ------------------------------------------------------
@@ -2469,13 +3357,62 @@ void w_fig_apply(void)
             const float lim = 2.0f * M * 9.81f / (float)nl;
             if (F > lim) F = lim;
             F *= (1.0f - s_figCarry);
+
+            // A leg can only push with what the floor is giving back. Gated on
+            // the WHOLE figure's grounded licence, not per sole: gated per sole
+            // the pair went in at the pelvis centre and came out under one foot
+            // 79 mm off the midline, which rolls the body toward the leg that
+            // was already unloaded — measured, one sole read 0 N and its ankle
+            // rode 0.145 m clear of the floor while the other carried 462 N.
+            // Symmetric, it still does the job it is here for: a figure on its
+            // back stops jacking itself up with 542 N a leg.
+            if (FIG_GATE_W > 0.0f)
+            {
+                float gate = s_figGnd / FIG_GATE_W;
+                if (gate > 1.0f) gate = 1.0f;
+                if (gate < 0.0f) gate = 0.0f;
+                F *= gate;
+            }
+
+            // WHICH foot takes it. The two-foot lateral reach is only
+            // reachable if the load can move between the feet, so the split is
+            // biased toward where the pressure is being asked for. Driven from
+            // the ANKLE GEOMETRY, never closed on the measured load: closed on
+            // the measurement it stood for six seconds and then rolled over.
+            // The sum over both legs is unchanged.
+            float beta = 0.5f;
+            if (nl == 2 && s_figCarried[LEG(0) + 2] && s_figCarried[LEG(1) + 2])
+            {
+                const float ux2 = s_figAnkX[0] - s_figAnkX[1];
+                const float uz2 = s_figAnkZ[0] - s_figAnkZ[1];
+                const float d2 = ux2*ux2 + uz2*uz2;
+                if (d2 > 1e-4f)
+                {
+                    beta = ((s_figWantX - s_figAnkX[1]) * ux2 +
+                            (s_figWantZ - s_figAnkZ[1]) * uz2) / d2;
+                    if (beta < 0.08f) beta = 0.08f;
+                    if (beta > 0.92f) beta = 0.92f;
+                    beta = 0.5f + (beta - 0.5f) * FIG_SPLIT;
+                }
+            }
+            s_figShift += (beta - s_figShift) * (s_figDt / (s_figDt + FIG_SHIFT_TAU));
+
+            const float Wc = (s_figMassC > 1.0f ? s_figMassC : M) * 9.81f;
             for (int s = 0; s < 2; s++)
             {
                 if (!figLegCarries(s)) continue;
                 const int ft = LEG(s) + 2;
                 if (!s_figCarried[ft]) continue;
-                b3Vec3 up = { 0.0f,  F, 0.0f };
-                b3Vec3 dn = { 0.0f, -F, 0.0f };
+                float Fs = F;
+                if (nl == 2) Fs = F * 2.0f * (s == 0 ? s_figShift : 1.0f - s_figShift);
+                // A leg can only push with what its own sole is carrying. This
+                // is saturated with better than twice the margin while it is
+                // standing, so it contributes no loop gain there. What it
+                // kills is the 542 N per leg jack that a figure lying on its
+                // back would otherwise go on applying for ever.
+                if (Fs <= 0.0f) continue;
+                b3Vec3 up = { 0.0f,  Fs, 0.0f };
+                b3Vec3 dn = { 0.0f, -Fs, 0.0f };
                 b3Body_ApplyForceToCenter(s_figBone[BONE_PELVIS], up, true);
                 b3Body_ApplyForceToCenter(s_figBone[ft], dn, true);
             }
@@ -2605,12 +3542,6 @@ float* w_fig_bones(void)
 // step and cannot destabilise anything. It exists because the whole claim of
 // this build is "the floor carries it", and that claim was never measurable.
 //
-// totalNormalImpulse accumulates the biased solve AND the relax pass of each
-// substep, so the raw sum is about twice the impulse the contact really spent.
-// That factor is an internals dependency of the pinned Box3D and it has its
-// own check in the suite.
-#define FIG_IMPULSE_CAL 0.5f
-
 WASM_EXPORT("w_fig_ground")
 float* w_fig_ground(void)
 {
@@ -2620,54 +3551,44 @@ float* w_fig_ground(void)
 
     for (int side = 0; side < 2; side++)
     {
-        const int ft = LEG(side) + 2;
-        if (!s_figCarried[ft]) continue;
-        const b3BodyId body = s_figBone[ft];
-
-        int cap = b3Body_GetContactCapacity(body);
-        if (cap <= 0) continue;
-        if (cap > 24) cap = 24;
-        b3ContactData cd[24];
-        const int n = b3Body_GetContactData(body, cd, cap);
-        if (n <= 0) continue;
-
-        const b3MassData md = b3Body_GetMassData(body);
-        const b3Pos com = b3Body_GetWorldPoint(body, md.center);
-
-        float wsum = 0.0f, gsum = 0.0f, sx = 0.0f, sy = 0.0f, sz = 0.0f;
-        for (int i = 0; i < n; i++)
-        {
-            // The manifold normal points from shape A to shape B, so the push
-            // ON US flips sign if we are A.
-            const int weAreA = B3_ID_EQUALS(b3Shape_GetBody(cd[i].shapeIdA), body);
-            for (int mi = 0; mi < cd[i].manifoldCount; mi++)
-            {
-                const b3Manifold* mf = &cd[i].manifolds[mi];
-                const float uy = weAreA ? -mf->normal.y : mf->normal.y;
-                if (uy < 0.5f) continue;          // not something we stand on
-                for (int k = 0; k < mf->pointCount; k++)
-                {
-                    const b3ManifoldPoint* mp = &mf->points[k];
-                    if (mp->separation > 0.005f) continue;   // speculative
-                    const float J = mp->totalNormalImpulse;
-                    if (J <= 0.0f) continue;
-                    // anchorA/anchorB are offsets from that body's centre of
-                    // mass, already in world axes.
-                    const b3Vec3 a = weAreA ? mp->anchorA : mp->anchorB;
-                    sx += ((float)com.x + a.x) * J;
-                    sy += ((float)com.y + a.y) * J;
-                    sz += ((float)com.z + a.z) * J;
-                    wsum += J;
-                    gsum += J * uy;
-                }
-            }
-        }
-        if (wsum <= 1e-6f) continue;
-        out[side] = FIG_IMPULSE_CAL * gsum / s_figDt;
-        out[2 + side * 3 + 0] = sx / wsum;
-        out[2 + side * 3 + 1] = sy / wsum;
-        out[2 + side * 3 + 2] = sz / wsum;
+        float N, cx, cy, cz;
+        if (!figPartLoad(LEG(side) + 2, &N, &cx, &cy, &cz)) continue;
+        out[side] = N;
+        out[2 + side * 3 + 0] = cx;
+        out[2 + side * 3 + 1] = cy;
+        out[2 + side * 3 + 2] = cz;
     }
+    return out;
+}
+
+// What the balance controller is actually working with. Everything here is
+// measured from contact, so this is the readout that says whether the floor —
+// and only the floor — is giving it the authority to stand.
+//
+//  [N_left, N_right, N_total, grounded, comX, comY, comZ, icpX, icpZ,
+//   margin, copX, copZ, ankleTorque, hipTorque, outTimer, airTimer,
+//   ankLx, ankLz, ankRx, ankRz, polygonCorners, loadedL, loadedR, collapse]
+WASM_EXPORT("w_fig_bal")
+float* w_fig_bal(void)
+{
+    static float out[24];
+    for (int i = 0; i < 24; i++) out[i] = 0.0f;
+    if (!s_figExists) return out;
+    out[0] = s_figLoad[0];
+    out[1] = s_figLoad[1];
+    out[2] = s_figLoad[0] + s_figLoad[1];
+    out[3] = s_figGnd;
+    out[4] = s_figComX; out[5] = s_figComY; out[6] = s_figComZ;
+    out[7] = s_figIcpX; out[8] = s_figIcpZ;
+    out[9] = s_figMargin;
+    out[10] = s_figCopX; out[11] = s_figCopZ;
+    out[12] = s_figTauA; out[13] = s_figTauH;
+    out[14] = s_figOut; out[15] = s_figAir;
+    out[16] = s_figAnkX[0]; out[17] = s_figAnkZ[0];
+    out[18] = s_figAnkX[1]; out[19] = s_figAnkZ[1];
+    out[20] = (float)s_figNQ;
+    out[21] = (float)s_figLoaded[0]; out[22] = (float)s_figLoaded[1];
+    out[23] = s_figCollapse;
     return out;
 }
 

@@ -285,15 +285,207 @@ const FIG = ["WAIT","STEP","WINDUP","STRIKE","RECOVER","FALLING","DOWN"];
   }
 
   // =========================================================================
+  console.log("\n-- balance comes from the floor, and is limited by it --");
+  // =========================================================================
+  // What the controller is actually working with. Every number in here is
+  // derived from contact, which is the whole point: a figure that can right
+  // itself with nothing under it is a figure being held up.
+  const figBal = () => { const o = E.w_fig_bal() >>> 2, m = mem();
+    return { nL: m[o], nR: m[o+1], nT: m[o+2], G: m[o+3],
+             com: [m[o+4], m[o+5], m[o+6]], icp: [m[o+7], m[o+8]],
+             margin: m[o+9], cop: [m[o+10], m[o+11]],
+             tauAnkle: m[o+12], tauHip: m[o+13], out: m[o+14], air: m[o+15],
+             ank: [[m[o+16], m[o+17]], [m[o+18], m[o+19]]],
+             corners: m[o+20], loaded: [m[o+21], m[o+22]], collapse: m[o+23] }; };
+
+  // A ram: one fist with enough force behind it to be a shove rather than a
+  // punch, and every bone made unbreakable first, so what is being measured is
+  // BALANCE and not damage.
+  function ironclad() { for (let b = 0; b < 17; b++) E.w_vox_scale_hp(E.w_fig_bone_grid(b), 1e6); }
+  function ram(y, x, fromZ, toZ, frames) {
+    for (let i = 0; i < frames; i++) {
+      const t = (i + 1) / frames;
+      tick(undefined, undefined, null, [x, y, fromZ + (toZ - fromZ) * t]);
+    }
+  }
+
+  // Standing: the licence the balance runs on is the load the soles report,
+  // and nothing else. Before this build figSupport() read 1.00 with the feet
+  // two metres off the ground and 0 N of contact under them.
+  boot(1.75); E.w_fig_hold(1);
+  for (let i = 0; i < 72 * 4; i++) tick();
+  {
+    const b = figBal(), g = figGround(), W = rig().mass * 9.81;
+    check("its balance authority is what the floor gives it",
+      Math.abs(b.G - (g.nL + g.nR) / W) < 0.12 && b.G > 0.85,
+      `licence ${b.G.toFixed(3)} against ${(((g.nL + g.nR) / W)).toFixed(3)} of its weight on the floor`);
+    // And the pressure it commands is inside a sole it is standing on. Not a
+    // tuning choice: commanded between the two feet, one sole was asked for
+    // nine times the moment it could absorb and went 0.39 m into the air.
+    let worst = 9;
+    for (let i = 0; i < 72 * 2; i++) {
+      tick();
+      const q = figBal();
+      for (let s = 0; s < 2; s++) {
+        if (!q.loaded[s]) continue;
+        const d = Math.hypot(q.cop[0] - q.ank[s][0], q.cop[1] - q.ank[s][1]);
+        worst = Math.min(worst, d);
+      }
+    }
+    check("the pressure it commands never leaves its feet", worst < 0.20,
+      `nearest sole was ${worst.toFixed(3)} m from the commanded pressure, sole reach 0.195 m`);
+  }
+
+  // In the air. Built off the edge of the ground slab, so it is in free fall
+  // with everything else exactly as it is in play. Run twice — once with the
+  // controller applied and once without — and the two runs have to agree,
+  // because a body with nothing under it has no way to turn itself over.
+  // Before this build the applied run rolled through 355 degrees and landed
+  // vertical; the unforced one ended on its side at 274.
+  {
+    const tilt = () => { const o = E.w_fig_pose() >>> 2, f = mem();
+      const q = [f[o+3], f[o+4], f[o+5], f[o+6]];
+      // the pelvis's own up, dotted with the world's
+      const uy = 1 - 2 * (q[0]*q[0] + q[2]*q[2]);
+      return Math.acos(Math.max(-1, Math.min(1, uy))) * 180 / Math.PI; };
+    const fly = (applyForces) => {
+      E.w_reset(0, 0);
+      E.w_fig_create(30, 0, 1.75, 2);      // clear of the 20 m ground slab
+      E.w_fig_hold(1);
+      const out = [];
+      for (let i = 0; i < 130; i++) {
+        E.w_fig_update(30, 1.62, 1.6, STEP);
+        if (applyForces) E.w_fig_apply();
+        E.w_step(STEP); E.w_vox_post(); E.w_fig_post();
+        out.push(tilt());
+      }
+      return out;
+    };
+    const on = fly(true), off = fly(false);
+    let worst = 0;
+    for (let i = 0; i < on.length; i++) worst = Math.max(worst, Math.abs(on[i] - off[i]));
+    check("it cannot right itself in the air",
+      worst < 10.0,
+      `1.8 s of free fall: driven and undriven differ by at most ${worst.toFixed(2)} deg ` +
+      `(ends ${on[on.length-1].toFixed(0)} vs ${off[off.length-1].toFixed(0)})`);
+    E.w_reset(0, 0);
+    E.w_fig_create(30, 0, 1.75, 2);
+    E.w_fig_hold(1);
+    for (let i = 0; i < 18; i++) { E.w_fig_update(30, 1.62, 1.6, STEP); E.w_fig_apply();
+                                  E.w_step(STEP); E.w_vox_post(); E.w_fig_post(); }
+    check("and it knows there is nothing under it", figBal().G < 0.05,
+      `licence ${figBal().G.toFixed(3)} a quarter of a second after the floor ran out`);
+  }
+
+  // Sweep the legs. A ram driven through the shins at 7 m/s, with the bones
+  // made unbreakable so this is purely a question of balance.
+  boot(1.75); E.w_fig_hold(1);
+  for (let i = 0; i < 72 * 2; i++) tick();
+  ironclad();
+  // A shin-high bar, taken through both legs at 7 m/s. Not a battering ram:
+  // at 60 kN it drove the figure through the floor and read as a fall on a
+  // technicality.
+  E.w_hand_create(1, 0.0, 0.30, 1.10, 0.14, 2000, 30, 1.0, 4000);
+  ram(0.30, 0.0, 1.10, -1.10, 22);
+  {
+    let down = 0, lowHip = 9;
+    for (let i = 0; i < 72 * 3; i++) {
+      tick(undefined, undefined, null, [0, 1.6, 2.2]);
+      const s = figState();
+      if (s.state === 5 || s.state === 6) down = 1;
+      lowHip = Math.min(lowHip, s.hip[1]);
+    }
+    const s = figState();
+    check("sweep its legs from under it and it goes down",
+      down === 1 && s.hip[1] < 0.35,
+      `${FIG[s.state]}, hip ${s.hip[1].toFixed(3)} m (lowest ${lowHip.toFixed(3)})`);
+  }
+
+  // Shove it hard. Same ram, into the chest, a full stroke.
+  boot(1.75); E.w_fig_hold(1);
+  for (let i = 0; i < 72 * 2; i++) tick();
+  ironclad();
+  // A shoulder, not a fist: 250 kg of it, driven through the chest.
+  E.w_hand_create(1, 0.0, 1.20, 1.40, 0.16, 7800, 30, 1.0, 60000);
+  E.w_hand_reach_mass(1, 60);
+  ram(1.20, 0.0, 1.40, -0.60, 22);
+  {
+    let down = 0;
+    for (let i = 0; i < 72 * 3; i++) {
+      tick(undefined, undefined, null, [0, 1.6, 2.2]);
+      const s = figState();
+      if (s.state === 5 || s.state === 6) down = 1;
+    }
+    const s = figState();
+    check("shove it hard enough and it topples",
+      down === 1 && s.hip[1] < 0.35,
+      `${FIG[s.state]}, hip ${s.hip[1].toFixed(3)} m`);
+  }
+
+  // ... and a shove it can take, it takes. This is the check that stops the
+  // fix overshooting into a figure you can breathe on and knock over.
+  //
+  // It is aimed at the CHEST, in the chest's own coordinates, because the
+  // version this replaced was aimed at fixed world z and never arrived: it
+  // drove a 0.055 m fist from z 1.354 to z 1.107, so the striking surface got
+  // to z 1.052, and the front of the figure at that height is at z 0.095.
+  // Nine hundred and forty-five millimetres of clear air. It passed on every
+  // build including one that could be knocked over by anything, and it
+  // certified nothing at all.
+  const pelvisTilt = () => { const o = E.w_fig_pose() >>> 2, f = mem();
+    const q = [f[o+3], f[o+4], f[o+5], f[o+6]];
+    return Math.acos(Math.max(-1, Math.min(1,
+      1 - 2 * (q[0]*q[0] + q[2]*q[2])))) * 180 / Math.PI; };
+  // A ram on a straight line at a chosen SPEED, which drives through and then
+  // RETRACTS. Left driving forward it is not a shove any more, it is a
+  // bulldozer, and "a shove it can take" measures the figure being pushed over
+  // at walking pace.
+  function ramRun(y, from, to, speed, seconds, tough) {
+    for (const g of tough) E.w_vox_scale_hp(E.w_fig_bone_grid(g), 1e6);
+    E.w_hand_create(0, from[0], y, from[1], 0.12, 6000, 30, 1.0, 200000);
+    const d = Math.hypot(to[0]-from[0], to[1]-from[1]);
+    const n = Math.max(2, Math.round(d / speed * 72));
+    let down = -1, minHip = 9, maxTilt = 0;
+    for (let i = 0; i < Math.round(72 * seconds); i++) {
+      const t = Math.min(1, (i + 1) / n);
+      const p = i < n
+        ? [from[0] + (to[0]-from[0])*t, y, from[1] + (to[1]-from[1])*t]
+        : [to[0] - (to[0]-from[0])/d*0.03*(i-n), y, to[1] - (to[1]-from[1])/d*0.03*(i-n)];
+      tick(undefined, undefined, p, null);
+      if (down < 0 && figState().state >= 5) down = i * STEP;
+      minHip = Math.min(minHip, figState().hip[1]);
+      maxTilt = Math.max(maxTilt, pelvisTilt());
+    }
+    return { down, minHip, maxTilt };
+  }
+  const RAM_BODY = [B.CHEST, B.ABDOMEN];
+  boot(1.75); E.w_fig_hold(1);
+  for (let i = 0; i < 72 * 2; i++) tick();
+  ironclad();
+  {
+    const h0 = figState().hip[1];
+    const cy = figPose()[B.CHEST].p[1], cz = figPose()[B.CHEST].p[2];
+    const r = ramRun(cy, [0, cz + 0.42], [0, cz + 0.10], 1.5, 3, RAM_BODY);
+    const s = figState();
+    check("a shove it can take, it takes",
+      s.state < 5 && Math.abs(s.hip[1] - h0) < 0.03,
+      `${FIG[s.state]}, hip ${h0.toFixed(3)} -> ${s.hip[1].toFixed(3)}, ` +
+      `leaned ${r.maxTilt.toFixed(0)} deg`);
+  }
+
+  // =========================================================================
   console.log("\n-- its will --");
   // =========================================================================
   boot(1.75);
   const seen = new Set();
   let closest = 99, ankleMax = 0, ankleMaxStand = 0, minHip = 99;
+  let seenFallingMidStride = false, worstCollapse = 0;
   for (let i = 0; i < 72 * 14; i++) {
     tick();
     const s = figState();
     seen.add(FIG[s.state]);
+    if (s.state === 5 && figCarry() > 0.5) seenFallingMidStride = true;
+    worstCollapse = Math.max(worstCollapse, figBal().collapse);
     if (s.dist < closest) closest = s.dist;
     // The LOWER of its two ankles, over the whole fourteen seconds. A swing
     // foot is meant to come up — a stride that does not lift a foot is a
@@ -309,6 +501,17 @@ const FIG = ["WAIT","STEP","WINDUP","STRIKE","RECOVER","FALLING","DOWN"];
     if (s.hip[1] < minHip) minHip = s.hip[1];
   }
   check("it closes on you", closest < 1.0, `got to ${closest.toFixed(2)} m`);
+  // Walking IS controlled falling — a third of the frames of a stride have no
+  // sole loaded at all — so the topple test has to know the difference between
+  // a step and a fall. This is the check that says it does.
+  check("a stride is not a fall", !seenFallingMidStride,
+    "it entered FALLING while the stride was still carrying it");
+  // How close a fight gets to reading as a collapse. The backstop asks for
+  // 0.20 s of contiguous chest past 75 degrees; a fight should never get near
+  // it, and this reports how near it got rather than assuming.
+  gap("a fight never reads as a collapse", worstCollapse < 0.05,
+    `longest run with its chest past 75 deg was ${worstCollapse.toFixed(3)} s ` +
+    `against a 0.200 s trigger`);
   check("it strides, guards, telegraphs and throws",
     ["STEP", "WAIT", "WINDUP", "STRIKE", "RECOVER"].every((k) => seen.has(k)),
     [...seen].join(","));
@@ -336,6 +539,29 @@ const FIG = ["WAIT","STEP","WINDUP","STRIKE","RECOVER","FALLING","DOWN"];
   let kneeMax = 0;
   for (let i = 0; i < 72 * 6; i++) { tick(0, 4.0); kneeMax = Math.max(kneeMax, figJoints().lKnee); }
   check("walking bends its knees", kneeMax > 0.15, `peak knee ${kneeMax.toFixed(2)} rad`);
+
+  // Having walked to you, it has to be STANDING when it gets there — over its
+  // own feet, not leaning back off them. This is the number that was negative
+  // on nearly every frame before the stride handed the body back properly:
+  // the capture point outside the two soles is a body that cannot hold itself
+  // up with any pressure it is able to put on the floor.
+  boot(1.75);
+  for (let i = 0; i < 72 * 8; i++) tick(0, 4.0);      // walk in
+  {
+    let inside = 0, n = 0, worst = 9;
+    for (let i = 0; i < 72 * 4; i++) {
+      tick(0, 4.0);
+      const b = figBal();
+      if (figCarry() >= 0.05) continue;               // striding is not standing
+      n++;
+      if (b.margin > 0.02) inside++;
+      if (b.margin > -1e8) worst = Math.min(worst, b.margin);
+    }
+    gap("and when it gets there it is standing over its own feet",
+      n > 0 && inside >= n * 0.95,
+      `${n ? Math.round(100 * inside / n) : 0}% of planted frames have the capture point ` +
+      `inside its soles, worst ${worst.toFixed(3)} m`);
+  }
 
   // =========================================================================
   console.log("\n-- what breaking means --");
