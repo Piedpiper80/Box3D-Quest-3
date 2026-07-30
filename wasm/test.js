@@ -780,7 +780,8 @@ const CBONE = [...BONE, "L_TOE", "R_TOE"];
     const codexRig = () => { const o = E.w_codex_rig() >>> 2, f = mem();
       return { mass: f[o], hipY: f[o+1] }; };
     const codexJoints = () => { const o = E.w_codex_joints() >>> 2, f = mem();
-      return { leftKnee: f[o], rightKnee: f[o+1], leftToe: f[o+2], rightToe: f[o+3] }; };
+      return { leftKnee: f[o], rightKnee: f[o+1], leftToe: f[o+2], rightToe: f[o+3],
+        leftElbow: f[o+4], rightElbow: f[o+5] }; };
     const codexTick = () => {
       E.w_codex_update(0, 1.62, 1.6, STEP);
       E.w_step(STEP); E.w_vox_post(); E.w_codex_post();
@@ -917,10 +918,30 @@ const CBONE = [...BONE, "L_TOE", "R_TOE"];
       recoveryStableFrames = standingAgain ? recoveryStableFrames + 1 : 0;
       if (recoveryStableFrames >= 36) completedRecovery = true;
       if (process.env.CODEX_RECOVERY_TRACE && i % 18 === 0) {
+        const j = codexJoints();
+        const cq = p[B.CHEST].q;
+        const chestUp = 1 - 2 * (cq[0] * cq[0] + cq[2] * cq[2]);
+        const chestForwardY = 2 * (cq[1] * cq[2] - cq[3] * cq[0]);
+        const pq = p[B.PELVIS].q;
+        const pelvisUp = 1 - 2 * (pq[0] * pq[0] + pq[2] * pq[2]);
+        const pelvisUpX = 2 * (pq[0] * pq[1] - pq[3] * pq[2]);
+        const pelvisUpZ = 2 * (pq[1] * pq[2] + pq[3] * pq[0]);
+        const laq = p[B.L_UPPERARM].q;
+        const leftArmDownY = -(1 - 2 * (laq[0] * laq[0] + laq[2] * laq[2]));
+        const ltq = p[B.L_THIGH].q;
+        const leftThighDownY = -(1 - 2 * (ltq[0] * ltq[0] + ltq[2] * ltq[2]));
         console.log("RECOVERY", (i / 72).toFixed(2), "state", s.state,
           "phase", s.phase, "retry", s.retries, "hip", s.hip.map(v => v.toFixed(2)).join(","),
           "head", p[B.HEAD].p.map(v => v.toFixed(2)).join(","),
+          "pelvisUp", `${pelvisUpX.toFixed(2)},${pelvisUp.toFixed(2)},${pelvisUpZ.toFixed(2)}`,
+          "chestUp", chestUp.toFixed(2),
+          "chestFwdY", chestForwardY.toFixed(2),
           "handsY", p[B.L_HAND].p[1].toFixed(2), p[B.R_HAND].p[1].toFixed(2),
+          "elbowY", p[B.L_FOREARM].p[1].toFixed(2), p[B.R_FOREARM].p[1].toFixed(2),
+          "elbowA", j.leftElbow.toFixed(2), j.rightElbow.toFixed(2),
+          "armDownY", leftArmDownY.toFixed(2),
+          "thighDownY", leftThighDownY.toFixed(2),
+          "armLoad", s.armLoad.toFixed(0),
           "feetY", p[B.L_FOOT].p[1].toFixed(2), p[B.R_FOOT].p[1].toFixed(2),
           "loads", a.nLeft.toFixed(0), a.nRight.toFixed(0),
           "vel", a.vel.map(v => v.toFixed(2)).join(","));

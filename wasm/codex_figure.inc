@@ -44,6 +44,7 @@ static int s_codexRecoveryPhase = 0;
 static float s_codexArmLoad = 0.0f;
 static float s_codexRecoveryFootLoad = 0.0f;
 static float s_codexStable = 0.0f;
+static int s_codexLegPlanted = 0;
 static float s_codexAir = 0.0f;
 
 static const BoneDef* codexDef(int b)
@@ -83,6 +84,7 @@ static void codexWorldReset(void)
     s_codexArmLoad = 0.0f;
     s_codexRecoveryFootLoad = 0.0f;
     s_codexStable = 0.0f;
+    s_codexLegPlanted = 0;
     s_codexAir = 0.0f;
 }
 
@@ -220,6 +222,22 @@ static void codexPointWorld(int bone, float dx, float dy, float dz)
     codexPoint(bone, local.x, local.y, local.z);
 }
 
+// The spine extends along local +Y, unlike the limbs' local -Y. This is the
+// missing core-muscle primitive: it lets connected abdomen/chest joints work
+// toward world-up while floor-planted limbs supply the external reaction.
+static void codexUpWorld(int bone, float dx, float dy, float dz)
+{
+    const BoneDef* d = codexDef(bone);
+    if (!d || d->parent < 0 || !codexConnected(bone)) return;
+    const float l = __builtin_sqrtf(dx*dx + dy*dy + dz*dz);
+    if (l < 1e-5f) return;
+    const b3Quat parentQ = b3Body_GetRotation(s_codexBone[d->parent]);
+    const b3Vec3 world = { dx/l, dy/l, dz/l };
+    const b3Vec3 local = b3InvRotateVector(parentQ, world);
+    const b3Vec3 up = { 0.0f, 1.0f, 0.0f };
+    codexAim(bone, qFromTo(up, local));
+}
+
 static void codexBend(int bone, float angle)
 {
     if (bone <= 0 || bone >= CODEX_BONE_COUNT || !codexConnected(bone) ||
@@ -246,6 +264,152 @@ static void codexJointHertz(float scale)
         if (codexIsHinge(b)) b3RevoluteJoint_SetSpringHertz(s_codexJoint[b], hz);
         else b3SphericalJoint_SetSpringHertz(s_codexJoint[b], hz);
     }
+}
+
+// A leg muscle presses the pelvis and the loaded soles apart. These forces are
+// exactly equal and opposite over the robot, so they cannot levitate it: only
+// the floor's reaction to the downward sole force can raise the body.
+static void codexRecoveryLegPress(void)
+{
+    const float left = s_codexAct[3];
+    const float right = s_codexAct[4];
+    const float loaded = left + right;
+    if (left > 5.0f && right > 5.0f) s_codexLegPlanted = 1;
+    if (!s_codexLegPlanted || !codexConnected(BONE_PELVIS)) return;
+    const b3Pos hip = b3Body_GetPosition(s_codexBone[BONE_PELVIS]);
+    const b3Vec3 velocity = b3Body_GetLinearVelocity(s_codexBone[BONE_PELVIS]);
+    const float target = s_worldFloorY + 0.60f * s_codexStature;
+    const float omega = 6.2831853f * 1.5f;
+    float acceleration = (target - (float)hip.y) * omega * omega -
+                         2.0f * 0.9f * omega * velocity.y;
+    if (acceleration < 0.0f) acceleration = 0.0f;
+    if (acceleration > 1.50f * 9.81f) acceleration = 1.50f * 9.81f;
+    const float force = codexMass() * acceleration;
+    if (force < 0.1f) return;
+    const b3Vec3 up = { 0.0f, force, 0.0f };
+    b3Body_ApplyForceToCenter(s_codexBone[BONE_PELVIS], up, true);
+    if (codexConnected(BONE_L_FOOT))
+    {
+        const b3Vec3 down = { 0.0f, -0.5f * force, 0.0f };
+        b3Body_ApplyForceToCenter(s_codexBone[BONE_L_FOOT], down, true);
+    }
+    if (codexConnected(BONE_R_FOOT))
+    {
+        const b3Vec3 down = { 0.0f, -0.5f * force, 0.0f };
+        b3Body_ApplyForceToCenter(s_codexBone[BONE_R_FOOT], down, true);
+    }
+    s_codexAct[2] += force;
+}
+
+// With both legs extended against the floor, the leg chain finishes rotating
+// the pelvis over the soles. The opposite sole torques make this an internal
+// couple; without the planted floor reaction it cannot right the body.
+static void codexRecoveryPelvisRight(float gain)
+{
+    if (!s_codexLegPlanted || !codexConnected(BONE_PELVIS)) return;
+    const b3Matrix3 m = b3MakeMatrixFromQuat(
+        b3Body_GetRotation(s_codexBone[BONE_PELVIS]));
+    const b3Vec3 w = b3Body_GetAngularVelocity(s_codexBone[BONE_PELVIS]);
+    b3Vec3 torque = { -gain * m.cy.z - 8.0f * w.x,
+                       0.0f,
+                      gain * m.cy.x - 8.0f * w.z };
+    float magnitude = __builtin_sqrtf(torque.x*torque.x + torque.z*torque.z);
+    if (magnitude > 500.0f)
+    {
+        const float scale = 500.0f / magnitude;
+        torque.x *= scale; torque.z *= scale; magnitude = 500.0f;
+    }
+    b3Body_ApplyTorque(s_codexBone[BONE_PELVIS], torque, true);
+    const b3Vec3 opposite = { -0.5f * torque.x, 0.0f, -0.5f * torque.z };
+    if (codexConnected(BONE_L_FOOT))
+        b3Body_ApplyTorque(s_codexBone[BONE_L_FOOT], opposite, true);
+    if (codexConnected(BONE_R_FOOT))
+        b3Body_ApplyTorque(s_codexBone[BONE_R_FOOT], opposite, true);
+    s_codexAct[2] += magnitude;
+}
+
+static float codexChestForwardY(void)
+{
+    if (!codexConnected(BONE_CHEST)) return 0.0f;
+    const b3Matrix3 m = b3MakeMatrixFromQuat(
+        b3Body_GetRotation(s_codexBone[BONE_CHEST]));
+    return m.cz.y;
+}
+
+// Roll the chest toward prone using only a shoulder whose forearm/hand is
+// carrying floor load. Chest and upper-arm torques are equal and opposite;
+// the planted limb is what lets the floor change the body's orientation.
+static void codexRecoveryRollProne(float gain)
+{
+    const float left = codexPartLoad(BONE_L_HAND) + codexPartLoad(BONE_L_FOREARM);
+    const float right = codexPartLoad(BONE_R_HAND) + codexPartLoad(BONE_R_FOREARM);
+    const float loaded = left + right;
+    if (loaded < 4.0f || !codexConnected(BONE_CHEST)) return;
+    const b3Matrix3 m = b3MakeMatrixFromQuat(
+        b3Body_GetRotation(s_codexBone[BONE_CHEST]));
+    // Gradient of chest-forward dot world-up under rotation about chest-up.
+    const float gradient = m.cy.z * m.cz.x - m.cy.x * m.cz.z;
+    // Move downhill on 1/2 (forward.y + 1)^2. The previous positive sign
+    // climbed this error and consistently rolled a side fall toward supine.
+    float effort = -gain * (m.cz.y + 1.0f) * gradient;
+    if (__builtin_fabsf(gradient) < 0.08f && m.cz.y > -0.8f)
+        effort = (s_codexRetries & 1) ? 0.24f * gain : -0.24f * gain;
+    if (effort < -55.0f) effort = -55.0f;
+    if (effort > 55.0f) effort = 55.0f;
+    const b3Vec3 t = { m.cy.x * effort, m.cy.y * effort, m.cy.z * effort };
+    b3Body_ApplyTorque(s_codexBone[BONE_CHEST], t, true);
+    if (left > 1.0f && codexConnected(BONE_L_UPPERARM))
+    {
+        const float share = left / loaded;
+        const b3Vec3 opposite = { -t.x * share, -t.y * share, -t.z * share };
+        b3Body_ApplyTorque(s_codexBone[BONE_L_UPPERARM], opposite, true);
+    }
+    if (right > 1.0f && codexConnected(BONE_R_UPPERARM))
+    {
+        const float share = right / loaded;
+        const b3Vec3 opposite = { -t.x * share, -t.y * share, -t.z * share };
+        b3Body_ApplyTorque(s_codexBone[BONE_R_UPPERARM], opposite, true);
+    }
+    s_codexAct[2] += __builtin_fabsf(effort);
+}
+
+// Once the hands are planted, shoulder/core work can rotate the trunk toward
+// vertical. This pair is as internal as the hip/ankle pairs above: the chest
+// receives one torque, loaded upper arms receive the exact opposite, and the
+// floor under the hands is the only source of a net world reaction.
+static void codexRecoveryChestRight(float gain)
+{
+    const float left = codexPartLoad(BONE_L_HAND) + codexPartLoad(BONE_L_FOREARM);
+    const float right = codexPartLoad(BONE_R_HAND) + codexPartLoad(BONE_R_FOREARM);
+    const float loaded = left + right;
+    if (loaded < 4.0f || !codexConnected(BONE_CHEST)) return;
+    const b3Matrix3 m = b3MakeMatrixFromQuat(
+        b3Body_GetRotation(s_codexBone[BONE_CHEST]));
+    const b3Vec3 w = b3Body_GetAngularVelocity(s_codexBone[BONE_CHEST]);
+    b3Vec3 t = { -gain * m.cy.z - 5.0f * w.x,
+                  0.0f,
+                  gain * m.cy.x - 5.0f * w.z };
+    float mag = __builtin_sqrtf(t.x*t.x + t.z*t.z);
+    const float cap = 55.0f;
+    if (mag > cap)
+    {
+        const float k = cap / mag;
+        t.x *= k; t.z *= k; mag = cap;
+    }
+    b3Body_ApplyTorque(s_codexBone[BONE_CHEST], t, true);
+    if (left > 1.0f && codexConnected(BONE_L_UPPERARM))
+    {
+        const float share = left / loaded;
+        const b3Vec3 opposite = { -t.x * share, 0.0f, -t.z * share };
+        b3Body_ApplyTorque(s_codexBone[BONE_L_UPPERARM], opposite, true);
+    }
+    if (right > 1.0f && codexConnected(BONE_R_UPPERARM))
+    {
+        const float share = right / loaded;
+        const b3Vec3 opposite = { -t.x * share, 0.0f, -t.z * share };
+        b3Body_ApplyTorque(s_codexBone[BONE_R_UPPERARM], opposite, true);
+    }
+    s_codexAct[2] += mag;
 }
 
 static void codexBoneHertz(int bone, float hz)
@@ -436,16 +600,17 @@ static void codexRecovery(float dt)
             s_codexRetries++;
             s_codexRecoveryPhase = 0;
             s_codexStable = 0.0f;
+            s_codexLegPlanted = 0;
         }
         return;
     }
     if (s_codexState == CODEX_DOWN) return;
 
     codexJointHertz(0.35f);
-    codexBoneHertz(BONE_L_UPPERARM, 5.0f);
-    codexBoneHertz(BONE_R_UPPERARM, 5.0f);
-    codexBoneHertz(BONE_L_FOREARM, 4.5f);
-    codexBoneHertz(BONE_R_FOREARM, 4.5f);
+    codexBoneHertz(BONE_L_UPPERARM, 6.0f);
+    codexBoneHertz(BONE_R_UPPERARM, 6.0f);
+    codexBoneHertz(BONE_L_FOREARM, 5.5f);
+    codexBoneHertz(BONE_R_FOREARM, 5.5f);
     codexBoneHertz(BONE_L_HAND, 3.5f);
     codexBoneHertz(BONE_R_HAND, 3.5f);
 
@@ -462,12 +627,44 @@ static void codexRecovery(float dt)
 
     if (s_codexRecoveryPhase == 0)
     {
-        // Find the ground with arms long and knees tucked. The phase cannot
-        // advance merely because time passed: a measured hand/forearm reaction
-        // is the permission to push.
-        codexBend(BONE_L_FOREARM, -0.05f); codexBend(BONE_R_FOREARM, -0.05f);
+        // During the roll the legs follow the pelvis. A world-down hip target
+        // from a side-lying pelvis uses the feet as levers to flip the pelvis
+        // upside down before the chest has planted.
+        codexPoint(BONE_L_THIGH, 0.0f, -1.0f, 0.0f);
+        codexPoint(BONE_R_THIGH, 0.0f, -1.0f, 0.0f);
+        // First turn a side/supine fall into a viable prone push-up. Alternating
+        // the tucked side changes the available floor lever on a failed roll.
+        const float forwardY = codexChestForwardY();
+        if (forwardY > -0.55f)
+        {
+            const int side = s_codexRetries & 1;
+            codexBend(BONE_L_FOREARM, side ? -0.20f : -1.70f);
+            codexBend(BONE_R_FOREARM, side ? -1.70f : -0.20f);
+            codexBend(BONE_L_SHIN, side ? 0.35f : 1.85f);
+            codexBend(BONE_R_SHIN, side ? 1.85f : 0.35f);
+            codexRecoveryRollProne(65.0f);
+            if (s_codexTimer > 1.20f)
+            {
+                s_codexTimer = 0.0f;
+                s_codexRetries++;
+            }
+            return;
+        }
+
+        // Prone: find the ground with bent arms and tucked knees. Phase 1 gets
+        // a real extension stroke rather than arriving with locked elbows.
+        // Bend with the upper arms alongside the trunk so the forearms can
+        // settle on the floor before the extension stroke begins.
+        codexPoint(BONE_L_UPPERARM, -0.42f, -0.90f, 0.08f);
+        codexPoint(BONE_R_UPPERARM,  0.42f, -0.90f, 0.08f);
+        codexBend(BONE_L_FOREARM, -1.55f); codexBend(BONE_R_FOREARM, -1.55f);
         codexBend(BONE_L_SHIN, 1.45f); codexBend(BONE_R_SHIN, 1.45f);
-        if (s_codexArmLoad > 8.0f && s_codexTimer > 0.12f)
+        const float leftElbow = b3RevoluteJoint_GetAngle(
+            s_codexJoint[BONE_L_FOREARM]);
+        const float rightElbow = b3RevoluteJoint_GetAngle(
+            s_codexJoint[BONE_R_FOREARM]);
+        if (s_codexArmLoad > 8.0f && leftElbow < -0.45f &&
+            rightElbow < -0.45f && s_codexTimer > 0.25f)
         {
             s_codexRecoveryPhase = 1;
             s_codexTimer = 0.0f;
@@ -482,27 +679,99 @@ static void codexRecovery(float dt)
     {
         // Push the chest clear and unfold the knees only while the arms are
         // carrying load. Lose the plant and return to finding it.
-        codexBend(BONE_L_FOREARM, -0.05f); codexBend(BONE_R_FOREARM, -0.05f);
-        codexBend(BONE_L_SHIN, 0.85f); codexBend(BONE_R_SHIN, 0.85f);
-        if (s_codexRecoveryFootLoad > 8.0f &&
-                 b3Body_GetPosition(s_codexBone[BONE_PELVIS]).y >
-                    s_worldFloorY + 0.22f * s_codexStature)
+        codexBoneHertz(BONE_L_UPPERARM, 14.0f);
+        codexBoneHertz(BONE_R_UPPERARM, 14.0f);
+        codexBoneHertz(BONE_L_FOREARM, 12.0f);
+        codexBoneHertz(BONE_R_FOREARM, 12.0f);
+        codexBoneHertz(BONE_ABDOMEN, 8.0f);
+        codexBoneHertz(BONE_CHEST, 8.0f);
+        codexPoint(BONE_L_THIGH, 0.0f, -1.0f, 0.0f);
+        codexPoint(BONE_R_THIGH, 0.0f, -1.0f, 0.0f);
+        // Keep the trunk together during the push-up. Asking each spine link
+        // for world-up while the body is still prone applies its reaction to
+        // the unsupported pelvis and turns the robot upside down. The next
+        // phase performs the world-up rotation after the legs carry load.
+        codexAim(BONE_ABDOMEN, b3Quat_identity);
+        codexAim(BONE_CHEST, b3Quat_identity);
+        codexAim(BONE_NECK, b3Quat_identity);
+        codexAim(BONE_HEAD, b3Quat_identity);
+        codexPointWorld(BONE_L_UPPERARM, -0.10f, -1.0f, 0.0f);
+        codexPointWorld(BONE_R_UPPERARM,  0.10f, -1.0f, 0.0f);
+        float elbow = -1.55f + s_codexTimer * 2.8f;
+        if (elbow > -0.05f) elbow = -0.05f;
+        codexBend(BONE_L_FOREARM, elbow); codexBend(BONE_R_FOREARM, elbow);
+        codexBend(BONE_L_SHIN, 1.45f); codexBend(BONE_R_SHIN, 1.45f);
+        const float leftElbow = b3RevoluteJoint_GetAngle(
+            s_codexJoint[BONE_L_FOREARM]);
+        const float rightElbow = b3RevoluteJoint_GetAngle(
+            s_codexJoint[BONE_R_FOREARM]);
+        const b3Pos chest = b3Body_GetPosition(s_codexBone[BONE_CHEST]);
+        const b3Pos head = b3Body_GetPosition(s_codexBone[BONE_HEAD]);
+        // Do not leave the push-up on a timer. Both elbow motors must have
+        // completed their stroke and the resulting contact must have raised
+        // the trunk; otherwise phase 2 starts on a horizontal base and worms.
+        if ((leftElbow > -0.35f || rightElbow > -0.35f) &&
+            s_codexArmLoad > 8.0f &&
+            chest.y > s_worldFloorY + 0.22f &&
+            head.y > s_worldFloorY + 0.28f)
         {
             s_codexRecoveryPhase = 2;
             s_codexTimer = 0.0f;
+            s_codexStable = 0.0f;
         }
-    }
-    else if (s_codexRecoveryPhase == 2)
-    {
-        // Feet have taken load, so extend the two leg columns. The arms keep
-        // their floor target until the chest is upright; no root force helps.
-        codexNeutralLegs();
-        codexBend(BONE_L_FOREARM, -0.05f); codexBend(BONE_R_FOREARM, -0.05f);
-        if (s_codexRecoveryFootLoad < 2.0f && s_codexTimer > 0.25f)
+        else if (s_codexTimer > 1.50f && s_codexArmLoad < 2.0f)
         {
             s_codexRecoveryPhase = 0;
             s_codexTimer = 0.0f;
             s_codexRetries++;
+        }
+    }
+    else if (s_codexRecoveryPhase == 2)
+    {
+        // Build a crouch before standing. Driving directly to locked knees
+        // while the pelvis is still rotated only slides the feet and recreates
+        // the worm; here the hip aims each thigh world-down, the knees unfold
+        // gradually, and ankle balance begins only after real sole load.
+        codexBoneHertz(BONE_L_SHIN, 18.0f);
+        codexBoneHertz(BONE_R_SHIN, 18.0f);
+        codexBoneHertz(BONE_L_UPPERARM, 8.0f);
+        codexBoneHertz(BONE_R_UPPERARM, 8.0f);
+        codexBoneHertz(BONE_L_FOREARM, 7.5f);
+        codexBoneHertz(BONE_R_FOREARM, 7.5f);
+        codexPoint(BONE_L_UPPERARM, -0.42f, -0.90f, 0.08f);
+        codexPoint(BONE_R_UPPERARM,  0.42f, -0.90f, 0.08f);
+        const b3Matrix3 pelvisFrame = b3MakeMatrixFromQuat(
+            b3Body_GetRotation(s_codexBone[BONE_PELVIS]));
+        float knee;
+        codexBoneHertz(BONE_L_THIGH, 22.0f);
+        codexBoneHertz(BONE_R_THIGH, 22.0f);
+        codexPoint(BONE_L_THIGH, 0.0f, -1.0f, 0.0f);
+        codexPoint(BONE_R_THIGH, 0.0f, -1.0f, 0.0f);
+        if (s_codexTimer < 0.80f)
+        {
+            // Hold the folded leg shape while the arm-supported trunk settles.
+            knee = 1.80f;
+        }
+        else
+        {
+            knee = 1.80f - 1.80f * ((s_codexTimer - 0.80f) / 2.40f);
+            if (knee < 0.0f) knee = 0.0f;
+        }
+        codexBend(BONE_L_SHIN, knee); codexBend(BONE_R_SHIN, knee);
+        codexBend(BONE_L_FOREARM, -0.05f); codexBend(BONE_R_FOREARM, -0.05f);
+        codexUpWorld(BONE_ABDOMEN, 0.0f, 1.0f, 0.0f);
+        codexUpWorld(BONE_CHEST, 0.0f, 1.0f, 0.0f);
+        codexUpWorld(BONE_NECK, 0.0f, 1.0f, 0.0f);
+        codexUpWorld(BONE_HEAD, 0.0f, 1.0f, 0.0f);
+        codexRecoveryChestRight(48.0f);
+        codexRecoveryLegPress();
+        if (s_codexRecoveryFootLoad > 8.0f && pelvisFrame.cy.y > 0.45f)
+        {
+            const b3Pos lf = b3Body_GetPosition(s_codexBone[BONE_L_FOOT]);
+            const b3Pos rf = b3Body_GetPosition(s_codexBone[BONE_R_FOOT]);
+            s_codexBalanceX = 0.5f * ((float)lf.x + (float)rf.x);
+            s_codexBalanceZ = 0.5f * ((float)lf.z + (float)rf.z);
+            codexBalance();
         }
     }
 
@@ -511,14 +780,23 @@ static void codexRecovery(float dt)
         // The body has passed through an upright pose. Do not call that a
         // recovery while it is still flying upward: return to the ordinary
         // planted stance, use ankle reactions, and demand a quiet interval.
+        codexJointHertz(1.0f);
         if (s_codexRecoveryFootLoad > 2.0f)
+        {
             codexNeutralLegs();
+            codexRecoveryLegPress();
+        }
         else
         {
             codexPointWorld(BONE_L_THIGH, 0.0f, -1.0f, 0.0f);
             codexPointWorld(BONE_R_THIGH, 0.0f, -1.0f, 0.0f);
             codexBend(BONE_L_SHIN, 0.35f); codexBend(BONE_R_SHIN, 0.35f);
         }
+        codexUpWorld(BONE_ABDOMEN, 0.0f, 1.0f, 0.0f);
+        codexUpWorld(BONE_CHEST, 0.0f, 1.0f, 0.0f);
+        codexUpWorld(BONE_NECK, 0.0f, 1.0f, 0.0f);
+        codexUpWorld(BONE_HEAD, 0.0f, 1.0f, 0.0f);
+        codexRecoveryPelvisRight(500.0f);
         codexGuard();
         const b3Pos lf = b3Body_GetPosition(s_codexBone[BONE_L_FOOT]);
         const b3Pos rf = b3Body_GetPosition(s_codexBone[BONE_R_FOOT]);
@@ -528,12 +806,19 @@ static void codexRecovery(float dt)
         const float speed = __builtin_sqrtf(s_codexAct[8]*s_codexAct[8] +
                                              s_codexAct[9]*s_codexAct[9] +
                                              s_codexAct[10]*s_codexAct[10]);
-        if (codexIsUpright() && s_codexRecoveryFootLoad > 2.0f && speed < 2.5f)
+        const float weight = codexMass() * 9.81f;
+        const b3Matrix3 recoveryPelvis = b3MakeMatrixFromQuat(
+            b3Body_GetRotation(s_codexBone[BONE_PELVIS]));
+        if (codexIsUpright() &&
+            s_codexAct[3] > 0.08f * weight &&
+            s_codexAct[4] > 0.08f * weight &&
+            recoveryPelvis.cy.y > 0.70f &&
+            speed < 0.30f)
             s_codexStable += dt;
         else
             s_codexStable = 0.0f;
 
-        if (s_codexStable > 0.05f)
+        if (s_codexStable > 0.50f)
         {
             codexJointHertz(1.0f);
             s_codexState = 0;
@@ -544,11 +829,12 @@ static void codexRecovery(float dt)
             s_codexStable = 0.0f;
             return;
         }
-        if (s_codexTimer > 3.0f || (s_codexTimer > 0.80f && codexIsDown()))
+        if (s_codexTimer > 5.0f)
         {
             s_codexRecoveryPhase = 0;
             s_codexTimer = 0.0f;
             s_codexStable = 0.0f;
+            s_codexLegPlanted = 0;
             s_codexRetries++;
         }
         return;
@@ -556,30 +842,17 @@ static void codexRecovery(float dt)
 
     if (codexIsUpright() && s_codexAct[3] + s_codexAct[4] > 2.0f)
     {
-        const float speed = __builtin_sqrtf(s_codexAct[8]*s_codexAct[8] +
-                                             s_codexAct[9]*s_codexAct[9] +
-                                             s_codexAct[10]*s_codexAct[10]);
-        if (speed < 2.5f)
-        {
-            codexJointHertz(1.0f);
-            codexNeutralLegs();
-            codexGuard();
-            s_codexState = 0;
-            s_codexTimer = 0.0f;
-            s_codexCollapse = 0.0f;
-            s_codexAir = 0.0f;
-            s_codexRecoveryPhase = 0;
-            s_codexStable = 0.0f;
-            return;
-        }
         s_codexRecoveryPhase = 3;
         s_codexTimer = 0.0f;
         s_codexStable = 0.0f;
     }
-    else if (s_codexRecoveryPhase > 0 && s_codexTimer > 2.0f)
+    else if ((s_codexRecoveryPhase == 1 && s_codexTimer > 3.0f) ||
+             (s_codexRecoveryPhase == 2 && s_codexTimer > 8.0f))
     {
         s_codexRecoveryPhase = 0;
         s_codexTimer = 0.0f;
+        s_codexStable = 0.0f;
+        s_codexLegPlanted = 0;
         s_codexRetries++;
     }
 }
@@ -826,6 +1099,7 @@ int w_codex_create(float x, float z, float stature, int material)
     s_codexArmLoad = 0.0f;
     s_codexRecoveryFootLoad = 0.0f;
     s_codexStable = 0.0f;
+    s_codexLegPlanted = 0;
     s_codexAir = 0.0f;
     s_codexBalanceX = x; s_codexBalanceZ = z;
     s_codexStanceX = x; s_codexStanceZ = z;
@@ -911,7 +1185,13 @@ int w_codex_create(float x, float z, float stature, int material)
             sj.base.localFrameB = fb;
             sj.base.collideConnected = false;
             sj.enableConeLimit = true;
-            sj.coneAngle = d->cone > 1.5f ? 1.5f : d->cone;
+            // A 1 radian copied hip cannot put a foot beneath a horizontal
+            // pelvis, making a physical floor recovery geometrically
+            // impossible. Human hip flexion exceeds 90 degrees, so Codex gets
+            // enough range to draw a knee under its body; grey is untouched.
+            float cone = d->cone;
+            if (b == BONE_L_THIGH || b == BONE_R_THIGH) cone = 1.48f;
+            sj.coneAngle = cone > 1.5f ? 1.5f : cone;
             sj.enableSpring = true;
             sj.hertz = d->hertz;
             sj.dampingRatio = 0.9f;
@@ -963,6 +1243,11 @@ void w_codex_update(float px, float py, float pz, float dt)
         codexCombat(s_codexDt);
     else
         codexGait(s_codexDt);
+    if (s_codexLegPlanted)
+    {
+        codexRecoveryLegPress();
+        codexRecoveryPelvisRight(500.0f);
+    }
     codexBalance();
 }
 
@@ -1091,12 +1376,14 @@ void w_codex_hold(int on) { s_codexHold = on ? 1 : 0; }
 WASM_EXPORT("w_codex_joints")
 float* w_codex_joints(void)
 {
-    static float out[4];
-    for (int i = 0; i < 4; i++) out[i] = 0.0f;
+    static float out[6];
+    for (int i = 0; i < 6; i++) out[i] = 0.0f;
     if (!s_codexExists) return out;
     out[0] = b3RevoluteJoint_GetAngle(s_codexJoint[BONE_L_SHIN]);
     out[1] = b3RevoluteJoint_GetAngle(s_codexJoint[BONE_R_SHIN]);
     out[2] = b3RevoluteJoint_GetAngle(s_codexJoint[CODEX_L_TOE]);
     out[3] = b3RevoluteJoint_GetAngle(s_codexJoint[CODEX_R_TOE]);
+    out[4] = b3RevoluteJoint_GetAngle(s_codexJoint[BONE_L_FOREARM]);
+    out[5] = b3RevoluteJoint_GetAngle(s_codexJoint[BONE_R_FOREARM]);
     return out;
 }
