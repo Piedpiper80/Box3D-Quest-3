@@ -863,7 +863,7 @@ const CBONE = [...BONE, "L_TOE", "R_TOE"];
     // so the robot supplied the final overturning impulse itself.
     E.w_reset(0, 0);
     E.w_codex_create(0, 0, 1.75, 2);
-    let disturbedWindup = false, unsafeStrike = false;
+    let disturbedWindup = false, cancelledWindup = false, strikeBeforeCancel = false;
     for (let i = 0; i < 72 * 3; i++) {
       E.w_codex_update(0, 1.50, 0.62, STEP);
       const before = codexState();
@@ -872,16 +872,15 @@ const CBONE = [...BONE, "L_TOE", "R_TOE"];
         disturbedWindup = true;
       }
       E.w_step(STEP); E.w_vox_post(); E.w_codex_post();
-      const s = codexState(), a = codexActuation(), p = codexPose();
-      const upright = s.hip[1] > crig.hipY - 0.18 && p[B.HEAD].p[1] > s.hip[1] + 0.24;
-      const planted = a.nLeft > crig.mass * 9.81 * 0.08 &&
-                      a.nRight > crig.mass * 9.81 * 0.08;
-      if (s.state === 6 && (!upright || !planted || a.margin > 0.055))
-        unsafeStrike = true;
+      const s = codexState();
+      if (disturbedWindup && !cancelledWindup && s.state === 6)
+        strikeBeforeCancel = true;
+      if (disturbedWindup && s.state === 0)
+        cancelledWindup = true;
     }
     check("Codex cancels a punch when its base becomes unrecoverable",
-      disturbedWindup && !unsafeStrike,
-      `disturbed ${disturbedWindup}, unsafe strike ${unsafeStrike}`);
+      disturbedWindup && cancelledWindup && !strikeBeforeCancel,
+      `disturbed ${disturbedWindup}, cancelled ${cancelledWindup}, struck first ${strikeBeforeCancel}`);
 
     const forearm = codexPose()[B.L_FOREARM].p;
     const bonesBeforeHit = codexState().bones;

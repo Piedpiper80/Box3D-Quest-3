@@ -304,6 +304,26 @@ static void codexMeasureReach(void)
     }
 }
 
+static int codexIsUpright(void);
+
+// A punch may start only from a base that can carry its equal reaction. Read
+// the current sensed COM/velocity directly: s_codexAct[11] is written later by
+// codexBalance(), so using it here would make the decision one frame stale.
+static int codexPunchBaseReady(void)
+{
+    if (!codexIsUpright()) return 0;
+    const float W = codexMass() * 9.81f;
+    if (s_codexAct[3] < 0.12f * W || s_codexAct[4] < 0.12f * W) return 0;
+    const b3Pos lf = b3Body_GetPosition(s_codexBone[BONE_L_FOOT]);
+    const b3Pos rf = b3Body_GetPosition(s_codexBone[BONE_R_FOOT]);
+    const float midX = 0.5f * ((float)lf.x + (float)rf.x);
+    const float midZ = 0.5f * ((float)lf.z + (float)rf.z);
+    const float icpX = s_codexAct[5] + s_codexAct[8] / 3.1f;
+    const float icpZ = s_codexAct[7] + s_codexAct[10] / 3.1f;
+    const float ex = icpX - midX, ez = icpZ - midZ;
+    return ex*ex + ez*ez < 0.045f * 0.045f;
+}
+
 // Fighting is a sequence of reachable joint targets. Nothing is placed at the
 // player and no impulse is injected into the fist: the shoulder winds it back,
 // the elbow opens, and the equal reaction has to be caught by the feet.
@@ -326,6 +346,7 @@ static void codexCombat(float dt)
     if (s_codexState < CODEX_WINDUP || s_codexState > CODEX_RECOVER)
     {
         if (s_codexTimer < 0.45f) return;
+        if (!codexPunchBaseReady()) return;
         if (codexArmGone(0) && codexArmGone(1)) return;
         s_codexArm = !s_codexArm;
         if (codexArmGone(s_codexArm)) s_codexArm = !s_codexArm;
@@ -337,6 +358,12 @@ static void codexCombat(float dt)
     const float side = s_codexArm ? 1.0f : -1.0f;
     if (s_codexState == CODEX_WINDUP)
     {
+        if (!codexPunchBaseReady())
+        {
+            s_codexState = 0;
+            s_codexTimer = 0.0f;
+            return;
+        }
         codexPoint(a, side * 0.55f, -0.55f, -0.62f);
         codexBend(a + 1, -2.35f);
         b3SphericalJoint_SetSpringHertz(s_codexJoint[a], 17.0f);
