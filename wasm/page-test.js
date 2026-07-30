@@ -265,7 +265,11 @@ async function runPage(file, frames, poseAt) {
       // centroid is where a player would say it is standing. Nothing else in
       // this harness tells him — and the engine is never told where he is
       // looking either, so this is the whole of the mutual information.
-      const mesh = shown.filter((d) => d.indices > 100);
+      // Keep the legacy fight pilot aimed at Claude's grey robot. The red
+      // comparison robot is deliberately independent and otherwise its meshes
+      // would move the centroid between two opponents.
+      const mesh = shown.filter((d) => d.indices > 100 && !(d.color &&
+        d.color[0] > d.color[1] * 1.5 && d.color[0] > d.color[2] * 1.5));
       if (mesh.length) {
         let sx = 0, sz = 0;
         for (const d of mesh) { sx += d.pos[0]; sz += d.pos[2]; }
@@ -459,6 +463,10 @@ function pilot(f, match, fig, seen) {
   const boneDraws = last.filter((d) => d.indices > 100);
   check("the figure is drawn as deformable mesh, not boxes", boneDraws.length >= 8,
     `${boneDraws.length} mesh draws in the last frame`);
+  const redBoneDraws = boneDraws.filter((d) => d.color &&
+    d.color[0] > d.color[1] * 1.5 && d.color[0] > d.color[2] * 1.5);
+  check("a second red Codex robot is drawn as deformable mesh", redBoneDraws.length >= 8,
+    `${redBoneDraws.length} red mesh draws in the last frame`);
 
   // Both gauntlets, every frame, near the controllers.
   const gaunt = last.filter((d) => d.indices <= 100 && d.pos[1] > 0.2 && d.pos[1] < 2.0);
