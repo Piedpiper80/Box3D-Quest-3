@@ -533,3 +533,53 @@ Four of the five reported problems are **not** addressed here:
 - **The trunk trails when it walks** — same cause.
 - **The head bobbles** — likely the 22 Hz neck spring being excited by a
   whole-body drive it takes no part in producing.
+
+## The hip strategy: implemented, momentum-honest, and switched off
+
+Real humanoids recover from a push with three strategies in escalating order —
+**ankles** for a small shove (shift the pressure inside the sole), **hips** for a
+bigger one (throw the upper body to generate angular momentum and buy time), and
+**stepping** for the biggest. The DARPA-era controllers unify all three by
+commanding a rate of change of linear *and angular* momentum and realising it
+only through admissible contact wrenches: nothing is applied to the robot from
+nowhere. IHMC took second in both the Trials and the Finals with that approach.
+
+This engine already has the ankle strategy (centre of pressure inside the sole,
+`FIG_COP_INSET`) and stepping (`FIG_STEP_HOLD`). **The hip strategy is fully
+implemented and clamped to zero.**
+
+`FIG_HIP_MAX = 0.0f`, applied around line 3310: an equal-and-opposite torque pair,
+`-th` on the pelvis and `+th` split across the carried thighs, so it sums to zero
+over the figure and borrows momentum honestly rather than inventing it. It even
+has a `room` factor that fades it out as the pelvis leans past 0.55 rad. The code
+is right. It is just off.
+
+Its comment says it was measured at 60 and 130 N·m and made things *worse* —
+"it borrows momentum it then has to pay back, and this body has to pay it back
+through a hip spring that is already carrying the trunk."
+
+**That reasoning predates the ground-reaction work.** Builds 3 and 4 stopped the
+trunk being carried by sprayed forces, so the premise may no longer hold. Measured
+again on Build 5:
+
+| `FIG_HIP_MAX` | engine suite | capture point inside soles, planted | mid-stride ankle |
+|---|---|---|---|
+| 0 (shipped) | 62/0 +2 gaps | 87%, worst −0.135 m | 0.227 m |
+| 80 | 62/0 +2 gaps | **24%**, worst −0.247 m | 0.204 m |
+| 160 | 62/0 +2 gaps | 76%, worst −0.138 m | 0.223 m |
+
+Nothing breaks at any value. Neither value *improves* the standing metric, and 80
+is dramatically worse. Turning it on also makes the figure stand 13 mm taller
+(0.944 → 0.957 m) and rest in `WAIT` rather than `STRIKE`.
+
+**What is still unknown, and it is the thing that matters:** whether it improves
+push recovery, which is the only reason the strategy exists. An attempt to measure
+that by throwing a cube at the chest FAILED and the numbers must not be trusted —
+a 0.2 m cube at 18 m/s covers 0.25 m per step against a 0.14 m torso and tunnels
+straight through, so the probe returned identical results at 3 m/s and 18 m/s.
+A valid probe needs `isBullet` on the ram, or a swept test, or to drive a
+motor-jointed body in the way the player's fist already is.
+
+Do not re-derive the table above. Do get a working push-recovery measurement
+before deciding, because the standing metric alone argues for leaving it off and
+that is not what the strategy is for.
