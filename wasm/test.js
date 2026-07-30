@@ -13,6 +13,7 @@ const BONE = ["PELVIS","ABDOMEN","CHEST","NECK","HEAD",
   "L_THIGH","L_SHIN","L_FOOT", "R_THIGH","R_SHIN","R_FOOT"];
 const B = {}; BONE.forEach((n, i) => { B[n] = i; });
 const FIG = ["WAIT","STEP","WINDUP","STRIKE","RECOVER","FALLING","DOWN"];
+const CBONE = [...BONE, "L_TOE", "R_TOE"];
 
 (async () => {
   const bytes = readFileSync(__dirname + "/box3d.wasm");
@@ -724,6 +725,27 @@ const FIG = ["WAIT","STEP","WINDUP","STRIKE","RECOVER","FALLING","DOWN"];
     else if (!Number.isFinite(v)) bad++;
   for (const b of figPose()) if (!b.p.every(Number.isFinite)) bad++;
   check("no NaN anywhere in the figure", bad === 0, `${bad} non-finite`);
+
+  // =========================================================================
+  console.log("\n-- the Codex figure: independent physics --");
+  // =========================================================================
+  const codexApi = ["w_codex_create", "w_codex_destroy", "w_codex_update",
+    "w_codex_post", "w_codex_state", "w_codex_pose", "w_codex_bones",
+    "w_codex_bone_count", "w_codex_bone_grid"];
+  const hasCodexApi = codexApi.every((name) => typeof E[name] === "function");
+  check("the Codex controller has its own API", hasCodexApi,
+    codexApi.filter((name) => typeof E[name] !== "function").join(", "));
+  if (hasCodexApi) {
+    E.w_reset(0, 0);
+    E.w_fig_create(-0.45, 0, 1.75, 2);
+    E.w_codex_create(0.45, 0, 1.75, 2);
+    const greyExists = mem()[E.w_fig_state() >>> 2] === 1;
+    const codexExists = mem()[E.w_codex_state() >>> 2] === 1;
+    check("grey and red coexist", greyExists && codexExists,
+      `grey ${greyExists}, Codex ${codexExists}`);
+    check("Codex has articulated toes", E.w_codex_bone_count() === CBONE.length,
+      `${E.w_codex_bone_count()} bodies`);
+  }
 
   // =========================================================================
   console.log("\n-- the frame budget --");

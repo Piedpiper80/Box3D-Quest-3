@@ -39,6 +39,7 @@ static float s_state[MAX_CUBES * 9];
 // The world is being torn down; forget every voxel grid and bone in it.
 static void vxWorldReset(void);
 static void figWorldReset(void);
+static void codexWorldReset(void);
 static void handWorldReset(void);
 
 // tiny deterministic PRNG for spawn jitter (no libc rand needed)
@@ -133,6 +134,7 @@ void w_reset(int enableSleep, float groundY)
     s_groundY = groundY;
     vxWorldReset();
     figWorldReset();
+    codexWorldReset();
     // The fists live in the world too, and their body ids died with it. Left
     // set, the next w_hand_apply drives two handles into a destroyed world.
     handWorldReset();
@@ -448,7 +450,7 @@ static float handStrikeMass(b3BodyId b)
 // damage IS the vox system — each bone is a small grid, so hits, hp, debris,
 // the dent read and the renderer all come free, and a bone that runs out of
 // cells is a bone that comes off.
-#define VOX_GRIDS 20
+#define VOX_GRIDS 48
 #define VOX_MAX 4096
 #define VOX_ROWS_MAX 512
 #define VOX_RUNS_PER_ROW 16
@@ -3632,3 +3634,8 @@ float* w_fig_joints(void)
     }
     return out;
 }
+
+// The red comparison figure shares this translation unit so it can inhabit
+// the same Box3D world, while keeping every existing w_fig_* controller body
+// above intact.
+#include "codex_figure.inc"

@@ -23,6 +23,7 @@ wasm/box3d.wasm
 # Box3D source, cloned on demand to rebuild the wasm (see wasm/build.md).
 # 15 MB of someone else's repository; CI clones its own copy.
 wasm/box3d-src/
+/box3d-src/
 
 # Isolated worktrees used when several agents build in parallel.
 .claude/
