@@ -245,6 +245,13 @@ static void codexBend(int bone, float angle)
     b3RevoluteJoint_SetTargetAngle(s_codexJoint[bone], angle);
 }
 
+static float codexAngle(int bone)
+{
+    if (bone <= 0 || bone >= CODEX_BONE_COUNT || !codexConnected(bone) ||
+        !codexIsHinge(bone)) return 0.0f;
+    return b3RevoluteJoint_GetAngle(s_codexJoint[bone]);
+}
+
 static void codexNeutralLegs(void)
 {
     codexPoint(BONE_L_THIGH, 0.0f, -1.0f, 0.0f);
@@ -659,10 +666,8 @@ static void codexRecovery(float dt)
         codexPoint(BONE_R_UPPERARM,  0.42f, -0.90f, 0.08f);
         codexBend(BONE_L_FOREARM, -1.55f); codexBend(BONE_R_FOREARM, -1.55f);
         codexBend(BONE_L_SHIN, 1.45f); codexBend(BONE_R_SHIN, 1.45f);
-        const float leftElbow = b3RevoluteJoint_GetAngle(
-            s_codexJoint[BONE_L_FOREARM]);
-        const float rightElbow = b3RevoluteJoint_GetAngle(
-            s_codexJoint[BONE_R_FOREARM]);
+        const float leftElbow = codexAngle(BONE_L_FOREARM);
+        const float rightElbow = codexAngle(BONE_R_FOREARM);
         if (s_codexArmLoad > 8.0f && leftElbow < -0.45f &&
             rightElbow < -0.45f && s_codexTimer > 0.25f)
         {
@@ -701,10 +706,8 @@ static void codexRecovery(float dt)
         if (elbow > -0.05f) elbow = -0.05f;
         codexBend(BONE_L_FOREARM, elbow); codexBend(BONE_R_FOREARM, elbow);
         codexBend(BONE_L_SHIN, 1.45f); codexBend(BONE_R_SHIN, 1.45f);
-        const float leftElbow = b3RevoluteJoint_GetAngle(
-            s_codexJoint[BONE_L_FOREARM]);
-        const float rightElbow = b3RevoluteJoint_GetAngle(
-            s_codexJoint[BONE_R_FOREARM]);
+        const float leftElbow = codexAngle(BONE_L_FOREARM);
+        const float rightElbow = codexAngle(BONE_R_FOREARM);
         const b3Pos chest = b3Body_GetPosition(s_codexBone[BONE_CHEST]);
         const b3Pos head = b3Body_GetPosition(s_codexBone[BONE_HEAD]);
         // Do not leave the push-up on a timer. Both elbow motors must have
@@ -1379,11 +1382,11 @@ float* w_codex_joints(void)
     static float out[6];
     for (int i = 0; i < 6; i++) out[i] = 0.0f;
     if (!s_codexExists) return out;
-    out[0] = b3RevoluteJoint_GetAngle(s_codexJoint[BONE_L_SHIN]);
-    out[1] = b3RevoluteJoint_GetAngle(s_codexJoint[BONE_R_SHIN]);
-    out[2] = b3RevoluteJoint_GetAngle(s_codexJoint[CODEX_L_TOE]);
-    out[3] = b3RevoluteJoint_GetAngle(s_codexJoint[CODEX_R_TOE]);
-    out[4] = b3RevoluteJoint_GetAngle(s_codexJoint[BONE_L_FOREARM]);
-    out[5] = b3RevoluteJoint_GetAngle(s_codexJoint[BONE_R_FOREARM]);
+    out[0] = codexAngle(BONE_L_SHIN);
+    out[1] = codexAngle(BONE_R_SHIN);
+    out[2] = codexAngle(CODEX_L_TOE);
+    out[3] = codexAngle(CODEX_R_TOE);
+    out[4] = codexAngle(BONE_L_FOREARM);
+    out[5] = codexAngle(BONE_R_FOREARM);
     return out;
 }
