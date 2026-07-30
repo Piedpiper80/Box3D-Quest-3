@@ -20,4 +20,5 @@ Original prompt: Add a second, visibly red Codex robot to the first VR fight. Re
 
 ## TODO
 
-- Final independent review, merge, deploy, and live verification.
+- 2026-07-30 user playtest regression: red can topple during a punch and then repeat a floor-thrashing recovery indefinitely. The existing tests missed this: the attack check samples only the five-second endpoint, while the recovery check accepts a 0.12 m hip bounce without requiring a return to an upright fighting state. A traced shove recovery reached phase 2 with both feet loaded but settled with hip/head at roughly 0.09/0.10 m, then repeated the same lateral hop. Root cause: the recovery has no body-orientation-dependent roll/kneel stage and phase 2 has no stalled-contact exit; it extends the legs while the torso remains horizontal.
+- Replace the weak checks with full-sequence regressions, then implement and deploy the approved correction.
