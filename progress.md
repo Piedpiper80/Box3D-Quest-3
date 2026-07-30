@@ -16,8 +16,8 @@ Original prompt: Add a second, visibly red Codex robot to the first VR fight. Re
 - 2026-07-30: Added the independent 19-body Codex skeleton/API in the shared world. Engine: 65 passed, 0 failed, 2 known gaps. Page: 15 passed, 0 failed.
 - 2026-07-30: Codex now stands for eight measured seconds using only contact-gated, equal-and-opposite ankle torque pairs. The toe sole geometry was corrected to the floor; before that, its initial penetration supplied a persistent overturning impulse. Engine: 68 passed, 0 failed, 2 known gaps. Page remains 15/15.
 - 2026-07-30: Added contact-driven cautious stepping. Support points are latched, the hip shifts weight with an equal-and-opposite pelvis/thigh torque pair, swing and touchdown require measured foot loading, and an unsafe attempted step returns to double support instead of being forced through. Zero-friction testing confirms there is no hidden forward drive. Engine: 74 passed, 0 failed, 2 pre-existing grey-robot gaps. Page: 15 passed, 0 failed.
+- 2026-07-30: Added joint-driven windup/strike/recovery attacks, measured fist momentum, deformable damage and joint breakage, physical fall detection, and repeated floor-contact get-up attempts while the torso remains alive. The controller still exports zero root force and torque throughout recovery. Both fighters are visible, share collision physics, and feed damage/hit feedback into the VR page. Engine: 82 passed, 0 failed, 2 pre-existing grey-robot gaps. Page: 16 passed, 0 failed.
 
 ## TODO
 
-- Implement articulated attacks, falls, and recovery.
-- Integrate red deformable rendering and deterministic page hooks.
+- Final independent review, merge, deploy, and live verification.

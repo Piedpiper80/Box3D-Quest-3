@@ -732,7 +732,8 @@ const CBONE = [...BONE, "L_TOE", "R_TOE"];
   const codexApi = ["w_codex_create", "w_codex_destroy", "w_codex_update",
     "w_codex_post", "w_codex_state", "w_codex_pose", "w_codex_bones",
     "w_codex_bone_count", "w_codex_bone_grid", "w_codex_actuation",
-    "w_codex_rig", "w_codex_hold", "w_codex_joints", "w_floor_friction"];
+    "w_codex_rig", "w_codex_hold", "w_codex_joints", "w_codex_impulse",
+    "w_floor_friction"];
   const hasCodexApi = codexApi.every((name) => typeof E[name] === "function");
   check("the Codex controller has its own API", hasCodexApi,
     codexApi.filter((name) => typeof E[name] !== "function").join(", "));
@@ -766,7 +767,8 @@ const CBONE = [...BONE, "L_TOE", "R_TOE"];
 
     const codexState = () => { const o = E.w_codex_state() >>> 2, f = mem();
       return { exists: f[o], state: f[o+1] | 0, bones: f[o+2], alive: f[o+3],
-        total: f[o+4], hip: [f[o+6], f[o+7], f[o+8]], stature: f[o+15] }; };
+        total: f[o+4], hip: [f[o+6], f[o+7], f[o+8]], reach: f[o+13],
+        broke: f[o+14], retries: f[o+5], stature: f[o+15] }; };
     const codexPose = () => { const o = E.w_codex_pose() >>> 2, f = mem();
       return CBONE.map((n, i) => ({ n, p: [f[o+i*8], f[o+i*8+1], f[o+i*8+2]],
         q: [f[o+i*8+3], f[o+i*8+4], f[o+i*8+5], f[o+i*8+6]], on: f[o+i*8+7] })); };
@@ -835,6 +837,55 @@ const CBONE = [...BONE, "L_TOE", "R_TOE"];
     check("Codex gait is contact-driven", sawStep, `last state ${gaitEnd.state}`);
     check("Codex walking bends knees and toes", maxKnee > 0.12 && maxToe > 0.05,
       `knee ${maxKnee.toFixed(3)}, toe ${maxToe.toFixed(3)} rad`);
+
+    E.w_reset(0, 0);
+    E.w_codex_create(0, 0, 1.75, 2);
+    let sawWindup = false, sawStrike = false, bestReach = 0;
+    for (let i = 0; i < 72 * 5; i++) {
+      E.w_codex_update(0, 1.50, 0.62, STEP);
+      E.w_step(STEP); E.w_vox_post(); E.w_codex_post();
+      const s = codexState();
+      sawWindup ||= s.state === 5;
+      sawStrike ||= s.state === 6;
+      bestReach = Math.max(bestReach, s.reach);
+    }
+    check("Codex attacks by articulating a physical arm", sawWindup && sawStrike,
+      `windup ${sawWindup}, strike ${sawStrike}`);
+    check("a Codex fist physically reaches the player", bestReach > 0,
+      `${bestReach.toFixed(3)} kg m/s`);
+    check("Codex stays on its feet while punching",
+      codexState().hip[1] > crig.hipY - 0.20 && codexPose()[B.HEAD].p[1] > 1.30,
+      `hip ${codexState().hip[1].toFixed(3)}, head ${codexPose()[B.HEAD].p[1].toFixed(3)}`);
+
+    const forearm = codexPose()[B.L_FOREARM].p;
+    const bonesBeforeHit = codexState().bones;
+    for (let n = 0; n < 8; n++)
+      E.w_vox_blast(forearm[0], forearm[1], forearm[2], 500);
+    E.w_codex_post();
+    check("Codex damage breaks a physical joint and drops the limb",
+      codexState().bones < bonesBeforeHit && codexState().broke > 0,
+      `${bonesBeforeHit} -> ${codexState().bones} bones, broke ${codexState().broke}`);
+
+    E.w_reset(0, 0);
+    E.w_codex_create(0, 0, 1.75, 2);
+    E.w_codex_hold(1);
+    for (let i = 0; i < 72 * 2; i++) codexTick();
+    E.w_codex_impulse(B.CHEST, 150, 0, 0);
+    let sawFall = false, sawGetup = false, maxRetries = 0;
+    for (let i = 0; i < 72 * 8; i++) {
+      codexTick();
+      const s = codexState();
+      sawFall ||= s.state === 8;
+      sawGetup ||= s.state === 10;
+      maxRetries = Math.max(maxRetries, s.retries);
+    }
+    check("a shove can physically knock Codex down", sawFall,
+      `falling state seen ${sawFall}`);
+    check("living Codex tries to get up through its joints", sawGetup && maxRetries > 0,
+      `get-up ${sawGetup}, attempts ${maxRetries}`);
+    check("getting up never enables a root actuator",
+      codexActuation().rootForce === 0 && codexActuation().rootTorque === 0,
+      `root force ${codexActuation().rootForce}, torque ${codexActuation().rootTorque}`);
 
     E.w_reset(0, 0);
     E.w_floor_friction(0);

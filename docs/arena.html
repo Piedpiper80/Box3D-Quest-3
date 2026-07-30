@@ -87,7 +87,7 @@
   function setStatus(m, warn) { statusEl.textContent = m; statusEl.className = warn ? "status warn" : "status"; }
   function report(txt) { reportEl.textContent = txt; }
 
-  var BUILD = 6;
+  var BUILD = 7;
   var tagEl = document.getElementById("buildTag");
   if (tagEl) tagEl.textContent = "Build " + BUILD + ".";
 
@@ -529,6 +529,8 @@
   var totalHits = 0, totalBroke = 0, deepest = 0, tookHits = 0;
   var figState = "WAIT";
   var FIG_STATES = ["WAIT","STEP","WINDUP","STRIKE","RECOVER","FALLING","DOWN"];
+  var CODEX_STATES = ["WAIT","SHIFT","SWING","LAND","SETTLE",
+                      "WINDUP","STRIKE","RECOVER","FALLING","DEAD","GETTING UP"];
 
   // Your fists. Half a hand across, and the arm behind them counts: a punch
   // does not arrive as a loose fist, and a bare fist mass craters one cell
@@ -558,7 +560,7 @@
     var dx = px - hx, dz = pz - hz;
     var d = Math.hypot(dx, dz) || 1;
     var bx = hx + dx / d * 2.0, bz = hz + dz / d * 2.0;
-    var sideX = -dz / d * 0.35, sideZ = dx / d * 0.35;
+    var sideX = -dz / d * 0.50, sideZ = dx / d * 0.50;
     E.w_fig_create(bx + sideX, bz + sideZ, stature, 2);
     E.w_codex_create(bx - sideX, bz - sideZ, stature, 2);
     E.w_fig_tempo(KNOB_TEMPO);
@@ -702,15 +704,26 @@
     }
 
     st = figState_read();
+    var cst = codexState_read();
     figState = FIG_STATES[st.state] || "WAIT";
     if (MATCH === "FIGHT") {
       if (st.broke > 0) { totalBroke += st.broke; crack(); haptic(HANDS[0], 0.5, 60); haptic(HANDS[1], 0.5, 60); }
+      if (cst && cst.broke > 0) { totalBroke += cst.broke; crack(); haptic(HANDS[0], 0.5, 60); haptic(HANDS[1], 0.5, 60); }
       if (st.reach > 0) {
         tookHits++;
         slam(st.reach * 0.15);
         haptic(HANDS[0], 0.8, 90); haptic(HANDS[1], 0.8, 90);
         if (!KNOB_CALM) { shake = Math.min(0.012, 0.004 + st.reach * 0.0008); shakeT = 0.16; }
       }
+      if (cst && cst.reach > 0) {
+        tookHits++;
+        slam(cst.reach * 0.15);
+        haptic(HANDS[0], 0.8, 90); haptic(HANDS[1], 0.8, 90);
+        if (!KNOB_CALM) { shake = Math.min(0.012, 0.004 + cst.reach * 0.0008); shakeT = 0.16; }
+      }
+      // Keep Claude's existing round boundary intact. Red is a comparison
+      // fighter in the same world and continues simulating during DOWN, so a
+      // living red body still keeps trying to rise instead of being frozen.
       if (st.state === 6) { MATCH = "DOWN"; downHold = 0; fell(); }
     }
     if (shakeT > 0) shakeT -= dt;
@@ -792,7 +805,8 @@
     if (!E.w_codex_state) return null;
     var o = E.w_codex_state() >>> 2, m = new Float32Array(E.memory.buffer);
     return { exists: m[o], state: m[o+1] | 0, bones: m[o+2], alive: m[o+3],
-             total: m[o+4], hipY: m[o+7], dist: m[o+10] };
+             total: m[o+4], retries: m[o+5], hipY: m[o+7], dist: m[o+10],
+             reach: m[o+13], broke: m[o+14] };
   }
 
   // Every impact the engine recorded this step, turned into a crater in the
@@ -829,11 +843,13 @@
                  st.dist.toFixed(2) + " m away");
     }
     if (cst && cst.exists)
-      lines.push("red Codex: bones " + cst.bones + "/19   metal " + cst.alive + "/" +
-                 cst.total + " cells   " + cst.dist.toFixed(2) + " m away");
+      lines.push("red Codex: " + (CODEX_STATES[cst.state] || "ACTIVE") +
+                 "   bones " + cst.bones + "/19   metal " + cst.alive + "/" +
+                 cst.total + " cells   " + cst.dist.toFixed(2) + " m away" +
+                 (cst.retries ? "   rise attempts " + cst.retries : ""));
     lines.push("you landed " + totalHits + " blows, broke " + totalBroke +
                " bones, deepest dent " + Math.round(deepest * 1000) + " mm");
-    lines.push("it landed " + tookHits + " on you");
+    lines.push("they landed " + tookHits + " on you");
     var knobs = [];
     if (KNOB_POWER !== 1) knobs.push("power=" + KNOB_POWER);
     if (KNOB_TEMPO !== 1) knobs.push("tempo=" + KNOB_TEMPO);

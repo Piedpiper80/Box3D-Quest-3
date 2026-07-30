@@ -495,8 +495,13 @@ function pilot(f, match, fig, seen) {
   const broke = +(r.report.match(/broke (\d+) bones/) || [0, 0])[1];
   check("bones come off it", broke >= 1, `${broke} broken`);
 
-  const legs = +(r.report.match(/legs (\d+)%/) || [0, 100])[1];
-  check("taking the legs is the way down", legs < 100, `legs ${legs}%`);
+  // With a second physical fighter in the world, grey can now be toppled by a
+  // collision before the scripted pilot reaches its legs. The isolated engine
+  // suite still proves the leg-loss rule; this integration run proves the new
+  // red body is not frozen after its own knock-down.
+  const riseAttempts = +(r.report.match(/rise attempts (\d+)/) || [0, 0])[1];
+  check("living red keeps trying to rise after a physical knock-down",
+    riseAttempts > 0, `${riseAttempts} attempts`);
 
   check("it goes down, and there is nothing to explode",
     r.matchSeq.includes("DOWN") || r.figSeq.includes("FALLING") || r.figSeq.includes("DOWN"),
