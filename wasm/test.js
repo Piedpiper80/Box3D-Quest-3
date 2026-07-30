@@ -747,6 +747,23 @@ const CBONE = [...BONE, "L_TOE", "R_TOE"];
     check("Codex has articulated toes", E.w_codex_bone_count() === CBONE.length,
       `${E.w_codex_bone_count()} bodies`);
 
+    // Spawn them with overlapping shoulder/arm envelopes. If their collision
+    // categories see each other, the solver must separate their pelvises.
+    E.w_reset(0, 0);
+    E.w_fig_create(-0.10, 0, 1.75, 2);
+    E.w_codex_create(0.10, 0, 1.75, 2);
+    E.w_fig_hold(1); E.w_codex_hold(1);
+    const overlapStart = 0.20;
+    for (let i = 0; i < 72; i++) {
+      E.w_fig_update(0, 1.62, 1.6, STEP); E.w_fig_apply();
+      E.w_codex_update(0, 1.62, 1.6, STEP);
+      E.w_step(STEP); E.w_vox_post(); E.w_fig_post(); E.w_codex_post();
+    }
+    const gf = mem(), go = E.w_fig_state() >>> 2, co = E.w_codex_state() >>> 2;
+    const overlapEnd = Math.abs(gf[go+6] - gf[co+6]);
+    check("grey and red physically collide", overlapEnd > overlapStart + 0.03,
+      `${overlapStart.toFixed(2)} -> ${overlapEnd.toFixed(2)} m separation`);
+
     const codexState = () => { const o = E.w_codex_state() >>> 2, f = mem();
       return { exists: f[o], state: f[o+1] | 0, bones: f[o+2], alive: f[o+3],
         total: f[o+4], hip: [f[o+6], f[o+7], f[o+8]], stature: f[o+15] }; };
