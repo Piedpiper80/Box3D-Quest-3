@@ -858,6 +858,31 @@ const CBONE = [...BONE, "L_TOE", "R_TOE"];
       codexState().hip[1] > crig.hipY - 0.20 && codexPose()[B.HEAD].p[1] > 1.30,
       `hip ${codexState().hip[1].toFixed(3)}, head ${codexPose()[B.HEAD].p[1].toFixed(3)}`);
 
+    // A strike is a commitment. The old controller entered it after a timer
+    // even when a shove had already taken the capture point outside the feet,
+    // so the robot supplied the final overturning impulse itself.
+    E.w_reset(0, 0);
+    E.w_codex_create(0, 0, 1.75, 2);
+    let disturbedWindup = false, unsafeStrike = false;
+    for (let i = 0; i < 72 * 3; i++) {
+      E.w_codex_update(0, 1.50, 0.62, STEP);
+      const before = codexState();
+      if (!disturbedWindup && before.state === 5) {
+        E.w_codex_impulse(B.CHEST, 8, 0, 0);
+        disturbedWindup = true;
+      }
+      E.w_step(STEP); E.w_vox_post(); E.w_codex_post();
+      const s = codexState(), a = codexActuation(), p = codexPose();
+      const upright = s.hip[1] > crig.hipY - 0.18 && p[B.HEAD].p[1] > s.hip[1] + 0.24;
+      const planted = a.nLeft > crig.mass * 9.81 * 0.08 &&
+                      a.nRight > crig.mass * 9.81 * 0.08;
+      if (s.state === 6 && (!upright || !planted || a.margin > 0.055))
+        unsafeStrike = true;
+    }
+    check("Codex cancels a punch when its base becomes unrecoverable",
+      disturbedWindup && !unsafeStrike,
+      `disturbed ${disturbedWindup}, unsafe strike ${unsafeStrike}`);
+
     const forearm = codexPose()[B.L_FOREARM].p;
     const bonesBeforeHit = codexState().bones;
     for (let n = 0; n < 8; n++)
@@ -874,9 +899,10 @@ const CBONE = [...BONE, "L_TOE", "R_TOE"];
     E.w_codex_impulse(B.CHEST, 25, 0, 0);
     let sawFall = false, sawGetup = false, maxRetries = 0;
     let recoveryHighHip = 0, recoveryLowHip = Infinity, sawPlantedPhase = false;
-    for (let i = 0; i < 72 * 8; i++) {
+    let recoveryStableFrames = 0, completedRecovery = false;
+    for (let i = 0; i < 72 * 20; i++) {
       codexTick();
-      const s = codexState();
+      const s = codexState(), p = codexPose(), a = codexActuation();
       sawFall ||= s.state === 8;
       sawGetup ||= s.state === 10;
       maxRetries = Math.max(maxRetries, s.retries);
@@ -885,8 +911,13 @@ const CBONE = [...BONE, "L_TOE", "R_TOE"];
         recoveryLowHip = Math.min(recoveryLowHip, s.hip[1]);
       }
       if (s.state === 10 && s.phase >= 1 && s.armLoad > 0) sawPlantedPhase = true;
+      const standingAgain = sawGetup && s.state < 8 &&
+        s.hip[1] > crig.hipY - 0.14 && p[B.HEAD].p[1] > s.hip[1] + 0.24 &&
+        a.nLeft > crig.mass * 9.81 * 0.08 &&
+        a.nRight > crig.mass * 9.81 * 0.08;
+      recoveryStableFrames = standingAgain ? recoveryStableFrames + 1 : 0;
+      if (recoveryStableFrames >= 36) completedRecovery = true;
       if (process.env.CODEX_RECOVERY_TRACE && i % 18 === 0) {
-        const p = codexPose(), a = codexActuation();
         console.log("RECOVERY", (i / 72).toFixed(2), "state", s.state,
           "phase", s.phase, "retry", s.retries, "hip", s.hip.map(v => v.toFixed(2)).join(","),
           "head", p[B.HEAD].p.map(v => v.toFixed(2)).join(","),
@@ -905,6 +936,9 @@ const CBONE = [...BONE, "L_TOE", "R_TOE"];
     check("an intact Codex pushes its torso measurably off a clear floor",
       recoveryHighHip > recoveryLowHip + 0.12,
       `${recoveryLowHip.toFixed(3)} -> ${recoveryHighHip.toFixed(3)} m`);
+    check("an intact Codex completes recovery and holds a fighting stance",
+      completedRecovery,
+      `state ${codexState().state}, phase ${codexState().phase}, attempts ${maxRetries}, stable ${recoveryStableFrames}/36`);
     check("getting up never enables a root actuator",
       codexActuation().rootForce === 0 && codexActuation().rootTorque === 0,
       `root force ${codexActuation().rootForce}, torque ${codexActuation().rootTorque}`);
