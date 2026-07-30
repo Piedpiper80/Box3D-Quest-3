@@ -583,3 +583,73 @@ motor-jointed body in the way the player's fist already is.
 Do not re-derive the table above. Do get a working push-recovery measurement
 before deciding, because the standing metric alone argues for leaving it off and
 that is not what the strategy is for.
+
+## The lean-back hover: measured, three fixes tried, all three wrong, and why
+
+The headset report: **"he leans back in such a way that he should never be able
+to stay upright"** — and, on the method: *"I would have thought it was just a
+natural progression of true physics."* The straight answer to that: it is not
+pure physics because pure physics face-plants this skeleton in four seconds
+(measured, above). There is a controller, and one piece of it still cheats.
+
+### What was measured, with the real fist held in his chest
+
+- Standing beside the player after a walk-in, at rest: **181 N total under the
+  soles carrying a 542 N body — one sole at exactly 0 N.** Two-thirds of his
+  weight held by the stride's crutch (`ay`, `rx/rz` all scaled by `s_figCarry`),
+  which is fully live because near the player he is nearly always in `FIG_STEP`.
+- With a 700 N fist held in his chest: leaned 24.5° back, then oscillating
+  13–25°, for four continuous seconds. **Margin read exactly 0.000 the entire
+  time and the fall dwell never left 0.00.** Every contact-based door was blind:
+  the out-door is suppressed while `s_figCarry >= 0.05`, the air-door too, and
+  the rescue step (which fires at 0.15 s and zeroes the dwell, cooldown zero)
+  means the 0.45 s fall door is unreachable by construction while stepping is
+  possible.
+
+### Three doors built and torn back out — each sentenced the honest walk
+
+The honest walk-in envelope, measured on the shipped engine over a 6 m approach,
+is the constraint every future door must clear:
+
+| honest walk-in | value |
+|---|---|
+| worst pelvis tilt | **55.4°**, and >22° for **1.29 s continuous** |
+| worst margin (feet loaded) | **−0.326 m** (8× the out-band), excursions to −1.1 m |
+| longest run with no sole loaded | **1.12 s** |
+
+- **Licence-scaling the crutch** (`ay`, `rx/rz` × measured ground contact):
+  starves the gait's vertical mid-travel; face-plant on the walk-in.
+- **Unconditional air-door** (unloaded feet count regardless of stride): travel
+  legitimately swings unloaded for over a second; sentenced.
+- **Stride-tilt door** (22° for 0.6 s while carried): the walk itself tilts to
+  55°; sentenced instantly. This measurement also explains the *"walks forward
+  weird with his upper body trailing behind"* report — the walk genuinely
+  travels tipped 30–50°. It is a scramble wearing a walk's name.
+
+One change from this round is KEPT, because it is right on its own terms: the
+rescue step no longer zeroes the fall dwell (it fires at a third of the dwell
+with zero cooldown, so zeroing made the fall door unreachable forever; a step
+that works earns its reset through the margin coming back positive). NOTE: kept
+in the record only — reverted from the tree with the rest pending the real fix,
+so main today is exactly the shipped Build 5 engine.
+
+### Where the cheat actually lives, and the two real jobs
+
+1. **The stride's crutch is a full magic force and the fight is fought inside
+   it.** Near the player the figure is in `FIG_STEP` most frames, so gravity
+   cancellation and air-righting are live mid-fight, feet barely loaded. No
+   door can fix that honestly while the gait *requires* the crutch to exist.
+   The job is the one already named in this file: **legs that walk by pushing
+   the floor** (real foot placement), after which the crutch — and every door
+   protecting it — is deleted, not gated.
+2. **Joint springs with unlimited torque.** The margin sitting at exactly 0.000
+   during the hover says the pose may be *statically* legal — balancing on the
+   sole's edge — while the knees/ankles hold a jack-knifed limbo no real joint
+   could. Implicit joint springs supply whatever torque the pose demands. The
+   job: **torque caps on the leg-joint springs** at plausible actuator numbers,
+   so an impossible pose is impossible because the knee gives, not because a
+   door names it.
+
+Both jobs are one rewrite in practice: the momentum-based movement design from
+the DARPA-era literature already recorded above. Doors are the wrong tool; this
+round proved it by measurement, three times.
