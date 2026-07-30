@@ -268,12 +268,19 @@ async function runPage(file, frames, poseAt) {
       // Keep the legacy fight pilot aimed at Claude's grey robot. The red
       // comparison robot is deliberately independent and otherwise its meshes
       // would move the centroid between two opponents.
-      const mesh = shown.filter((d) => d.indices > 100 && !(d.color &&
-        d.color[0] > d.color[1] * 1.5 && d.color[0] > d.color[2] * 1.5));
+      // Fight grey first, then turn to the still-live red fighter once grey is
+      // down. This proves the arena does not erase red at the old round edge.
+      let mesh = shown.filter((d) => {
+        if (d.indices <= 100) return false;
+        const red = d.color && d.color[0] > d.color[1] * 1.5 &&
+                    d.color[0] > d.color[2] * 1.5;
+        return curFig === "DOWN" ? red : !red;
+      });
+      if (curFig === "DOWN") mesh = mesh.slice(0, 3); // pelvis, abdomen, chest
       if (mesh.length) {
-        let sx = 0, sz = 0;
-        for (const d of mesh) { sx += d.pos[0]; sz += d.pos[2]; }
-        seen = [sx / mesh.length, sz / mesh.length];
+        let sx = 0, sy = 0, sz = 0;
+        for (const d of mesh) { sx += d.pos[0]; sy += d.pos[1]; sz += d.pos[2]; }
+        seen = [sx / mesh.length, sz / mesh.length, sy / mesh.length];
       }
     }
     const rpt = el("report").textContent;
@@ -420,8 +427,11 @@ function pilot(f, match, fig, seen) {
   const c = g % CYCLE, phase = Math.floor(g / CYCLE);
   // chest, chest, thigh, shin, thigh, shin — the legs are the way down, so the
   // script goes for them, exactly as a player who has read the page would.
-  const heights = [1.28, 1.28, 0.62, 0.34, 0.62, 0.34];
-  const aimY = heights[phase % heights.length];
+  const heights = fig === "DOWN" ? [0.18, 0.28, 0.40, 0.55]
+                                  : [1.28, 1.28, 0.62, 0.34, 0.62, 0.34];
+  const aimY = fig === "DOWN" && seen
+    ? Math.max(0.10, Math.min(1.35, seen[2]))
+    : heights[phase % heights.length];
   const hand = phase % 2;                      // 0 = left leads, 1 = right
   const drive = c < 18 ? 0 : (c - 18) / 12;
   // The retract has to come all the way back to the chest. The first version
@@ -504,7 +514,7 @@ function pilot(f, match, fig, seen) {
     riseAttempts > 0, `${riseAttempts} attempts`);
 
   check("it goes down, and there is nothing to explode",
-    r.matchSeq.includes("DOWN") || r.figSeq.includes("FALLING") || r.figSeq.includes("DOWN"),
+    r.matchSeq.includes("DOWN"),
     r.matchSeq.join(" -> ") + " / " + r.figSeq.join(" -> "));
 
   check("no fault was reported", !/FAULT/.test(r.report),

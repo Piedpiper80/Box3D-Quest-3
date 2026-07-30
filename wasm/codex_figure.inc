@@ -40,6 +40,11 @@ static float s_codexReach = 0.0f;
 static int s_codexBroke = 0;
 static int s_codexRetries = 0;
 static float s_codexCollapse = 0.0f;
+static int s_codexRecoveryPhase = 0;
+static float s_codexArmLoad = 0.0f;
+static float s_codexRecoveryFootLoad = 0.0f;
+static float s_codexStable = 0.0f;
+static float s_codexAir = 0.0f;
 
 static const BoneDef* codexDef(int b)
 {
@@ -74,6 +79,11 @@ static void codexWorldReset(void)
     s_codexBroke = 0;
     s_codexRetries = 0;
     s_codexCollapse = 0.0f;
+    s_codexRecoveryPhase = 0;
+    s_codexArmLoad = 0.0f;
+    s_codexRecoveryFootLoad = 0.0f;
+    s_codexStable = 0.0f;
+    s_codexAir = 0.0f;
 }
 
 static int codexBroken(int b)
@@ -108,10 +118,7 @@ static int codexAlive(void)
 {
     const int vital[3] = { BONE_PELVIS, BONE_ABDOMEN, BONE_CHEST };
     for (int i = 0; i < 3; i++)
-    {
-        const int g = s_codexGrid[vital[i]];
-        if (g < 0 || !s_vxG[g].used || s_vxG[g].alive <= 0) return 0;
-    }
+        if (codexBroken(vital[i]) || !codexConnected(vital[i])) return 0;
     return 1;
 }
 
@@ -203,6 +210,16 @@ static void codexPoint(int bone, float dx, float dy, float dz)
     codexAim(bone, qFromTo(down, dir));
 }
 
+static void codexPointWorld(int bone, float dx, float dy, float dz)
+{
+    const BoneDef* d = codexDef(bone);
+    if (!d || d->parent < 0 || !codexConnected(bone)) return;
+    const b3Quat parentQ = b3Body_GetRotation(s_codexBone[d->parent]);
+    const b3Vec3 world = { dx, dy, dz };
+    const b3Vec3 local = b3InvRotateVector(parentQ, world);
+    codexPoint(bone, local.x, local.y, local.z);
+}
+
 static void codexBend(int bone, float angle)
 {
     if (bone <= 0 || bone >= CODEX_BONE_COUNT || !codexConnected(bone) ||
@@ -229,6 +246,13 @@ static void codexJointHertz(float scale)
         if (codexIsHinge(b)) b3RevoluteJoint_SetSpringHertz(s_codexJoint[b], hz);
         else b3SphericalJoint_SetSpringHertz(s_codexJoint[b], hz);
     }
+}
+
+static void codexBoneHertz(int bone, float hz)
+{
+    if (!codexConnected(bone) || bone <= 0) return;
+    if (codexIsHinge(bone)) b3RevoluteJoint_SetSpringHertz(s_codexJoint[bone], hz);
+    else b3SphericalJoint_SetSpringHertz(s_codexJoint[bone], hz);
 }
 
 static void codexGuard(void)
@@ -341,21 +365,23 @@ static void codexCombat(float dt)
 
 static int codexIsUpright(void)
 {
-    if (!codexConnected(BONE_CHEST)) return 0;
+    if (!codexConnected(BONE_HEAD)) return 0;
     const b3Pos hip = b3Body_GetPosition(s_codexBone[BONE_PELVIS]);
-    const b3Quat q = b3Body_GetRotation(s_codexBone[BONE_CHEST]);
-    const b3Matrix3 m = b3MakeMatrixFromQuat(q);
-    return hip.y > s_worldFloorY + 0.43f * s_codexStature && m.cy.y > 0.72f;
+    const b3Pos head = b3Body_GetPosition(s_codexBone[BONE_HEAD]);
+    return hip.y > s_worldFloorY + 0.43f * s_codexStature &&
+           head.y > hip.y + 0.14f * s_codexStature;
 }
 
 static int codexIsDown(void)
 {
-    if (!codexConnected(BONE_CHEST)) return 1;
+    if (!codexConnected(BONE_HEAD)) return 1;
     const b3Pos hip = b3Body_GetPosition(s_codexBone[BONE_PELVIS]);
-    const b3Quat q = b3Body_GetRotation(s_codexBone[BONE_CHEST]);
-    const b3Matrix3 m = b3MakeMatrixFromQuat(q);
-    return hip.y < s_worldFloorY + 0.34f * s_codexStature || m.cy.y < 0.38f;
+    const b3Pos head = b3Body_GetPosition(s_codexBone[BONE_HEAD]);
+    return hip.y < s_worldFloorY + 0.34f * s_codexStature ||
+           head.y < hip.y + 0.08f * s_codexStature;
 }
+
+static void codexBalance(void);
 
 // A get-up is deliberately allowed to fail. These stages only change joint
 // targets: tuck, plant the arms, then extend the legs. The body rises only if
@@ -363,6 +389,10 @@ static int codexIsDown(void)
 static void codexRecovery(float dt)
 {
     s_codexTimer += dt;
+    s_codexArmLoad = codexPartLoad(BONE_L_HAND) + codexPartLoad(BONE_R_HAND) +
+                     codexPartLoad(BONE_L_FOREARM) + codexPartLoad(BONE_R_FOREARM);
+    s_codexRecoveryFootLoad = codexPartLoad(BONE_L_FOOT) + codexPartLoad(CODEX_L_TOE) +
+                              codexPartLoad(BONE_R_FOOT) + codexPartLoad(CODEX_R_TOE);
     if (!codexAlive())
     {
         s_codexState = CODEX_DOWN;
@@ -377,46 +407,151 @@ static void codexRecovery(float dt)
             s_codexState = CODEX_GETUP;
             s_codexTimer = 0.0f;
             s_codexRetries++;
+            s_codexRecoveryPhase = 0;
+            s_codexStable = 0.0f;
         }
         return;
     }
     if (s_codexState == CODEX_DOWN) return;
 
-    codexJointHertz(0.55f);
-    if (s_codexTimer < 0.70f)
+    codexJointHertz(0.35f);
+    codexBoneHertz(BONE_L_UPPERARM, 5.0f);
+    codexBoneHertz(BONE_R_UPPERARM, 5.0f);
+    codexBoneHertz(BONE_L_FOREARM, 4.5f);
+    codexBoneHertz(BONE_R_FOREARM, 4.5f);
+    codexBoneHertz(BONE_L_HAND, 3.5f);
+    codexBoneHertz(BONE_R_HAND, 3.5f);
+
+    // Every attempt first reaches actual limbs toward world-down. That world
+    // conversion matters when the chest is on its side: a fixed chest-local
+    // pose only waves the arms sideways and can never find the floor.
+    codexPointWorld(BONE_L_UPPERARM, 0.0f, -1.0f, 0.0f);
+    codexPointWorld(BONE_R_UPPERARM, 0.0f, -1.0f, 0.0f);
+    codexPointWorld(BONE_L_HAND, 0.0f, -1.0f, 0.0f);
+    codexPointWorld(BONE_R_HAND, 0.0f, -1.0f, 0.0f);
+    codexPointWorld(BONE_L_THIGH, 0.0f, -1.0f, 0.0f);
+    codexPointWorld(BONE_R_THIGH, 0.0f, -1.0f, 0.0f);
+    codexBend(CODEX_L_TOE, 0.0f); codexBend(CODEX_R_TOE, 0.0f);
+
+    if (s_codexRecoveryPhase == 0)
     {
-        codexPoint(BONE_L_THIGH, -0.10f, -0.30f, 0.25f);
-        codexPoint(BONE_R_THIGH, 0.10f, -0.30f, 0.25f);
-        codexBend(BONE_L_SHIN, 1.70f); codexBend(BONE_R_SHIN, 1.70f);
-        codexPoint(BONE_L_UPPERARM, -0.35f, -0.45f, 0.30f);
-        codexPoint(BONE_R_UPPERARM, 0.35f, -0.45f, 0.30f);
-        codexBend(BONE_L_FOREARM, -0.35f); codexBend(BONE_R_FOREARM, -0.35f);
-    }
-    else if (s_codexTimer < 1.55f)
-    {
-        const float side = (s_codexRetries & 1) ? 1.0f : -1.0f;
-        codexPoint(BONE_L_UPPERARM, -0.45f, -0.85f, side * 0.20f);
-        codexPoint(BONE_R_UPPERARM, 0.45f, -0.85f, side * 0.20f);
+        // Find the ground with arms long and knees tucked. The phase cannot
+        // advance merely because time passed: a measured hand/forearm reaction
+        // is the permission to push.
         codexBend(BONE_L_FOREARM, -0.05f); codexBend(BONE_R_FOREARM, -0.05f);
-        codexBend(BONE_L_SHIN, 1.25f); codexBend(BONE_R_SHIN, 1.25f);
-        codexAim(BONE_ABDOMEN, qAxisAngle(1.0f, 0.0f, 0.0f, -0.35f));
-        codexAim(BONE_CHEST, qAxisAngle(1.0f, 0.0f, 0.0f, -0.25f));
+        codexBend(BONE_L_SHIN, 1.45f); codexBend(BONE_R_SHIN, 1.45f);
+        if (s_codexArmLoad > 8.0f && s_codexTimer > 0.12f)
+        {
+            s_codexRecoveryPhase = 1;
+            s_codexTimer = 0.0f;
+        }
+        else if (s_codexTimer > 1.10f)
+        {
+            s_codexTimer = 0.0f;
+            s_codexRetries++;
+        }
     }
+    else if (s_codexRecoveryPhase == 1)
+    {
+        // Push the chest clear and unfold the knees only while the arms are
+        // carrying load. Lose the plant and return to finding it.
+        codexBend(BONE_L_FOREARM, -0.05f); codexBend(BONE_R_FOREARM, -0.05f);
+        codexBend(BONE_L_SHIN, 0.85f); codexBend(BONE_R_SHIN, 0.85f);
+        if (s_codexRecoveryFootLoad > 8.0f &&
+                 b3Body_GetPosition(s_codexBone[BONE_PELVIS]).y >
+                    s_worldFloorY + 0.22f * s_codexStature)
+        {
+            s_codexRecoveryPhase = 2;
+            s_codexTimer = 0.0f;
+        }
+    }
+    else if (s_codexRecoveryPhase == 2)
+    {
+        // Feet have taken load, so extend the two leg columns. The arms keep
+        // their floor target until the chest is upright; no root force helps.
+        codexNeutralLegs();
+        codexBend(BONE_L_FOREARM, -0.05f); codexBend(BONE_R_FOREARM, -0.05f);
+        if (s_codexRecoveryFootLoad < 2.0f && s_codexTimer > 0.25f)
+        {
+            s_codexRecoveryPhase = 0;
+            s_codexTimer = 0.0f;
+            s_codexRetries++;
+        }
+    }
+
     else
     {
-        codexNeutralLegs();
+        // The body has passed through an upright pose. Do not call that a
+        // recovery while it is still flying upward: return to the ordinary
+        // planted stance, use ankle reactions, and demand a quiet interval.
+        if (s_codexRecoveryFootLoad > 2.0f)
+            codexNeutralLegs();
+        else
+        {
+            codexPointWorld(BONE_L_THIGH, 0.0f, -1.0f, 0.0f);
+            codexPointWorld(BONE_R_THIGH, 0.0f, -1.0f, 0.0f);
+            codexBend(BONE_L_SHIN, 0.35f); codexBend(BONE_R_SHIN, 0.35f);
+        }
         codexGuard();
+        const b3Pos lf = b3Body_GetPosition(s_codexBone[BONE_L_FOOT]);
+        const b3Pos rf = b3Body_GetPosition(s_codexBone[BONE_R_FOOT]);
+        s_codexBalanceX = 0.5f * ((float)lf.x + (float)rf.x);
+        s_codexBalanceZ = 0.5f * ((float)lf.z + (float)rf.z);
+        codexBalance();
+        const float speed = __builtin_sqrtf(s_codexAct[8]*s_codexAct[8] +
+                                             s_codexAct[9]*s_codexAct[9] +
+                                             s_codexAct[10]*s_codexAct[10]);
+        if (codexIsUpright() && s_codexRecoveryFootLoad > 2.0f && speed < 2.5f)
+            s_codexStable += dt;
+        else
+            s_codexStable = 0.0f;
+
+        if (s_codexStable > 0.05f)
+        {
+            codexJointHertz(1.0f);
+            s_codexState = 0;
+            s_codexTimer = 0.0f;
+            s_codexCollapse = 0.0f;
+            s_codexAir = 0.0f;
+            s_codexRecoveryPhase = 0;
+            s_codexStable = 0.0f;
+            return;
+        }
+        if (s_codexTimer > 3.0f || (s_codexTimer > 0.80f && codexIsDown()))
+        {
+            s_codexRecoveryPhase = 0;
+            s_codexTimer = 0.0f;
+            s_codexStable = 0.0f;
+            s_codexRetries++;
+        }
+        return;
     }
 
     if (codexIsUpright() && s_codexAct[3] + s_codexAct[4] > 2.0f)
     {
-        codexJointHertz(1.0f);
-        s_codexState = 0;
+        const float speed = __builtin_sqrtf(s_codexAct[8]*s_codexAct[8] +
+                                             s_codexAct[9]*s_codexAct[9] +
+                                             s_codexAct[10]*s_codexAct[10]);
+        if (speed < 2.5f)
+        {
+            codexJointHertz(1.0f);
+            codexNeutralLegs();
+            codexGuard();
+            s_codexState = 0;
+            s_codexTimer = 0.0f;
+            s_codexCollapse = 0.0f;
+            s_codexAir = 0.0f;
+            s_codexRecoveryPhase = 0;
+            s_codexStable = 0.0f;
+            return;
+        }
+        s_codexRecoveryPhase = 3;
         s_codexTimer = 0.0f;
-        s_codexCollapse = 0.0f;
+        s_codexStable = 0.0f;
     }
-    else if (s_codexTimer > 2.50f)
+    else if (s_codexRecoveryPhase > 0 && s_codexTimer > 2.0f)
     {
+        s_codexRecoveryPhase = 0;
         s_codexTimer = 0.0f;
         s_codexRetries++;
     }
@@ -660,6 +795,11 @@ int w_codex_create(float x, float z, float stature, int material)
     s_codexBroke = 0;
     s_codexRetries = 0;
     s_codexCollapse = 0.0f;
+    s_codexRecoveryPhase = 0;
+    s_codexArmLoad = 0.0f;
+    s_codexRecoveryFootLoad = 0.0f;
+    s_codexStable = 0.0f;
+    s_codexAir = 0.0f;
     s_codexBalanceX = x; s_codexBalanceZ = z;
     s_codexStanceX = x; s_codexStanceZ = z;
 
@@ -771,9 +911,11 @@ void w_codex_update(float px, float py, float pz, float dt)
 
     if (s_codexState < CODEX_FALLING)
     {
-        if (codexIsDown() || s_codexAct[12] > 0.5f) s_codexCollapse += s_codexDt;
+        if (codexIsDown()) s_codexCollapse += s_codexDt;
         else if (s_codexCollapse > 0.0f) s_codexCollapse -= 2.0f * s_codexDt;
-        if (s_codexCollapse > 0.18f)
+        if (s_codexAct[12] > 0.5f) s_codexAir += s_codexDt;
+        else if (s_codexAir > 0.0f) s_codexAir -= 2.0f * s_codexDt;
+        if (s_codexCollapse > 0.18f || s_codexAir > 0.65f)
         {
             s_codexState = CODEX_FALLING;
             s_codexTimer = 0.0f;
@@ -856,6 +998,9 @@ float* w_codex_state(void)
     const float dx = s_codexPlayer.x - (float)p.x;
     const float dz = s_codexPlayer.z - (float)p.z;
     out[10] = __builtin_sqrtf(dx*dx + dz*dz);
+    out[9] = (float)s_codexRecoveryPhase;
+    out[11] = s_codexArmLoad;
+    out[12] = s_codexRecoveryFootLoad;
     out[13] = s_codexReach;
     out[14] = (float)s_codexBroke;
     out[15] = s_codexStature;

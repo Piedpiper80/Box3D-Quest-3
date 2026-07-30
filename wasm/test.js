@@ -768,7 +768,8 @@ const CBONE = [...BONE, "L_TOE", "R_TOE"];
     const codexState = () => { const o = E.w_codex_state() >>> 2, f = mem();
       return { exists: f[o], state: f[o+1] | 0, bones: f[o+2], alive: f[o+3],
         total: f[o+4], hip: [f[o+6], f[o+7], f[o+8]], reach: f[o+13],
-        broke: f[o+14], retries: f[o+5], stature: f[o+15] }; };
+        broke: f[o+14], retries: f[o+5], phase: f[o+9], armLoad: f[o+11],
+        recoveryFootLoad: f[o+12], stature: f[o+15] }; };
     const codexPose = () => { const o = E.w_codex_pose() >>> 2, f = mem();
       return CBONE.map((n, i) => ({ n, p: [f[o+i*8], f[o+i*8+1], f[o+i*8+2]],
         q: [f[o+i*8+3], f[o+i*8+4], f[o+i*8+5], f[o+i*8+6]], on: f[o+i*8+7] })); };
@@ -870,19 +871,40 @@ const CBONE = [...BONE, "L_TOE", "R_TOE"];
     E.w_codex_create(0, 0, 1.75, 2);
     E.w_codex_hold(1);
     for (let i = 0; i < 72 * 2; i++) codexTick();
-    E.w_codex_impulse(B.CHEST, 150, 0, 0);
+    E.w_codex_impulse(B.CHEST, 25, 0, 0);
     let sawFall = false, sawGetup = false, maxRetries = 0;
+    let recoveryHighHip = 0, recoveryLowHip = Infinity, sawPlantedPhase = false;
     for (let i = 0; i < 72 * 8; i++) {
       codexTick();
       const s = codexState();
       sawFall ||= s.state === 8;
       sawGetup ||= s.state === 10;
       maxRetries = Math.max(maxRetries, s.retries);
+      if (sawGetup) {
+        recoveryHighHip = Math.max(recoveryHighHip, s.hip[1]);
+        recoveryLowHip = Math.min(recoveryLowHip, s.hip[1]);
+      }
+      if (s.state === 10 && s.phase >= 1 && s.armLoad > 0) sawPlantedPhase = true;
+      if (process.env.CODEX_RECOVERY_TRACE && i % 18 === 0) {
+        const p = codexPose(), a = codexActuation();
+        console.log("RECOVERY", (i / 72).toFixed(2), "state", s.state,
+          "phase", s.phase, "retry", s.retries, "hip", s.hip.map(v => v.toFixed(2)).join(","),
+          "head", p[B.HEAD].p.map(v => v.toFixed(2)).join(","),
+          "handsY", p[B.L_HAND].p[1].toFixed(2), p[B.R_HAND].p[1].toFixed(2),
+          "feetY", p[B.L_FOOT].p[1].toFixed(2), p[B.R_FOOT].p[1].toFixed(2),
+          "loads", a.nLeft.toFixed(0), a.nRight.toFixed(0),
+          "vel", a.vel.map(v => v.toFixed(2)).join(","));
+      }
     }
     check("a shove can physically knock Codex down", sawFall,
       `falling state seen ${sawFall}`);
     check("living Codex tries to get up through its joints", sawGetup && maxRetries > 0,
       `get-up ${sawGetup}, attempts ${maxRetries}`);
+    check("Codex recovery waits for a planted limb before pushing", sawPlantedPhase,
+      `planted phase seen ${sawPlantedPhase}`);
+    check("an intact Codex pushes its torso measurably off a clear floor",
+      recoveryHighHip > recoveryLowHip + 0.12,
+      `${recoveryLowHip.toFixed(3)} -> ${recoveryHighHip.toFixed(3)} m`);
     check("getting up never enables a root actuator",
       codexActuation().rootForce === 0 && codexActuation().rootTorque === 0,
       `root force ${codexActuation().rootForce}, torque ${codexActuation().rootTorque}`);
@@ -891,11 +913,15 @@ const CBONE = [...BONE, "L_TOE", "R_TOE"];
     E.w_floor_friction(0);
     E.w_codex_create(0, 0, 1.75, 2);
     const noFrictionStart = codexState().hip[2];
-    let noFrictionPoweredTravel = 0;
+    let noFrictionPoweredTravel = 0, noFrictionFell = false;
     for (let i = 0; i < 72 * 12; i++) {
       codexTick();
       const s = codexState();
-      if (s.hip[1] > crig.hipY - 0.18 && codexPose()[B.HEAD].p[1] > 1.35)
+      if (s.state >= 8) noFrictionFell = true;
+      // This check isolates walking authority. Once a zero-friction body has
+      // fallen, its later recovery contacts are a different behaviour and do
+      // not retroactively turn the gait into powered travel.
+      if (!noFrictionFell && s.hip[1] > crig.hipY - 0.18 && codexPose()[B.HEAD].p[1] > 1.35)
         noFrictionPoweredTravel = Math.max(noFrictionPoweredTravel,
           Math.abs(s.hip[2] - noFrictionStart));
     }

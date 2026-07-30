@@ -721,10 +721,12 @@
         haptic(HANDS[0], 0.8, 90); haptic(HANDS[1], 0.8, 90);
         if (!KNOB_CALM) { shake = Math.min(0.012, 0.004 + cst.reach * 0.0008); shakeT = 0.16; }
       }
-      // Keep Claude's existing round boundary intact. Red is a comparison
-      // fighter in the same world and continues simulating during DOWN, so a
-      // living red body still keeps trying to rise instead of being frozen.
-      if (st.state === 6) { MATCH = "DOWN"; downHold = 0; fell(); }
+      // Both physical opponents belong to the round. A red body that is still
+      // alive keeps fighting or trying to rise; the restart gesture must never
+      // erase it merely because grey reached the floor first.
+      if (st.state === 6 && cst && cst.state === 9) {
+        MATCH = "DOWN"; downHold = 0; fell();
+      }
     }
     if (shakeT > 0) shakeT -= dt;
 
