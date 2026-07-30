@@ -732,7 +732,7 @@ const CBONE = [...BONE, "L_TOE", "R_TOE"];
   const codexApi = ["w_codex_create", "w_codex_destroy", "w_codex_update",
     "w_codex_post", "w_codex_state", "w_codex_pose", "w_codex_bones",
     "w_codex_bone_count", "w_codex_bone_grid", "w_codex_actuation",
-    "w_codex_rig"];
+    "w_codex_rig", "w_codex_hold", "w_codex_joints", "w_floor_friction"];
   const hasCodexApi = codexApi.every((name) => typeof E[name] === "function");
   check("the Codex controller has its own API", hasCodexApi,
     codexApi.filter((name) => typeof E[name] !== "function").join(", "));
@@ -759,6 +759,8 @@ const CBONE = [...BONE, "L_TOE", "R_TOE"];
         vel: [f[o+8], f[o+9], f[o+10]], margin: f[o+11], airborne: f[o+12] }; };
     const codexRig = () => { const o = E.w_codex_rig() >>> 2, f = mem();
       return { mass: f[o], hipY: f[o+1] }; };
+    const codexJoints = () => { const o = E.w_codex_joints() >>> 2, f = mem();
+      return { leftKnee: f[o], rightKnee: f[o+1], leftToe: f[o+2], rightToe: f[o+3] }; };
     const codexTick = () => {
       E.w_codex_update(0, 1.62, 1.6, STEP);
       E.w_step(STEP); E.w_vox_post(); E.w_codex_post();
@@ -766,6 +768,7 @@ const CBONE = [...BONE, "L_TOE", "R_TOE"];
 
     E.w_reset(0, 0);
     E.w_codex_create(0, 0, 1.75, 2);
+    E.w_codex_hold(1);
     for (let i = 0; i < 72 * 8; i++) codexTick();
     const cst = codexState(), cpose = codexPose(), cact = codexActuation(), crig = codexRig();
     check("Codex has no root actuator", cact.rootForce === 0 && cact.rootTorque === 0,
@@ -776,6 +779,60 @@ const CBONE = [...BONE, "L_TOE", "R_TOE"];
     check("Codex stands without a root lift",
       cst.hip[1] > crig.hipY - 0.12 && cpose[B.HEAD].p[1] > 1.40,
       `hip ${cst.hip[1].toFixed(3)}/${crig.hipY.toFixed(3)}, head ${cpose[B.HEAD].p[1].toFixed(3)}`);
+
+    E.w_reset(0, 0);
+    E.w_codex_create(0, 0, 1.75, 2);
+    E.w_codex_hold(0);
+    const gaitStart = codexState().hip[2];
+    let sawLeftStance = false, sawRightStance = false, sawStep = false;
+    let maxKnee = 0, maxToe = 0;
+    for (let i = 0; i < 72 * 12; i++) {
+      codexTick();
+      const a = codexActuation(), s = codexState(), j = codexJoints();
+      if (process.env.CODEX_TRACE && i % 18 === 0) {
+        const p = codexPose();
+        console.log("TRACE", (i / 72).toFixed(2), "state", s.state,
+          "hip", s.hip.map(v => v.toFixed(2)).join(","),
+          "headY", p[B.HEAD].p[1].toFixed(2),
+          "feetX", p[B.L_FOOT].p[0].toFixed(2), p[B.R_FOOT].p[0].toFixed(2),
+          "feetZ", p[B.L_FOOT].p[2].toFixed(2), p[B.R_FOOT].p[2].toFixed(2),
+          "load", a.nLeft.toFixed(0), a.nRight.toFixed(0),
+          "com", a.com[0].toFixed(3), a.com[2].toFixed(3),
+          "vel", a.vel[0].toFixed(3), a.vel[2].toFixed(3),
+          "margin", a.margin.toFixed(3), "work", a.work.toFixed(1));
+      }
+      if (a.nLeft > a.nRight * 1.6) sawLeftStance = true;
+      if (a.nRight > a.nLeft * 1.6) sawRightStance = true;
+      if (s.state >= 1 && s.state <= 4) sawStep = true;
+      maxKnee = Math.max(maxKnee, Math.abs(j.leftKnee), Math.abs(j.rightKnee));
+      maxToe = Math.max(maxToe, Math.abs(j.leftToe), Math.abs(j.rightToe));
+    }
+    const gaitEnd = codexState();
+    check("Codex advances on the player through cautious stepping", gaitEnd.hip[2] > gaitStart + 0.04,
+      `${gaitStart.toFixed(3)} -> ${gaitEnd.hip[2].toFixed(3)} m`);
+    check("Codex strides without disguising a fall as travel",
+      gaitEnd.hip[1] > crig.hipY - 0.18 && codexPose()[B.HEAD].p[1] > 1.35,
+      `hip ${gaitEnd.hip[1].toFixed(3)}, head ${codexPose()[B.HEAD].p[1].toFixed(3)}`);
+    check("Codex gait transfers support between feet", sawLeftStance && sawRightStance,
+      `left ${sawLeftStance}, right ${sawRightStance}`);
+    check("Codex gait is contact-driven", sawStep, `last state ${gaitEnd.state}`);
+    check("Codex walking bends knees and toes", maxKnee > 0.12 && maxToe > 0.05,
+      `knee ${maxKnee.toFixed(3)}, toe ${maxToe.toFixed(3)} rad`);
+
+    E.w_reset(0, 0);
+    E.w_floor_friction(0);
+    E.w_codex_create(0, 0, 1.75, 2);
+    const noFrictionStart = codexState().hip[2];
+    let noFrictionPoweredTravel = 0;
+    for (let i = 0; i < 72 * 12; i++) {
+      codexTick();
+      const s = codexState();
+      if (s.hip[1] > crig.hipY - 0.18 && codexPose()[B.HEAD].p[1] > 1.35)
+        noFrictionPoweredTravel = Math.max(noFrictionPoweredTravel,
+          Math.abs(s.hip[2] - noFrictionStart));
+    }
+    check("Codex cannot power forward without floor friction", noFrictionPoweredTravel < 0.08,
+      `${noFrictionPoweredTravel.toFixed(3)} m travelled while upright at zero friction`);
   }
 
   // =========================================================================

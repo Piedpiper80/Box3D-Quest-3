@@ -29,6 +29,7 @@ typedef struct
 static b3WorldId s_world;
 static int s_worldCreated = 0;
 static b3BodyId s_groundBody;      // the fists' motor joints anchor to it
+static b3ShapeId s_groundShape;
 static float s_groundY = 0.0f;
 static Cube s_cubes[MAX_CUBES];
 static int s_count = 0;
@@ -128,7 +129,7 @@ void w_reset(int enableSleep, float groundY)
     // Wide enough that a severed limb sliding away cannot reach the edge and
     // fall forever.
     b3BoxHull hull = b3MakeBoxHull(20.0f, 0.1f, 20.0f);
-    b3CreateHullShape(ground, &sd, &hull.base);
+    s_groundShape = b3CreateHullShape(ground, &sd, &hull.base);
 
     s_groundBody = ground;
     s_groundY = groundY;
@@ -3633,6 +3634,18 @@ float* w_fig_joints(void)
             out[4 + s] = b3Joint_GetAngularSeparation(s_figJoint[ARM(s)]);
     }
     return out;
+}
+
+// Diagnostic control used to prove that articulated locomotion is purchasing
+// motion from the floor rather than injecting it at the root. Every reset
+// restores the production coefficient above.
+WASM_EXPORT("w_floor_friction")
+void w_floor_friction(float friction)
+{
+    if (!s_worldCreated || !b3Shape_IsValid(s_groundShape)) return;
+    if (friction < 0.0f) friction = 0.0f;
+    if (friction > 2.0f) friction = 2.0f;
+    b3Shape_SetFriction(s_groundShape, friction);
 }
 
 // The red comparison figure shares this translation unit so it can inhabit

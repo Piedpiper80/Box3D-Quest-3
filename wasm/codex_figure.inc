@@ -22,6 +22,13 @@ static float s_codexStature = 1.75f;
 static float s_codexDt = 1.0f / 72.0f;
 static b3Vec3 s_codexPlayer;
 static float s_codexAct[13];
+static int s_codexHold = 0;
+static int s_codexState = 0;
+static int s_codexSwing = 1;
+static int s_codexSwingAir = 0;
+static float s_codexTimer = 0.0f;
+static float s_codexBalanceX = 0.0f, s_codexBalanceZ = 0.0f;
+static float s_codexStanceX = 0.0f, s_codexStanceZ = 0.0f;
 
 static const BoneDef* codexDef(int b)
 {
@@ -46,6 +53,11 @@ static void codexWorldReset(void)
         s_codexGrid[b] = -1;
     }
     for (int i = 0; i < 13; i++) s_codexAct[i] = 0.0f;
+    s_codexHold = 0;
+    s_codexState = 0;
+    s_codexSwing = 1;
+    s_codexSwingAir = 0;
+    s_codexTimer = 0.0f;
 }
 
 static float codexPartLoad(int bone)
@@ -109,6 +121,178 @@ static void codexSense(void)
     s_codexAct[12] = (nl + nr) < M * 9.81f * 0.06f ? 1.0f : 0.0f;
 }
 
+static float codexMass(void)
+{
+    float mass = 0.0f;
+    if (s_codexExists)
+        for (int b = 0; b < CODEX_BONE_COUNT; b++)
+            if (s_codexAttached[b]) mass += b3Body_GetMass(s_codexBone[b]);
+    return mass;
+}
+
+static void codexAim(int bone, b3Quat qRel)
+{
+    const BoneDef* d = codexDef(bone);
+    if (!d || !s_codexAttached[bone] || d->parent < 0 || codexIsHinge(bone)) return;
+    const b3Quat R = figFrameFor(d->axis);
+    b3SphericalJoint_SetTargetRotation(s_codexJoint[bone],
+        b3MulQuat(qConj(R), b3MulQuat(qRel, R)));
+}
+
+static void codexPoint(int bone, float dx, float dy, float dz)
+{
+    const float l = __builtin_sqrtf(dx*dx + dy*dy + dz*dz);
+    if (l < 1e-5f) return;
+    const b3Vec3 down = { 0.0f, -1.0f, 0.0f };
+    const b3Vec3 dir = { dx/l, dy/l, dz/l };
+    codexAim(bone, qFromTo(down, dir));
+}
+
+static void codexBend(int bone, float angle)
+{
+    if (bone <= 0 || bone >= CODEX_BONE_COUNT || !s_codexAttached[bone] ||
+        !codexIsHinge(bone)) return;
+    b3RevoluteJoint_SetTargetAngle(s_codexJoint[bone], angle);
+}
+
+static void codexNeutralLegs(void)
+{
+    codexPoint(BONE_L_THIGH, 0.0f, -1.0f, 0.0f);
+    codexPoint(BONE_R_THIGH, 0.0f, -1.0f, 0.0f);
+    codexBend(BONE_L_SHIN, 0.0f); codexBend(BONE_R_SHIN, 0.0f);
+    codexBend(CODEX_L_TOE, 0.0f); codexBend(CODEX_R_TOE, 0.0f);
+}
+
+// Contact advances every phase. Time shapes a reachable swing pose and acts
+// only as an abort guard; it never manufactures a footfall.
+static void codexGait(float dt)
+{
+    const b3Pos lf = b3Body_GetPosition(s_codexBone[BONE_L_FOOT]);
+    const b3Pos rf = b3Body_GetPosition(s_codexBone[BONE_R_FOOT]);
+    const float midX = 0.5f * ((float)lf.x + (float)rf.x);
+    const float midZ = 0.5f * ((float)lf.z + (float)rf.z);
+    const b3Pos hip = b3Body_GetPosition(s_codexBone[BONE_PELVIS]);
+    const float dx = s_codexPlayer.x - (float)hip.x;
+    const float dz = s_codexPlayer.z - (float)hip.z;
+    const float dist = __builtin_sqrtf(dx*dx + dz*dz);
+    const float dl = dist > 1e-5f ? 1.0f / dist : 0.0f;
+    const float dirX = dx * dl, dirZ = dz * dl;
+    const float W = codexMass() * 9.81f;
+    s_codexTimer += dt;
+
+    if (s_codexHold || dist < 0.92f)
+    {
+        s_codexState = 0; s_codexTimer = 0.0f;
+        s_codexBalanceX = midX; s_codexBalanceZ = midZ;
+        codexNeutralLegs();
+        return;
+    }
+
+    if (s_codexState == 0)
+    {
+        s_codexBalanceX = midX; s_codexBalanceZ = midZ;
+        codexNeutralLegs();
+        // Do not start the next weight shift merely because a timer elapsed.
+        // Both feet and the capture point must first have settled over the
+        // double-support polygon left by the previous landing.
+        const float settleX = s_codexAct[5] + s_codexAct[8] / 3.1f - midX;
+        const float settleZ = s_codexAct[7] + s_codexAct[10] / 3.1f - midZ;
+        const float settleError = __builtin_sqrtf(settleX*settleX + settleZ*settleZ);
+        if (settleError > 0.035f || s_codexAct[3] < 0.10f * W ||
+            s_codexAct[4] < 0.10f * W)
+        {
+            s_codexTimer = 0.0f;
+            return;
+        }
+        if (s_codexTimer < 0.65f) return;
+        const b3Pos firstStance = s_codexSwing ? lf : rf;
+        s_codexStanceX = (float)firstStance.x;
+        s_codexStanceZ = (float)firstStance.z;
+        s_codexState = 1; s_codexTimer = 0.0f;
+    }
+
+    const int swingFoot = s_codexSwing ? BONE_R_FOOT : BONE_L_FOOT;
+    const int swingThigh = s_codexSwing ? BONE_R_THIGH : BONE_L_THIGH;
+    const int swingShin = s_codexSwing ? BONE_R_SHIN : BONE_L_SHIN;
+    const int swingToe = s_codexSwing ? CODEX_R_TOE : CODEX_L_TOE;
+    const float swingLoad = s_codexAct[s_codexSwing ? 4 : 3];
+    const float stanceLoad = s_codexAct[s_codexSwing ? 3 : 4];
+
+    if (s_codexState == 1)
+    {
+        codexNeutralLegs();
+        const float outside = s_codexSwing ? -0.004f : 0.004f;
+        s_codexBalanceX = s_codexStanceX + outside;
+        s_codexBalanceZ = s_codexStanceZ;
+        if (swingLoad < 0.23f * W && stanceLoad > 0.60f * W)
+        { s_codexState = 2; s_codexTimer = 0.0f; s_codexSwingAir = 0; }
+        return;
+    }
+
+    if (s_codexState == 2)
+    {
+        const float outside = s_codexSwing ? -0.004f : 0.004f;
+        s_codexBalanceX = s_codexStanceX + outside;
+        s_codexBalanceZ = s_codexStanceZ + 0.015f * dirZ;
+        // If unloading has not produced an airborne foot before the capture
+        // point escapes the stance sole, put the foot back and recover. A
+        // failed human step becomes double support, not a committed fall.
+        const float swingIcpX = s_codexAct[5] + s_codexAct[8] / 3.1f;
+        const float swingIcpZ = s_codexAct[7] + s_codexAct[10] / 3.1f;
+        const float swingErrX = swingIcpX - s_codexBalanceX;
+        const float swingErrZ = swingIcpZ - s_codexBalanceZ;
+        const float swingError = __builtin_sqrtf(swingErrX*swingErrX + swingErrZ*swingErrZ);
+        if (((!s_codexSwingAir && s_codexTimer > 0.25f) || s_codexTimer > 0.90f) &&
+            swingError > 0.035f)
+        {
+            s_codexState = 0;
+            s_codexTimer = 0.0f;
+            s_codexBalanceX = midX;
+            s_codexBalanceZ = midZ;
+            codexNeutralLegs();
+            return;
+        }
+        if (swingLoad < 0.04f * W) s_codexSwingAir = 1;
+        float knee = s_codexTimer < 0.16f ? 0.65f
+                     : 0.65f - (s_codexTimer - 0.16f) * 4.5f;
+        if (knee < 0.02f) knee = 0.02f;
+        float reach = s_codexTimer < 0.15f ? 0.55f
+                      : 0.55f - (s_codexTimer - 0.15f) * 2.50f;
+        if (reach < -0.10f) reach = -0.10f;
+        if (s_codexSwingAir) reach = 0.12f;
+        codexPoint(swingThigh, dirX * reach, -1.0f, dirZ * reach);
+        codexBend(swingShin, knee);
+        codexBend(swingToe, 0.28f);
+        const b3Pos swingPosition = b3Body_GetPosition(s_codexBone[swingFoot]);
+        const float stride = ((float)swingPosition.x - s_codexStanceX) * dirX +
+                             ((float)swingPosition.z - s_codexStanceZ) * dirZ;
+        if (s_codexSwingAir && s_codexTimer > 0.35f && stride > 0.04f &&
+            swingLoad > 0.10f * W)
+        { s_codexState = 3; s_codexTimer = 0.0f; }
+        return;
+    }
+
+    if (s_codexState == 3)
+    {
+        float transfer = s_codexTimer / 1.50f;
+        if (transfer > 1.0f) transfer = 1.0f;
+        s_codexBalanceX = s_codexStanceX + (midX - s_codexStanceX) * transfer;
+        s_codexBalanceZ = s_codexStanceZ + (midZ - s_codexStanceZ) * transfer;
+        codexBend(swingShin, 0.08f); codexBend(swingToe, 0.08f);
+        if (transfer >= 1.0f && swingLoad > 0.18f * W)
+        { s_codexState = 4; s_codexTimer = 0.0f; }
+        return;
+    }
+
+    s_codexBalanceX = midX; s_codexBalanceZ = midZ;
+    codexNeutralLegs();
+    if (s_codexTimer > 0.18f && s_codexAct[3] > 0.12f * W && s_codexAct[4] > 0.12f * W)
+    {
+        s_codexSwing = !s_codexSwing;
+        s_codexState = 0; s_codexTimer = 0.0f;
+    }
+}
+
 // The root has no actuator. Balance is produced at the two ankle joints as an
 // equal-and-opposite torque pair between shin and foot. The pair sums to zero
 // over the robot; only a loaded sole can turn it into an external floor
@@ -120,8 +304,8 @@ static void codexBalance(void)
     if (loaded < 1.0f) return;
     const b3Pos lf = b3Body_GetPosition(s_codexBone[BONE_L_FOOT]);
     const b3Pos rf = b3Body_GetPosition(s_codexBone[BONE_R_FOOT]);
-    const float sx = 0.5f * ((float)lf.x + (float)rf.x);
-    const float sz = 0.5f * ((float)lf.z + (float)rf.z);
+    const float sx = s_codexBalanceX;
+    const float sz = s_codexBalanceZ;
     const float omega = 3.1f;
     const float icpX = s_codexAct[5] + s_codexAct[8] / omega;
     const float icpZ = s_codexAct[7] + s_codexAct[10] / omega;
@@ -155,6 +339,31 @@ static void codexBalance(void)
         b3Body_ApplyTorque(s_codexBone[foot], nt, true);
         work += mag;
     }
+
+    // A human does not balance on one foot with the ankle alone. During
+    // unloading and swing, use the loaded hip to move the trunk over the
+    // stance leg. This is still a purely internal actuator: every torque on
+    // the pelvis has an equal and opposite torque on the stance thigh.
+    if (s_codexState == 1 || s_codexState == 2)
+    {
+        const int stanceThigh = s_codexSwing ? BONE_L_THIGH : BONE_R_THIGH;
+        const float stanceLoad = s_codexAct[s_codexSwing ? 3 : 4];
+        if (stanceLoad > 0.20f * codexMass() * 9.81f)
+        {
+            const b3Vec3 pelvisOmega = b3Body_GetAngularVelocity(s_codexBone[BONE_PELVIS]);
+            const float lateralError = sx - s_codexAct[5];
+            float hipZ = -180.0f * lateralError + 18.0f * s_codexAct[8]
+                         - 7.0f * pelvisOmega.z;
+            if (hipZ < -48.0f) hipZ = -48.0f;
+            if (hipZ > 48.0f) hipZ = 48.0f;
+            const b3Vec3 pelvisTorque = { 0.0f, 0.0f, hipZ };
+            const b3Vec3 thighTorque = { 0.0f, 0.0f, -hipZ };
+            b3Body_ApplyTorque(s_codexBone[BONE_PELVIS], pelvisTorque, true);
+            b3Body_ApplyTorque(s_codexBone[stanceThigh], thighTorque, true);
+            work += __builtin_fabsf(hipZ);
+        }
+    }
+
     s_codexAct[2] = work;
     s_codexAct[11] = __builtin_sqrtf((icpX-sx)*(icpX-sx) + (icpZ-sz)*(icpZ-sz));
 }
@@ -182,6 +391,13 @@ int w_codex_create(float x, float z, float stature, int material)
     s_codexStature = H;
     s_codexDt = 1.0f / 72.0f;
     for (int i = 0; i < 13; i++) s_codexAct[i] = 0.0f;
+    s_codexHold = 0;
+    s_codexState = 0;
+    s_codexSwing = 1;
+    s_codexSwingAir = 0;
+    s_codexTimer = 0.0f;
+    s_codexBalanceX = x; s_codexBalanceZ = z;
+    s_codexStanceX = x; s_codexStanceZ = z;
 
     for (int b = 0; b < CODEX_BONE_COUNT; b++)
     {
@@ -286,6 +502,7 @@ void w_codex_update(float px, float py, float pz, float dt)
     s_codexDt = dt > 1e-5f ? dt : 1.0f / 72.0f;
     s_codexPlayer.x = px; s_codexPlayer.y = py; s_codexPlayer.z = pz;
     codexSense();
+    codexGait(s_codexDt);
     codexBalance();
 }
 
@@ -317,9 +534,12 @@ float* w_codex_state(void)
         total += s_vxG[g].n[0] * s_vxG[g].n[1] * s_vxG[g].n[2];
     }
     const b3Pos p = b3Body_GetPosition(s_codexBone[BONE_PELVIS]);
-    out[0] = 1.0f; out[1] = 0.0f; out[2] = (float)on;
+    out[0] = 1.0f; out[1] = (float)s_codexState; out[2] = (float)on;
     out[3] = (float)alive; out[4] = (float)total;
     out[6] = (float)p.x; out[7] = (float)p.y; out[8] = (float)p.z;
+    const float dx = s_codexPlayer.x - (float)p.x;
+    const float dz = s_codexPlayer.z - (float)p.z;
+    out[10] = __builtin_sqrtf(dx*dx + dz*dz);
     out[15] = s_codexStature;
     return out;
 }
@@ -370,11 +590,23 @@ WASM_EXPORT("w_codex_rig")
 float* w_codex_rig(void)
 {
     static float out[2];
-    float mass = 0.0f;
-    if (s_codexExists)
-        for (int b = 0; b < CODEX_BONE_COUNT; b++)
-            if (s_codexAttached[b]) mass += b3Body_GetMass(s_codexBone[b]);
-    out[0] = mass;
+    out[0] = codexMass();
     out[1] = s_worldFloorY + BONES[BONE_PELVIS].oy * s_codexStature;
+    return out;
+}
+
+WASM_EXPORT("w_codex_hold")
+void w_codex_hold(int on) { s_codexHold = on ? 1 : 0; }
+
+WASM_EXPORT("w_codex_joints")
+float* w_codex_joints(void)
+{
+    static float out[4];
+    for (int i = 0; i < 4; i++) out[i] = 0.0f;
+    if (!s_codexExists) return out;
+    out[0] = b3RevoluteJoint_GetAngle(s_codexJoint[BONE_L_SHIN]);
+    out[1] = b3RevoluteJoint_GetAngle(s_codexJoint[BONE_R_SHIN]);
+    out[2] = b3RevoluteJoint_GetAngle(s_codexJoint[CODEX_L_TOE]);
+    out[3] = b3RevoluteJoint_GetAngle(s_codexJoint[CODEX_R_TOE]);
     return out;
 }
