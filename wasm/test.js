@@ -731,7 +731,8 @@ const CBONE = [...BONE, "L_TOE", "R_TOE"];
   // =========================================================================
   const codexApi = ["w_codex_create", "w_codex_destroy", "w_codex_update",
     "w_codex_post", "w_codex_state", "w_codex_pose", "w_codex_bones",
-    "w_codex_bone_count", "w_codex_bone_grid"];
+    "w_codex_bone_count", "w_codex_bone_grid", "w_codex_actuation",
+    "w_codex_rig"];
   const hasCodexApi = codexApi.every((name) => typeof E[name] === "function");
   check("the Codex controller has its own API", hasCodexApi,
     codexApi.filter((name) => typeof E[name] !== "function").join(", "));
@@ -745,6 +746,36 @@ const CBONE = [...BONE, "L_TOE", "R_TOE"];
       `grey ${greyExists}, Codex ${codexExists}`);
     check("Codex has articulated toes", E.w_codex_bone_count() === CBONE.length,
       `${E.w_codex_bone_count()} bodies`);
+
+    const codexState = () => { const o = E.w_codex_state() >>> 2, f = mem();
+      return { exists: f[o], state: f[o+1] | 0, bones: f[o+2], alive: f[o+3],
+        total: f[o+4], hip: [f[o+6], f[o+7], f[o+8]], stature: f[o+15] }; };
+    const codexPose = () => { const o = E.w_codex_pose() >>> 2, f = mem();
+      return CBONE.map((n, i) => ({ n, p: [f[o+i*8], f[o+i*8+1], f[o+i*8+2]],
+        q: [f[o+i*8+3], f[o+i*8+4], f[o+i*8+5], f[o+i*8+6]], on: f[o+i*8+7] })); };
+    const codexActuation = () => { const o = E.w_codex_actuation() >>> 2, f = mem();
+      return { rootForce: f[o], rootTorque: f[o+1], work: f[o+2],
+        nLeft: f[o+3], nRight: f[o+4], com: [f[o+5], f[o+6], f[o+7]],
+        vel: [f[o+8], f[o+9], f[o+10]], margin: f[o+11], airborne: f[o+12] }; };
+    const codexRig = () => { const o = E.w_codex_rig() >>> 2, f = mem();
+      return { mass: f[o], hipY: f[o+1] }; };
+    const codexTick = () => {
+      E.w_codex_update(0, 1.62, 1.6, STEP);
+      E.w_step(STEP); E.w_vox_post(); E.w_codex_post();
+    };
+
+    E.w_reset(0, 0);
+    E.w_codex_create(0, 0, 1.75, 2);
+    for (let i = 0; i < 72 * 8; i++) codexTick();
+    const cst = codexState(), cpose = codexPose(), cact = codexActuation(), crig = codexRig();
+    check("Codex has no root actuator", cact.rootForce === 0 && cact.rootTorque === 0,
+      `root force ${cact.rootForce}, torque ${cact.rootTorque}`);
+    check("Codex weight comes through its feet",
+      Math.abs(cact.nLeft + cact.nRight - crig.mass * 9.81) < crig.mass * 2.5,
+      `${(cact.nLeft + cact.nRight).toFixed(1)} N for ${(crig.mass * 9.81).toFixed(1)} N`);
+    check("Codex stands without a root lift",
+      cst.hip[1] > crig.hipY - 0.12 && cpose[B.HEAD].p[1] > 1.40,
+      `hip ${cst.hip[1].toFixed(3)}/${crig.hipY.toFixed(3)}, head ${cpose[B.HEAD].p[1].toFixed(3)}`);
   }
 
   // =========================================================================

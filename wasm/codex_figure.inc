@@ -7,9 +7,9 @@
 #define CODEX_R_TOE (BONE_COUNT + 1)
 
 static const BoneDef CODEX_TOES[2] = {
-    { BONE_L_FOOT, -0.045f, 0.022f, 0.055f,
+    { BONE_L_FOOT, -0.045f, 0.036f, 0.055f,
       0.030f, 0.014f, 0.036f, 2, AX_FWD, -0.55f, 0.65f, 16.0f, 1.4f, 360.0f },
-    { BONE_R_FOOT,  0.045f, 0.022f, 0.055f,
+    { BONE_R_FOOT,  0.045f, 0.036f, 0.055f,
       0.030f, 0.014f, 0.036f, 2, AX_FWD, -0.55f, 0.65f, 16.0f, 1.4f, 360.0f },
 };
 
@@ -19,7 +19,9 @@ static b3JointId s_codexJoint[CODEX_BONE_COUNT];
 static int s_codexAttached[CODEX_BONE_COUNT];
 static int s_codexGrid[CODEX_BONE_COUNT];
 static float s_codexStature = 1.75f;
+static float s_codexDt = 1.0f / 72.0f;
 static b3Vec3 s_codexPlayer;
+static float s_codexAct[13];
 
 static const BoneDef* codexDef(int b)
 {
@@ -43,6 +45,118 @@ static void codexWorldReset(void)
         s_codexAttached[b] = 0;
         s_codexGrid[b] = -1;
     }
+    for (int i = 0; i < 13; i++) s_codexAct[i] = 0.0f;
+}
+
+static float codexPartLoad(int bone)
+{
+    if (!s_codexExists || bone < 0 || bone >= CODEX_BONE_COUNT ||
+        !s_codexAttached[bone]) return 0.0f;
+    const b3BodyId body = s_codexBone[bone];
+    int cap = b3Body_GetContactCapacity(body);
+    if (cap <= 0) return 0.0f;
+    if (cap > 24) cap = 24;
+    b3ContactData cd[24];
+    const int n = b3Body_GetContactData(body, cd, cap);
+    float impulse = 0.0f;
+    for (int i = 0; i < n; i++)
+    {
+        const int weAreA = B3_ID_EQUALS(b3Shape_GetBody(cd[i].shapeIdA), body);
+        for (int mi = 0; mi < cd[i].manifoldCount; mi++)
+        {
+            const b3Manifold* mf = &cd[i].manifolds[mi];
+            const float up = weAreA ? -mf->normal.y : mf->normal.y;
+            if (up < 0.5f) continue;
+            for (int k = 0; k < mf->pointCount; k++)
+            {
+                const b3ManifoldPoint* mp = &mf->points[k];
+                if (mp->separation <= 0.005f && mp->totalNormalImpulse > 0.0f)
+                    impulse += mp->totalNormalImpulse * up;
+            }
+        }
+    }
+    return 0.5f * impulse / s_codexDt;
+}
+
+static void codexSense(void)
+{
+    if (!s_codexExists) return;
+    float M = 0.0f, cx = 0.0f, cy = 0.0f, cz = 0.0f;
+    float vx = 0.0f, vy = 0.0f, vz = 0.0f;
+    for (int b = 0; b < CODEX_BONE_COUNT; b++)
+    {
+        if (!s_codexAttached[b]) continue;
+        const float m = b3Body_GetMass(s_codexBone[b]);
+        const b3Pos p = b3Body_GetWorldCenter(s_codexBone[b]);
+        const b3Vec3 v = b3Body_GetLinearVelocity(s_codexBone[b]);
+        M += m;
+        cx += m * (float)p.x; cy += m * (float)p.y; cz += m * (float)p.z;
+        vx += m * v.x; vy += m * v.y; vz += m * v.z;
+    }
+    if (M > 1e-6f)
+    {
+        cx /= M; cy /= M; cz /= M;
+        vx /= M; vy /= M; vz /= M;
+    }
+    const float nl = codexPartLoad(BONE_L_FOOT) + codexPartLoad(CODEX_L_TOE);
+    const float nr = codexPartLoad(BONE_R_FOOT) + codexPartLoad(CODEX_R_TOE);
+    s_codexAct[0] = 0.0f; // no root actuator exists
+    s_codexAct[1] = 0.0f;
+    s_codexAct[3] = nl; s_codexAct[4] = nr;
+    s_codexAct[5] = cx; s_codexAct[6] = cy; s_codexAct[7] = cz;
+    s_codexAct[8] = vx; s_codexAct[9] = vy; s_codexAct[10] = vz;
+    s_codexAct[11] = 0.0f;
+    s_codexAct[12] = (nl + nr) < M * 9.81f * 0.06f ? 1.0f : 0.0f;
+}
+
+// The root has no actuator. Balance is produced at the two ankle joints as an
+// equal-and-opposite torque pair between shin and foot. The pair sums to zero
+// over the robot; only a loaded sole can turn it into an external floor
+// reaction, so it cannot lift or right the body in the air.
+static void codexBalance(void)
+{
+    if (!s_codexExists) return;
+    const float loaded = s_codexAct[3] + s_codexAct[4];
+    if (loaded < 1.0f) return;
+    const b3Pos lf = b3Body_GetPosition(s_codexBone[BONE_L_FOOT]);
+    const b3Pos rf = b3Body_GetPosition(s_codexBone[BONE_R_FOOT]);
+    const float sx = 0.5f * ((float)lf.x + (float)rf.x);
+    const float sz = 0.5f * ((float)lf.z + (float)rf.z);
+    const float omega = 3.1f;
+    const float icpX = s_codexAct[5] + s_codexAct[8] / omega;
+    const float icpZ = s_codexAct[7] + s_codexAct[10] / omega;
+    float wantX = icpX + 1.8f * (icpX - sx);
+    float wantZ = icpZ + 1.8f * (icpZ - sz);
+    const float halfX = 0.042f * s_codexStature / 1.75f;
+    const float heel = 0.070f * s_codexStature / 1.75f;
+    const float toe = 0.105f * s_codexStature / 1.75f;
+    float work = 0.0f;
+    for (int side = 0; side < 2; side++)
+    {
+        const int foot = side == 0 ? BONE_L_FOOT : BONE_R_FOOT;
+        const int shin = side == 0 ? BONE_L_SHIN : BONE_R_SHIN;
+        const float N = s_codexAct[3 + side];
+        if (N < 1.0f) continue;
+        const b3Pos ap = b3Body_GetPosition(s_codexBone[foot]);
+        float lx = wantX - (float)ap.x;
+        float lz = wantZ - (float)ap.z;
+        if (lx < -halfX) lx = -halfX; if (lx > halfX) lx = halfX;
+        if (lz < -heel) lz = -heel; if (lz > toe) lz = toe;
+        b3Vec3 t = { -lz * N, 0.0f, lx * N };
+        float mag = __builtin_sqrtf(t.x*t.x + t.z*t.z);
+        const float cap = 75.0f;
+        if (mag > cap)
+        {
+            const float k = cap / mag;
+            t.x *= k; t.z *= k; mag = cap;
+        }
+        b3Vec3 nt = { -t.x, 0.0f, -t.z };
+        b3Body_ApplyTorque(s_codexBone[shin], t, true);
+        b3Body_ApplyTorque(s_codexBone[foot], nt, true);
+        work += mag;
+    }
+    s_codexAct[2] = work;
+    s_codexAct[11] = __builtin_sqrtf((icpX-sx)*(icpX-sx) + (icpZ-sz)*(icpZ-sz));
 }
 
 WASM_EXPORT("w_codex_destroy")
@@ -66,6 +180,8 @@ int w_codex_create(float x, float z, float stature, int material)
     if (s_codexExists) w_codex_destroy();
     const float H = stature > 1.0f && stature < 2.4f ? stature : 1.75f;
     s_codexStature = H;
+    s_codexDt = 1.0f / 72.0f;
+    for (int i = 0; i < 13; i++) s_codexAct[i] = 0.0f;
 
     for (int b = 0; b < CODEX_BONE_COUNT; b++)
     {
@@ -167,8 +283,10 @@ int w_codex_create(float x, float z, float stature, int material)
 WASM_EXPORT("w_codex_update")
 void w_codex_update(float px, float py, float pz, float dt)
 {
-    (void)dt;
+    s_codexDt = dt > 1e-5f ? dt : 1.0f / 72.0f;
     s_codexPlayer.x = px; s_codexPlayer.y = py; s_codexPlayer.z = pz;
+    codexSense();
+    codexBalance();
 }
 
 WASM_EXPORT("w_codex_post")
@@ -242,5 +360,21 @@ float* w_codex_bones(void)
         o[2] = (float)(s_vxG[g].n[0] * s_vxG[g].n[1] * s_vxG[g].n[2]);
         o[3] = vxDamage(&s_vxG[g]);
     }
+    return out;
+}
+
+WASM_EXPORT("w_codex_actuation")
+float* w_codex_actuation(void) { return s_codexAct; }
+
+WASM_EXPORT("w_codex_rig")
+float* w_codex_rig(void)
+{
+    static float out[2];
+    float mass = 0.0f;
+    if (s_codexExists)
+        for (int b = 0; b < CODEX_BONE_COUNT; b++)
+            if (s_codexAttached[b]) mass += b3Body_GetMass(s_codexBone[b]);
+    out[0] = mass;
+    out[1] = s_worldFloorY + BONES[BONE_PELVIS].oy * s_codexStature;
     return out;
 }
