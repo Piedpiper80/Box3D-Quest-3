@@ -29,6 +29,7 @@ typedef struct
 static b3WorldId s_world;
 static int s_worldCreated = 0;
 static b3BodyId s_groundBody;      // the fists' motor joints anchor to it
+static b3ShapeId s_groundShape;
 static float s_groundY = 0.0f;
 static Cube s_cubes[MAX_CUBES];
 static int s_count = 0;
@@ -39,6 +40,7 @@ static float s_state[MAX_CUBES * 9];
 // The world is being torn down; forget every voxel grid and bone in it.
 static void vxWorldReset(void);
 static void figWorldReset(void);
+static void codexWorldReset(void);
 static void handWorldReset(void);
 
 // tiny deterministic PRNG for spawn jitter (no libc rand needed)
@@ -127,12 +129,13 @@ void w_reset(int enableSleep, float groundY)
     // Wide enough that a severed limb sliding away cannot reach the edge and
     // fall forever.
     b3BoxHull hull = b3MakeBoxHull(20.0f, 0.1f, 20.0f);
-    b3CreateHullShape(ground, &sd, &hull.base);
+    s_groundShape = b3CreateHullShape(ground, &sd, &hull.base);
 
     s_groundBody = ground;
     s_groundY = groundY;
     vxWorldReset();
     figWorldReset();
+    codexWorldReset();
     // The fists live in the world too, and their body ids died with it. Left
     // set, the next w_hand_apply drives two handles into a destroyed world.
     handWorldReset();
@@ -448,7 +451,7 @@ static float handStrikeMass(b3BodyId b)
 // damage IS the vox system — each bone is a small grid, so hits, hp, debris,
 // the dent read and the renderer all come free, and a bone that runs out of
 // cells is a bone that comes off.
-#define VOX_GRIDS 20
+#define VOX_GRIDS 48
 #define VOX_MAX 4096
 #define VOX_ROWS_MAX 512
 #define VOX_RUNS_PER_ROW 16
@@ -3632,3 +3635,20 @@ float* w_fig_joints(void)
     }
     return out;
 }
+
+// Diagnostic control used to prove that articulated locomotion is purchasing
+// motion from the floor rather than injecting it at the root. Every reset
+// restores the production coefficient above.
+WASM_EXPORT("w_floor_friction")
+void w_floor_friction(float friction)
+{
+    if (!s_worldCreated || !b3Shape_IsValid(s_groundShape)) return;
+    if (friction < 0.0f) friction = 0.0f;
+    if (friction > 2.0f) friction = 2.0f;
+    b3Shape_SetFriction(s_groundShape, friction);
+}
+
+// The red comparison figure shares this translation unit so it can inhabit
+// the same Box3D world, while keeping every existing w_fig_* controller body
+// above intact.
+#include "codex_figure.inc"

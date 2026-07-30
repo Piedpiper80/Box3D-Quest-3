@@ -265,11 +265,22 @@ async function runPage(file, frames, poseAt) {
       // centroid is where a player would say it is standing. Nothing else in
       // this harness tells him — and the engine is never told where he is
       // looking either, so this is the whole of the mutual information.
-      const mesh = shown.filter((d) => d.indices > 100);
+      // Keep the legacy fight pilot aimed at Claude's grey robot. The red
+      // comparison robot is deliberately independent and otherwise its meshes
+      // would move the centroid between two opponents.
+      // Fight grey first, then turn to the still-live red fighter once grey is
+      // down. This proves the arena does not erase red at the old round edge.
+      let mesh = shown.filter((d) => {
+        if (d.indices <= 100) return false;
+        const red = d.color && d.color[0] > d.color[1] * 1.5 &&
+                    d.color[0] > d.color[2] * 1.5;
+        return curFig === "DOWN" ? red : !red;
+      });
+      if (curFig === "DOWN") mesh = mesh.slice(0, 3); // pelvis, abdomen, chest
       if (mesh.length) {
-        let sx = 0, sz = 0;
-        for (const d of mesh) { sx += d.pos[0]; sz += d.pos[2]; }
-        seen = [sx / mesh.length, sz / mesh.length];
+        let sx = 0, sy = 0, sz = 0;
+        for (const d of mesh) { sx += d.pos[0]; sy += d.pos[1]; sz += d.pos[2]; }
+        seen = [sx / mesh.length, sz / mesh.length, sy / mesh.length];
       }
     }
     const rpt = el("report").textContent;
@@ -416,8 +427,11 @@ function pilot(f, match, fig, seen) {
   const c = g % CYCLE, phase = Math.floor(g / CYCLE);
   // chest, chest, thigh, shin, thigh, shin — the legs are the way down, so the
   // script goes for them, exactly as a player who has read the page would.
-  const heights = [1.28, 1.28, 0.62, 0.34, 0.62, 0.34];
-  const aimY = heights[phase % heights.length];
+  const heights = fig === "DOWN" ? [0.18, 0.28, 0.40, 0.55]
+                                  : [1.28, 1.28, 0.62, 0.34, 0.62, 0.34];
+  const aimY = fig === "DOWN" && seen
+    ? Math.max(0.10, Math.min(1.35, seen[2]))
+    : heights[phase % heights.length];
   const hand = phase % 2;                      // 0 = left leads, 1 = right
   const drive = c < 18 ? 0 : (c - 18) / 12;
   // The retract has to come all the way back to the chest. The first version
@@ -459,6 +473,10 @@ function pilot(f, match, fig, seen) {
   const boneDraws = last.filter((d) => d.indices > 100);
   check("the figure is drawn as deformable mesh, not boxes", boneDraws.length >= 8,
     `${boneDraws.length} mesh draws in the last frame`);
+  const redBoneDraws = boneDraws.filter((d) => d.color &&
+    d.color[0] > d.color[1] * 1.5 && d.color[0] > d.color[2] * 1.5);
+  check("a second red Codex robot is drawn as deformable mesh", redBoneDraws.length >= 8,
+    `${redBoneDraws.length} red mesh draws in the last frame`);
 
   // Both gauntlets, every frame, near the controllers.
   const gaunt = last.filter((d) => d.indices <= 100 && d.pos[1] > 0.2 && d.pos[1] < 2.0);
@@ -487,11 +505,16 @@ function pilot(f, match, fig, seen) {
   const broke = +(r.report.match(/broke (\d+) bones/) || [0, 0])[1];
   check("bones come off it", broke >= 1, `${broke} broken`);
 
-  const legs = +(r.report.match(/legs (\d+)%/) || [0, 100])[1];
-  check("taking the legs is the way down", legs < 100, `legs ${legs}%`);
+  // With a second physical fighter in the world, grey can now be toppled by a
+  // collision before the scripted pilot reaches its legs. The isolated engine
+  // suite still proves the leg-loss rule; this integration run proves the new
+  // red body is not frozen after its own knock-down.
+  const riseAttempts = +(r.report.match(/rise attempts (\d+)/) || [0, 0])[1];
+  check("living red keeps trying to rise after a physical knock-down",
+    riseAttempts > 0, `${riseAttempts} attempts`);
 
   check("it goes down, and there is nothing to explode",
-    r.matchSeq.includes("DOWN") || r.figSeq.includes("FALLING") || r.figSeq.includes("DOWN"),
+    r.matchSeq.includes("DOWN"),
     r.matchSeq.join(" -> ") + " / " + r.figSeq.join(" -> "));
 
   check("no fault was reported", !/FAULT/.test(r.report),

@@ -13,6 +13,7 @@ const BONE = ["PELVIS","ABDOMEN","CHEST","NECK","HEAD",
   "L_THIGH","L_SHIN","L_FOOT", "R_THIGH","R_SHIN","R_FOOT"];
 const B = {}; BONE.forEach((n, i) => { B[n] = i; });
 const FIG = ["WAIT","STEP","WINDUP","STRIKE","RECOVER","FALLING","DOWN"];
+const CBONE = [...BONE, "L_TOE", "R_TOE"];
 
 (async () => {
   const bytes = readFileSync(__dirname + "/box3d.wasm");
@@ -724,6 +725,263 @@ const FIG = ["WAIT","STEP","WINDUP","STRIKE","RECOVER","FALLING","DOWN"];
     else if (!Number.isFinite(v)) bad++;
   for (const b of figPose()) if (!b.p.every(Number.isFinite)) bad++;
   check("no NaN anywhere in the figure", bad === 0, `${bad} non-finite`);
+
+  // =========================================================================
+  console.log("\n-- the Codex figure: independent physics --");
+  // =========================================================================
+  const codexApi = ["w_codex_create", "w_codex_destroy", "w_codex_update",
+    "w_codex_post", "w_codex_state", "w_codex_pose", "w_codex_bones",
+    "w_codex_bone_count", "w_codex_bone_grid", "w_codex_actuation",
+    "w_codex_rig", "w_codex_hold", "w_codex_joints", "w_codex_impulse",
+    "w_floor_friction"];
+  const hasCodexApi = codexApi.every((name) => typeof E[name] === "function");
+  check("the Codex controller has its own API", hasCodexApi,
+    codexApi.filter((name) => typeof E[name] !== "function").join(", "));
+  if (hasCodexApi) {
+    E.w_reset(0, 0);
+    E.w_fig_create(-0.45, 0, 1.75, 2);
+    E.w_codex_create(0.45, 0, 1.75, 2);
+    const greyExists = mem()[E.w_fig_state() >>> 2] === 1;
+    const codexExists = mem()[E.w_codex_state() >>> 2] === 1;
+    check("grey and red coexist", greyExists && codexExists,
+      `grey ${greyExists}, Codex ${codexExists}`);
+    check("Codex has articulated toes", E.w_codex_bone_count() === CBONE.length,
+      `${E.w_codex_bone_count()} bodies`);
+
+    // Spawn them with overlapping shoulder/arm envelopes. If their collision
+    // categories see each other, the solver must separate their pelvises.
+    E.w_reset(0, 0);
+    E.w_fig_create(-0.10, 0, 1.75, 2);
+    E.w_codex_create(0.10, 0, 1.75, 2);
+    E.w_fig_hold(1); E.w_codex_hold(1);
+    const overlapStart = 0.20;
+    for (let i = 0; i < 72; i++) {
+      E.w_fig_update(0, 1.62, 1.6, STEP); E.w_fig_apply();
+      E.w_codex_update(0, 1.62, 1.6, STEP);
+      E.w_step(STEP); E.w_vox_post(); E.w_fig_post(); E.w_codex_post();
+    }
+    const gf = mem(), go = E.w_fig_state() >>> 2, co = E.w_codex_state() >>> 2;
+    const overlapEnd = Math.abs(gf[go+6] - gf[co+6]);
+    check("grey and red physically collide", overlapEnd > overlapStart + 0.03,
+      `${overlapStart.toFixed(2)} -> ${overlapEnd.toFixed(2)} m separation`);
+
+    const codexState = () => { const o = E.w_codex_state() >>> 2, f = mem();
+      return { exists: f[o], state: f[o+1] | 0, bones: f[o+2], alive: f[o+3],
+        total: f[o+4], hip: [f[o+6], f[o+7], f[o+8]], reach: f[o+13],
+        broke: f[o+14], retries: f[o+5], phase: f[o+9], armLoad: f[o+11],
+        recoveryFootLoad: f[o+12], stature: f[o+15] }; };
+    const codexPose = () => { const o = E.w_codex_pose() >>> 2, f = mem();
+      return CBONE.map((n, i) => ({ n, p: [f[o+i*8], f[o+i*8+1], f[o+i*8+2]],
+        q: [f[o+i*8+3], f[o+i*8+4], f[o+i*8+5], f[o+i*8+6]], on: f[o+i*8+7] })); };
+    const codexActuation = () => { const o = E.w_codex_actuation() >>> 2, f = mem();
+      return { rootForce: f[o], rootTorque: f[o+1], work: f[o+2],
+        nLeft: f[o+3], nRight: f[o+4], com: [f[o+5], f[o+6], f[o+7]],
+        vel: [f[o+8], f[o+9], f[o+10]], margin: f[o+11], airborne: f[o+12] }; };
+    const codexRig = () => { const o = E.w_codex_rig() >>> 2, f = mem();
+      return { mass: f[o], hipY: f[o+1] }; };
+    const codexJoints = () => { const o = E.w_codex_joints() >>> 2, f = mem();
+      return { leftKnee: f[o], rightKnee: f[o+1], leftToe: f[o+2], rightToe: f[o+3],
+        leftElbow: f[o+4], rightElbow: f[o+5] }; };
+    const codexTick = () => {
+      E.w_codex_update(0, 1.62, 1.6, STEP);
+      E.w_step(STEP); E.w_vox_post(); E.w_codex_post();
+    };
+
+    E.w_reset(0, 0);
+    E.w_codex_create(0, 0, 1.75, 2);
+    E.w_codex_hold(1);
+    for (let i = 0; i < 72 * 8; i++) codexTick();
+    const cst = codexState(), cpose = codexPose(), cact = codexActuation(), crig = codexRig();
+    check("Codex has no root actuator", cact.rootForce === 0 && cact.rootTorque === 0,
+      `root force ${cact.rootForce}, torque ${cact.rootTorque}`);
+    check("Codex weight comes through its feet",
+      Math.abs(cact.nLeft + cact.nRight - crig.mass * 9.81) < crig.mass * 2.5,
+      `${(cact.nLeft + cact.nRight).toFixed(1)} N for ${(crig.mass * 9.81).toFixed(1)} N`);
+    check("Codex stands without a root lift",
+      cst.hip[1] > crig.hipY - 0.12 && cpose[B.HEAD].p[1] > 1.40,
+      `hip ${cst.hip[1].toFixed(3)}/${crig.hipY.toFixed(3)}, head ${cpose[B.HEAD].p[1].toFixed(3)}`);
+
+    E.w_reset(0, 0);
+    E.w_codex_create(0, 0, 1.75, 2);
+    E.w_codex_hold(0);
+    const gaitStart = codexState().hip[2];
+    let sawLeftStance = false, sawRightStance = false, sawStep = false;
+    let maxKnee = 0, maxToe = 0;
+    for (let i = 0; i < 72 * 12; i++) {
+      codexTick();
+      const a = codexActuation(), s = codexState(), j = codexJoints();
+      if (process.env.CODEX_TRACE && i % 18 === 0) {
+        const p = codexPose();
+        console.log("TRACE", (i / 72).toFixed(2), "state", s.state,
+          "hip", s.hip.map(v => v.toFixed(2)).join(","),
+          "headY", p[B.HEAD].p[1].toFixed(2),
+          "feetX", p[B.L_FOOT].p[0].toFixed(2), p[B.R_FOOT].p[0].toFixed(2),
+          "feetZ", p[B.L_FOOT].p[2].toFixed(2), p[B.R_FOOT].p[2].toFixed(2),
+          "load", a.nLeft.toFixed(0), a.nRight.toFixed(0),
+          "com", a.com[0].toFixed(3), a.com[2].toFixed(3),
+          "vel", a.vel[0].toFixed(3), a.vel[2].toFixed(3),
+          "margin", a.margin.toFixed(3), "work", a.work.toFixed(1));
+      }
+      if (a.nLeft > a.nRight * 1.6) sawLeftStance = true;
+      if (a.nRight > a.nLeft * 1.6) sawRightStance = true;
+      if (s.state >= 1 && s.state <= 4) sawStep = true;
+      maxKnee = Math.max(maxKnee, Math.abs(j.leftKnee), Math.abs(j.rightKnee));
+      maxToe = Math.max(maxToe, Math.abs(j.leftToe), Math.abs(j.rightToe));
+    }
+    const gaitEnd = codexState();
+    check("Codex advances on the player through cautious stepping", gaitEnd.hip[2] > gaitStart + 0.04,
+      `${gaitStart.toFixed(3)} -> ${gaitEnd.hip[2].toFixed(3)} m`);
+    check("Codex strides without disguising a fall as travel",
+      gaitEnd.hip[1] > crig.hipY - 0.18 && codexPose()[B.HEAD].p[1] > 1.35,
+      `hip ${gaitEnd.hip[1].toFixed(3)}, head ${codexPose()[B.HEAD].p[1].toFixed(3)}`);
+    check("Codex gait transfers support between feet", sawLeftStance && sawRightStance,
+      `left ${sawLeftStance}, right ${sawRightStance}`);
+    check("Codex gait is contact-driven", sawStep, `last state ${gaitEnd.state}`);
+    check("Codex walking bends knees and toes", maxKnee > 0.12 && maxToe > 0.05,
+      `knee ${maxKnee.toFixed(3)}, toe ${maxToe.toFixed(3)} rad`);
+
+    E.w_reset(0, 0);
+    E.w_codex_create(0, 0, 1.75, 2);
+    let sawWindup = false, sawStrike = false, bestReach = 0;
+    for (let i = 0; i < 72 * 5; i++) {
+      E.w_codex_update(0, 1.50, 0.62, STEP);
+      E.w_step(STEP); E.w_vox_post(); E.w_codex_post();
+      const s = codexState();
+      sawWindup ||= s.state === 5;
+      sawStrike ||= s.state === 6;
+      bestReach = Math.max(bestReach, s.reach);
+    }
+    check("Codex attacks by articulating a physical arm", sawWindup && sawStrike,
+      `windup ${sawWindup}, strike ${sawStrike}`);
+    check("a Codex fist physically reaches the player", bestReach > 0,
+      `${bestReach.toFixed(3)} kg m/s`);
+    check("Codex stays on its feet while punching",
+      codexState().hip[1] > crig.hipY - 0.20 && codexPose()[B.HEAD].p[1] > 1.30,
+      `hip ${codexState().hip[1].toFixed(3)}, head ${codexPose()[B.HEAD].p[1].toFixed(3)}`);
+
+    // A strike is a commitment. The old controller entered it after a timer
+    // even when a shove had already taken the capture point outside the feet,
+    // so the robot supplied the final overturning impulse itself.
+    E.w_reset(0, 0);
+    E.w_codex_create(0, 0, 1.75, 2);
+    let disturbedWindup = false, cancelledWindup = false, strikeBeforeCancel = false;
+    for (let i = 0; i < 72 * 3; i++) {
+      E.w_codex_update(0, 1.50, 0.62, STEP);
+      const before = codexState();
+      if (!disturbedWindup && before.state === 5) {
+        E.w_codex_impulse(B.CHEST, 8, 0, 0);
+        disturbedWindup = true;
+      }
+      E.w_step(STEP); E.w_vox_post(); E.w_codex_post();
+      const s = codexState();
+      if (disturbedWindup && !cancelledWindup && s.state === 6)
+        strikeBeforeCancel = true;
+      if (disturbedWindup && s.state === 0)
+        cancelledWindup = true;
+    }
+    check("Codex cancels a punch when its base becomes unrecoverable",
+      disturbedWindup && cancelledWindup && !strikeBeforeCancel,
+      `disturbed ${disturbedWindup}, cancelled ${cancelledWindup}, struck first ${strikeBeforeCancel}`);
+
+    const forearm = codexPose()[B.L_FOREARM].p;
+    const bonesBeforeHit = codexState().bones;
+    for (let n = 0; n < 8; n++)
+      E.w_vox_blast(forearm[0], forearm[1], forearm[2], 500);
+    E.w_codex_post();
+    check("Codex damage breaks a physical joint and drops the limb",
+      codexState().bones < bonesBeforeHit && codexState().broke > 0,
+      `${bonesBeforeHit} -> ${codexState().bones} bones, broke ${codexState().broke}`);
+
+    E.w_reset(0, 0);
+    E.w_codex_create(0, 0, 1.75, 2);
+    E.w_codex_hold(1);
+    for (let i = 0; i < 72 * 2; i++) codexTick();
+    E.w_codex_impulse(B.CHEST, 25, 0, 0);
+    let sawFall = false, sawGetup = false, maxRetries = 0;
+    let recoveryHighHip = 0, recoveryLowHip = Infinity, sawPlantedPhase = false;
+    let recoveryStableFrames = 0, completedRecovery = false;
+    for (let i = 0; i < 72 * 20; i++) {
+      codexTick();
+      const s = codexState(), p = codexPose(), a = codexActuation();
+      sawFall ||= s.state === 8;
+      sawGetup ||= s.state === 10;
+      maxRetries = Math.max(maxRetries, s.retries);
+      if (sawGetup) {
+        recoveryHighHip = Math.max(recoveryHighHip, s.hip[1]);
+        recoveryLowHip = Math.min(recoveryLowHip, s.hip[1]);
+      }
+      if (s.state === 10 && s.phase >= 1 && s.armLoad > 0) sawPlantedPhase = true;
+      const standingAgain = sawGetup && s.state < 8 &&
+        s.hip[1] > crig.hipY - 0.14 && p[B.HEAD].p[1] > s.hip[1] + 0.24 &&
+        a.nLeft > crig.mass * 9.81 * 0.08 &&
+        a.nRight > crig.mass * 9.81 * 0.08;
+      recoveryStableFrames = standingAgain ? recoveryStableFrames + 1 : 0;
+      if (recoveryStableFrames >= 36) completedRecovery = true;
+      if (process.env.CODEX_RECOVERY_TRACE && i % 18 === 0) {
+        const j = codexJoints();
+        const cq = p[B.CHEST].q;
+        const chestUp = 1 - 2 * (cq[0] * cq[0] + cq[2] * cq[2]);
+        const chestForwardY = 2 * (cq[1] * cq[2] - cq[3] * cq[0]);
+        const pq = p[B.PELVIS].q;
+        const pelvisUp = 1 - 2 * (pq[0] * pq[0] + pq[2] * pq[2]);
+        const pelvisUpX = 2 * (pq[0] * pq[1] - pq[3] * pq[2]);
+        const pelvisUpZ = 2 * (pq[1] * pq[2] + pq[3] * pq[0]);
+        const laq = p[B.L_UPPERARM].q;
+        const leftArmDownY = -(1 - 2 * (laq[0] * laq[0] + laq[2] * laq[2]));
+        const ltq = p[B.L_THIGH].q;
+        const leftThighDownY = -(1 - 2 * (ltq[0] * ltq[0] + ltq[2] * ltq[2]));
+        console.log("RECOVERY", (i / 72).toFixed(2), "state", s.state,
+          "phase", s.phase, "retry", s.retries, "hip", s.hip.map(v => v.toFixed(2)).join(","),
+          "head", p[B.HEAD].p.map(v => v.toFixed(2)).join(","),
+          "pelvisUp", `${pelvisUpX.toFixed(2)},${pelvisUp.toFixed(2)},${pelvisUpZ.toFixed(2)}`,
+          "chestUp", chestUp.toFixed(2),
+          "chestFwdY", chestForwardY.toFixed(2),
+          "handsY", p[B.L_HAND].p[1].toFixed(2), p[B.R_HAND].p[1].toFixed(2),
+          "elbowY", p[B.L_FOREARM].p[1].toFixed(2), p[B.R_FOREARM].p[1].toFixed(2),
+          "elbowA", j.leftElbow.toFixed(2), j.rightElbow.toFixed(2),
+          "armDownY", leftArmDownY.toFixed(2),
+          "thighDownY", leftThighDownY.toFixed(2),
+          "armLoad", s.armLoad.toFixed(0),
+          "feetY", p[B.L_FOOT].p[1].toFixed(2), p[B.R_FOOT].p[1].toFixed(2),
+          "loads", a.nLeft.toFixed(0), a.nRight.toFixed(0),
+          "vel", a.vel.map(v => v.toFixed(2)).join(","));
+      }
+    }
+    check("a shove can physically knock Codex down", sawFall,
+      `falling state seen ${sawFall}`);
+    check("living Codex tries to get up through its joints", sawGetup && maxRetries > 0,
+      `get-up ${sawGetup}, attempts ${maxRetries}`);
+    check("Codex recovery waits for a planted limb before pushing", sawPlantedPhase,
+      `planted phase seen ${sawPlantedPhase}`);
+    check("an intact Codex pushes its torso measurably off a clear floor",
+      recoveryHighHip > recoveryLowHip + 0.12,
+      `${recoveryLowHip.toFixed(3)} -> ${recoveryHighHip.toFixed(3)} m`);
+    check("an intact Codex completes recovery and holds a fighting stance",
+      completedRecovery,
+      `state ${codexState().state}, phase ${codexState().phase}, attempts ${maxRetries}, stable ${recoveryStableFrames}/36`);
+    check("getting up never enables a root actuator",
+      codexActuation().rootForce === 0 && codexActuation().rootTorque === 0,
+      `root force ${codexActuation().rootForce}, torque ${codexActuation().rootTorque}`);
+
+    E.w_reset(0, 0);
+    E.w_floor_friction(0);
+    E.w_codex_create(0, 0, 1.75, 2);
+    const noFrictionStart = codexState().hip[2];
+    let noFrictionPoweredTravel = 0, noFrictionFell = false;
+    for (let i = 0; i < 72 * 12; i++) {
+      codexTick();
+      const s = codexState();
+      if (s.state >= 8) noFrictionFell = true;
+      // This check isolates walking authority. Once a zero-friction body has
+      // fallen, its later recovery contacts are a different behaviour and do
+      // not retroactively turn the gait into powered travel.
+      if (!noFrictionFell && s.hip[1] > crig.hipY - 0.18 && codexPose()[B.HEAD].p[1] > 1.35)
+        noFrictionPoweredTravel = Math.max(noFrictionPoweredTravel,
+          Math.abs(s.hip[2] - noFrictionStart));
+    }
+    check("Codex cannot power forward without floor friction", noFrictionPoweredTravel < 0.08,
+      `${noFrictionPoweredTravel.toFixed(3)} m travelled while upright at zero friction`);
+  }
 
   // =========================================================================
   console.log("\n-- the frame budget --");
