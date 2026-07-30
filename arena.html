@@ -32,7 +32,7 @@
 <body>
 <div class="wrap">
   <h1>THE FIGURE</h1>
-  <p class="sub">One opponent, standing in your room, built on a human skeleton. Hit it and the
+  <p class="sub">Two opponents, standing in your room, built on the same human skeleton. Hit them and the
      metal caves where you land. Hit the same place enough and the bone comes off, and whatever
      was below it goes too. <span id="buildTag"></span></p>
 
@@ -50,7 +50,7 @@
       <li><strong>First time:</strong> rest a controller on the floor and pull the trigger. That is
           the only calibration, and it is remembered. Its height is taken from yours — it is
           built to your size, so it stands eye to eye.</li>
-      <li><strong>Raise both fists above your head</strong> to bring one in. The two glowing
+      <li><strong>Raise both fists above your head</strong> to bring both in. The two glowing
           markers show you where. Same gesture when it is finished, for the next one.</li>
       <li><strong>There is no core, no reactor, nothing to detonate.</strong> There is a body.
           Every bone dents under your fists — the surface craters where you land and stays
@@ -87,7 +87,7 @@
   function setStatus(m, warn) { statusEl.textContent = m; statusEl.className = warn ? "status warn" : "status"; }
   function report(txt) { reportEl.textContent = txt; }
 
-  var BUILD = 5;
+  var BUILD = 7;
   var tagEl = document.getElementById("buildTag");
   if (tagEl) tagEl.textContent = "Build " + BUILD + ".";
 
@@ -292,22 +292,27 @@
   // The mesh lives in the bone's LOCAL frame and the bone's world pose goes
   // into its model matrix, so it follows a swinging limb for free — and a bone
   // that has been snapped off keeps its dents on the way to the floor.
-  var boneMeshes = [];
+  var boneMeshes = [], codexBoneMeshes = [];
 
-  function releaseBoneMeshes() {
-    for (var i = 0; i < boneMeshes.length; i++) {
-      var m = boneMeshes[i].mesh;
+  function releaseMeshSet(set) {
+    for (var i = 0; i < set.length; i++) {
+      var m = set[i].mesh;
       if (m) { gl.deleteVertexArray(m.vao); gl.deleteBuffer(m.vbo); }
     }
-    boneMeshes = [];
   }
 
-  function buildBoneMeshes() {
-    releaseBoneMeshes();
-    if (!E.w_fig_bone_grid) return;
-    var n = E.w_fig_bone_count();
+  function releaseBoneMeshes() {
+    releaseMeshSet(boneMeshes);
+    releaseMeshSet(codexBoneMeshes);
+    boneMeshes = [];
+    codexBoneMeshes = [];
+  }
+
+  function buildMeshSet(countFn, gridFn) {
+    var set = [];
+    var n = countFn();
     for (var b = 0; b < n; b++) {
-      var g = E.w_fig_bone_grid(b);
+      var g = gridFn(b);
       if (g < 0) continue;
       var f = new Float32Array(E.memory.buffer);
       var o = E.w_vox_grid_pose(g) >>> 2;
@@ -316,18 +321,26 @@
       if (!(big > 0)) continue;
       // One cube mesh at the bone's largest half extent; the model matrix
       // squashes it to the real proportions, so a 1x3x1 limb reads as a limb.
-      boneMeshes.push({ bone: b, grid: g, mesh: buildDeformMesh(big), alive: 1,
-                        sx: ex/big, sy: ey/big, sz: ez/big,
-                        q: [0,0,0,1], wx: 0, wy: 0, wz: 0 });
+      set.push({ bone: b, grid: g, mesh: buildDeformMesh(big), alive: 1,
+                 sx: ex/big, sy: ey/big, sz: ez/big,
+                 q: [0,0,0,1], wx: 0, wy: 0, wz: 0 });
       E.w_vox_hide(g, 1);     // the engine stops drawing boxes for it
     }
+    return set;
   }
 
-  function updateBoneMeshes() {
-    if (!boneMeshes.length) return;
+  function buildBoneMeshes() {
+    releaseBoneMeshes();
+    if (E.w_fig_bone_grid)
+      boneMeshes = buildMeshSet(E.w_fig_bone_count, E.w_fig_bone_grid);
+    if (E.w_codex_bone_grid)
+      codexBoneMeshes = buildMeshSet(E.w_codex_bone_count, E.w_codex_bone_grid);
+  }
+
+  function updateMeshSet(set) {
     var f = new Float32Array(E.memory.buffer);
-    for (var i = 0; i < boneMeshes.length; i++) {
-      var h = boneMeshes[i];
+    for (var i = 0; i < set.length; i++) {
+      var h = set[i];
       var o = E.w_vox_grid_pose(h.grid) >>> 2;
       h.alive = f[o+10];
       var qx = f[o+3], qy = f[o+4], qz = f[o+5], qw = f[o+6];
@@ -340,6 +353,11 @@
       m[8]=(2*(xz+wy))*h.sz;   m[9]=(2*(yz-wx))*h.sz;   m[10]=(1-2*(xx+yy))*h.sz; m[11]=0;
       m[12]=h.wx; m[13]=h.wy; m[14]=h.wz; m[15]=1;
     }
+  }
+
+  function updateBoneMeshes() {
+    updateMeshSet(boneMeshes);
+    updateMeshSet(codexBoneMeshes);
   }
 
   // Rotate a world vector into a bone's local frame (conjugate rotation).
@@ -355,8 +373,9 @@
 
   // Route one engine impact to the bone it landed on and crumple it there.
   function dentBone(grid, wx, wy, wz, force, svx, svy, svz) {
-    for (var i = 0; i < boneMeshes.length; i++) {
-      var h = boneMeshes[i];
+    var allMeshes = boneMeshes.concat(codexBoneMeshes);
+    for (var i = 0; i < allMeshes.length; i++) {
+      var h = allMeshes[i];
       if (h.grid !== grid || h.alive <= 0) continue;
       intoLocal(h.q, wx - h.wx, wy - h.wy, wz - h.wz, HL);
       intoLocal(h.q, svx || 0, svy || 0, svz || 0, HD);
@@ -371,6 +390,22 @@
 
   // --- draw -------------------------------------------------------------------
   var BONE_COL = [0.56, 0.60, 0.67];
+  var CODEX_COL = [0.78, 0.12, 0.10];
+
+  function drawMeshSet(set, colour) {
+    for (var hm = 0; hm < set.length; hm++) {
+      var HM = set[hm];
+      if (HM.alive <= 0) continue;
+      if (HM.mesh.dirty) refreshDeformMesh(HM.mesh);
+      gl.bindVertexArray(HM.mesh.vao);
+      gl.uniformMatrix4fv(uM, false, HM.mesh.m);
+      gl.uniform3fv(uC, colour);
+      gl.uniform1f(uMat, 1);
+      gl.drawElements(gl.TRIANGLES, HM.mesh.n, gl.UNSIGNED_SHORT, 0);
+      gl.bindVertexArray(vao);
+    }
+  }
+
   function draw(vp, items) {
     gl.useProgram(prog); gl.uniformMatrix4fv(uVP, false, vp); gl.bindVertexArray(vao);
     gl.uniform3fv(uEye, eyePos);
@@ -382,17 +417,8 @@
     }
     // The figure, bone by bone, in the deforming mesh — so punches CRUMPLE
     // what you are fighting instead of chipping cells off it.
-    for (var hm = 0; hm < boneMeshes.length; hm++) {
-      var HM = boneMeshes[hm];
-      if (HM.alive <= 0) continue;              // gone: nothing left of it
-      if (HM.mesh.dirty) refreshDeformMesh(HM.mesh);
-      gl.bindVertexArray(HM.mesh.vao);
-      gl.uniformMatrix4fv(uM, false, HM.mesh.m);
-      gl.uniform3fv(uC, BONE_COL);
-      gl.uniform1f(uMat, 1);
-      gl.drawElements(gl.TRIANGLES, HM.mesh.n, gl.UNSIGNED_SHORT, 0);
-      gl.bindVertexArray(vao);
-    }
+    drawMeshSet(boneMeshes, BONE_COL);
+    drawMeshSet(codexBoneMeshes, CODEX_COL);
     gl.bindVertexArray(null);
   }
 
@@ -503,6 +529,8 @@
   var totalHits = 0, totalBroke = 0, deepest = 0, tookHits = 0;
   var figState = "WAIT";
   var FIG_STATES = ["WAIT","STEP","WINDUP","STRIKE","RECOVER","FALLING","DOWN"];
+  var CODEX_STATES = ["WAIT","SHIFT","SWING","LAND","SETTLE",
+                      "WINDUP","STRIKE","RECOVER","FALLING","DEAD","GETTING UP"];
 
   // Your fists. Half a hand across, and the arm behind them counts: a punch
   // does not arrive as a loose fist, and a bare fist mass craters one cell
@@ -531,9 +559,13 @@
   function spawnFigure(px, pz, hx, hz) {
     var dx = px - hx, dz = pz - hz;
     var d = Math.hypot(dx, dz) || 1;
-    E.w_fig_create(hx + dx / d * 2.0, hz + dz / d * 2.0, stature, 2);
+    var bx = hx + dx / d * 2.0, bz = hz + dz / d * 2.0;
+    var sideX = -dz / d * 0.50, sideZ = dx / d * 0.50;
+    E.w_fig_create(bx + sideX, bz + sideZ, stature, 2);
+    E.w_codex_create(bx - sideX, bz - sideZ, stature, 2);
     E.w_fig_tempo(KNOB_TEMPO);
     E.w_fig_hold(1);
+    E.w_codex_hold(1);
     buildBoneMeshes();
     MATCH = "FIGHT";
     arrive();
@@ -627,7 +659,11 @@
       fistUp = up === 2 ? fistUp + STEP : 0;
       if (fistUp > 0.6) {
         fistUp = 0;
-        if (MATCH === "DOWN") { E.w_fig_destroy(); releaseBoneMeshes(); }
+        if (MATCH === "DOWN") {
+          E.w_fig_destroy();
+          E.w_codex_destroy();
+          releaseBoneMeshes();
+        }
         spawnFigure(head.x, head.z - 1, head.x, head.z);
       }
     }
@@ -637,7 +673,10 @@
       // starts swinging at somebody who has not squared up.
       if (st.state === 0 && ctrl[0] && ctrl[1] &&
           ctrl[0].position.y > floorY + stature * 0.55 &&
-          ctrl[1].position.y > floorY + stature * 0.55) E.w_fig_hold(0);
+          ctrl[1].position.y > floorY + stature * 0.55) {
+        E.w_fig_hold(0);
+        E.w_codex_hold(0);
+      }
     }
 
     // Physics on a fixed-timestep accumulator: 72 steps a second whatever the
@@ -652,25 +691,42 @@
       if (MATCH === "FIGHT" || MATCH === "DOWN") {
         E.w_fig_update(head.x, head.y, head.z, STEP);
         E.w_fig_apply();
+        E.w_codex_update(head.x, head.y, head.z, STEP);
       }
       E.w_hand_apply();
       E.w_step(STEP);
       E.w_vox_post();
-      if (MATCH === "FIGHT" || MATCH === "DOWN") E.w_fig_post();
+      if (MATCH === "FIGHT" || MATCH === "DOWN") {
+        E.w_fig_post();
+        E.w_codex_post();
+      }
       drainHits();
     }
 
     st = figState_read();
+    var cst = codexState_read();
     figState = FIG_STATES[st.state] || "WAIT";
     if (MATCH === "FIGHT") {
       if (st.broke > 0) { totalBroke += st.broke; crack(); haptic(HANDS[0], 0.5, 60); haptic(HANDS[1], 0.5, 60); }
+      if (cst && cst.broke > 0) { totalBroke += cst.broke; crack(); haptic(HANDS[0], 0.5, 60); haptic(HANDS[1], 0.5, 60); }
       if (st.reach > 0) {
         tookHits++;
         slam(st.reach * 0.15);
         haptic(HANDS[0], 0.8, 90); haptic(HANDS[1], 0.8, 90);
         if (!KNOB_CALM) { shake = Math.min(0.012, 0.004 + st.reach * 0.0008); shakeT = 0.16; }
       }
-      if (st.state === 6) { MATCH = "DOWN"; downHold = 0; fell(); }
+      if (cst && cst.reach > 0) {
+        tookHits++;
+        slam(cst.reach * 0.15);
+        haptic(HANDS[0], 0.8, 90); haptic(HANDS[1], 0.8, 90);
+        if (!KNOB_CALM) { shake = Math.min(0.012, 0.004 + cst.reach * 0.0008); shakeT = 0.16; }
+      }
+      // Both physical opponents belong to the round. A red body that is still
+      // alive keeps fighting or trying to rise; the restart gesture must never
+      // erase it merely because grey reached the floor first.
+      if (st.state === 6 && cst && cst.state === 9) {
+        MATCH = "DOWN"; downHold = 0; fell();
+      }
     }
     if (shakeT > 0) shakeT -= dt;
 
@@ -747,6 +803,14 @@
              support: m[o+5], dist: m[o+10], wind: m[o+11], reach: m[o+13], broke: m[o+14] };
   }
 
+  function codexState_read() {
+    if (!E.w_codex_state) return null;
+    var o = E.w_codex_state() >>> 2, m = new Float32Array(E.memory.buffer);
+    return { exists: m[o], state: m[o+1] | 0, bones: m[o+2], alive: m[o+3],
+             total: m[o+4], retries: m[o+5], hipY: m[o+7], dist: m[o+10],
+             reach: m[o+13], broke: m[o+14] };
+  }
+
   // Every impact the engine recorded this step, turned into a crater in the
   // mesh, a thump, and a buzz in the hand that threw it.
   function drainHits() {
@@ -762,25 +826,32 @@
         haptic(HANDS[0], 0.35, 40); haptic(HANDS[1], 0.35, 40);
       }
     }
-    for (var b = 0; b < boneMeshes.length; b++)
-      if (boneMeshes[b].mesh.deepest > deepest) deepest = boneMeshes[b].mesh.deepest;
+    var allMeshes = boneMeshes.concat(codexBoneMeshes);
+    for (var b = 0; b < allMeshes.length; b++)
+      if (allMeshes[b].mesh.deepest > deepest) deepest = allMeshes[b].mesh.deepest;
   }
 
   function reportOut(head, st) {
     var lines = [];
+    var cst = codexState_read();
     lines.push("match: " + MATCH + "   figure: " + figState +
                "   mode: " + (AR ? "passthrough" : "vr"));
     lines.push("floor " + (floorY === null ? "NOT SET — controller on the ground, pull the trigger"
                                            : floorY.toFixed(3) + " m (" + (spaceKind || "?") + ")"));
     lines.push("your height " + stature.toFixed(2) + " m — it is built to match");
     if (st && st.exists) {
-      lines.push("bones on " + st.bones + "/17   metal " + st.alive + "/" + st.total +
+      lines.push("grey: bones on " + st.bones + "/17   metal " + st.alive + "/" + st.total +
                  " cells   legs " + Math.round(st.support * 100) + "%   " +
                  st.dist.toFixed(2) + " m away");
     }
+    if (cst && cst.exists)
+      lines.push("red Codex: " + (CODEX_STATES[cst.state] || "ACTIVE") +
+                 "   bones " + cst.bones + "/19   metal " + cst.alive + "/" +
+                 cst.total + " cells   " + cst.dist.toFixed(2) + " m away" +
+                 (cst.retries ? "   rise attempts " + cst.retries : ""));
     lines.push("you landed " + totalHits + " blows, broke " + totalBroke +
                " bones, deepest dent " + Math.round(deepest * 1000) + " mm");
-    lines.push("it landed " + tookHits + " on you");
+    lines.push("they landed " + tookHits + " on you");
     var knobs = [];
     if (KNOB_POWER !== 1) knobs.push("power=" + KNOB_POWER);
     if (KNOB_TEMPO !== 1) knobs.push("tempo=" + KNOB_TEMPO);
