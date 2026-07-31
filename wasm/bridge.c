@@ -1461,7 +1461,14 @@ static const BoneDef BONES[BONE_COUNT] = {
   /* PELVIS   */ { -1,            0.000f, 0.530f, 0.000f, 0.075f, 0.045f, 0.055f, 2, AX_UP,    0.00f, 0,  0.0f, 3.0f , 900.0f },
   /* ABDOMEN  */ { BONE_PELVIS,   0.000f, 0.620f, 0.000f, 0.065f, 0.050f, 0.050f, 2, AX_UP,    0.45f, 0, 28.0f, 2.6f , 900.0f },
   /* CHEST    */ { BONE_ABDOMEN,  0.000f, 0.720f, 0.000f, 0.085f, 0.063f, 0.060f, 3, AX_UP,    0.40f, 0, 28.0f, 1.8f , 900.0f },
-  /* NECK     */ { BONE_CHEST,    0.000f, 0.845f, 0.000f, 0.026f, 0.023f, 0.026f, 2, AX_UP,    0.50f, 0, 22.0f, 2.2f , 600.0f },
+  // The neck's density is 4x flesh ON PURPOSE, and the reason is solver
+  // conditioning, not anatomy: every joint constraint is anchored to the
+  // SMALLER of the two bodies it joins, and a 0.4 kg neck link under a 5 kg
+  // head made both neck joints wet noodles — the 22 Hz head spring measured
+  // 9 N.m/rad and drooped 13 degrees under gravity alone, which is the
+  // spring-bobble the headset reported. A person's neck is not a separate
+  // 0.4 kg part; its mass moves with the head.
+  /* NECK     */ { BONE_CHEST,    0.000f, 0.845f, 0.000f, 0.026f, 0.023f, 0.026f, 2, AX_UP,    0.50f, 0, 22.0f, 2.2f , 2400.0f },
   /* HEAD     */ { BONE_NECK,     0.000f, 0.890f, 0.000f, 0.055f, 0.055f, 0.060f, 2, AX_UP,    0.45f, 0, 22.0f, 1.5f , 650.0f },
 
   /* L UPARM  */ { BONE_CHEST,   -0.115f, 0.820f, 0.000f, 0.030f, 0.095f, 0.030f, 3, AX_DOWN,  1.45f, 0, 20.0f, 1.6f , 420.0f },
@@ -1480,6 +1487,48 @@ static const BoneDef BONES[BONE_COUNT] = {
   /* R SHIN   */ { BONE_R_THIGH,  0.045f, 0.285f, 0.000f, 0.037f, 0.123f, 0.037f, 4, AX_HINGE, 0.00f, 2.40f, 26.0f, 1.6f , 520.0f },
   /* R FOOT   */ { BONE_R_SHIN,   0.045f, 0.039f, 0.000f, 0.030f, 0.020f, 0.076f, 4, AX_FWD,   0.50f, 0, 20.0f, 1.8f , 420.0f },
 };
+
+// MUSCLE, as a torque budget rather than a stiffness. The joint springs above
+// are implicit Box3D springs: they supply WHATEVER torque the pose demands,
+// which is how the figure held a jack-knifed limbo no real joint could — the
+// pinned Box3D has no spring-torque cap, so the only exact cap is the joint
+// MOTOR's per-substep impulse clamp. A capped bone runs a soft passive spring
+// (FIG_PASSIVE_HZ) plus a velocity-servo motor whose max torque is the number
+// below — a real knee peaks around 150-250 N.m, an ankle 100-170, a neck a
+// tenth of that. Zero means "leave the spring as the table says" (the arms,
+// whose softness is already measured and load-bearing, and the pelvis root).
+// The FOOT is 15 and orientation-only on purpose: the stance ankle's real
+// muscle is the CoP pair in w_fig_apply, which is torque-honest by
+// construction (measured load times an in-sole lever), and a strong servo
+// here would fight the very foot-pitch moment that pair commands.
+static const float BONE_CAP[BONE_COUNT] = {
+  /* PELVIS   */   0.0f,
+  /* ABDOMEN  */ 120.0f,
+  /* CHEST    */  80.0f,
+  /* NECK     */  25.0f,
+  /* HEAD     */   0.0f,   /* the skull rides its 22 Hz spring: capping it put
+                              a second servo on the far end of a 0.5 kg neck
+                              bone, and the two motors whipped it 4-28 deg at
+                              ten hertz through the bone between them. The
+                              neck MUSCLE is the chest-neck joint; the head
+                              spring lives inside the subtree that muscle
+                              moves, so the cap still budgets the whole unit */
+  /* L ARM    */   0.0f, 0.0f, 0.0f,
+  /* R ARM    */   0.0f, 0.0f, 0.0f,
+  /* L LEG    */ 160.0f, 150.0f, 15.0f,
+  /* R LEG    */ 160.0f, 150.0f, 15.0f,
+};
+#define FIG_PASSIVE_HZ 4.0f   /* Hz a capped joint's spring; damping stays 0.9 */
+#define FIG_TRACK_T    0.08f  /* s  servo time constant; dt/T = 0.17, monotone */
+#define FIG_TRACK_T_NK 0.05f  /* s  ... the neck and head track faster         */
+#define FIG_TRACK_MAXW 12.0f  /* rad/s servo speed clamp                       */
+#define FIG_BRAKE      0.40f  /* -  fraction of the cap the braking clamp may
+                                    plan with. The servo may only command a
+                                    speed the cap can stop from before the
+                                    target: without this the neck wound up to
+                                    12 rad/s, could not shed it inside the
+                                    cone, and rang 3-28 deg at a hertz for
+                                    ever — a limit cycle, not a bobble       */
 
 // Arms are softer than legs, and the reason is measured rather than chosen: a
 // limb that is free to swing gives way under a blow, so far less of the
@@ -1583,6 +1632,7 @@ static void figSlacken(int gi, float speed)
     }
 }
 static b3Quat s_figFrame[BONE_COUNT];         // the joint frame rotation, R
+static float s_figJointI[BONE_COUNT];         // subtree inertia about the joint
 static float s_figStature = 1.75f;
 static float s_figHipY = 0.93f;               // rest hip height, world
 static FigState s_figState = FIG_WAIT;
@@ -1633,6 +1683,26 @@ static b3Quat qConj(b3Quat q)
 {
     b3Quat r; r.v.x = -q.v.x; r.v.y = -q.v.y; r.v.z = -q.v.z; r.s = q.s;
     return r;
+}
+
+// The rotation vector carrying q onto target — replicated from the pinned
+// Box3D's math_internal.h (b3DeltaQuatToRotation, not public API), including
+// the negate-if-antipodal polarity fix, so the servo error below is EXACTLY
+// the error the spherical spring solves and the motor cannot fight the spring
+// over a sign.
+static b3Vec3 figDeltaQuatToRotation(b3Quat q, b3Quat target)
+{
+    b3Quat s = q;
+    const float dot = q.v.x*target.v.x + q.v.y*target.v.y + q.v.z*target.v.z
+                    + q.s*target.s;
+    if (dot < 0.0f) { s.v.x = -s.v.x; s.v.y = -s.v.y; s.v.z = -s.v.z; s.s = -s.s; }
+    b3Quat diff;
+    diff.v.x = target.v.x - s.v.x; diff.v.y = target.v.y - s.v.y;
+    diff.v.z = target.v.z - s.v.z; diff.s = target.s - s.s;
+    const b3Quat product = b3MulQuat(diff, qConj(s));
+    b3Vec3 out; out.x = 2.0f * product.v.x; out.y = 2.0f * product.v.y;
+    out.z = 2.0f * product.v.z;
+    return out;
 }
 
 // The minimal rotation carrying unit vector a onto unit vector b.
@@ -2430,6 +2500,13 @@ int w_fig_create(float x, float z, float stature, int material)
         b3Transform fb = b3Transform_identity;
         fb.q = R;
 
+        // A capped bone is muscle-by-motor: the passive spring drops to
+        // FIG_PASSIVE_HZ (it is posture memory, not strength) and the motor —
+        // whose max torque is an exact per-substep impulse clamp — does the
+        // holding. The knee's lowerAngle = 0 LIMIT stays uncapped on purpose:
+        // a straight leg carries standing compression through bone, not
+        // through muscle.
+        const float capped = BONE_CAP[b] > 0.0f;
         if (d->axis == AX_HINGE)
         {
             b3RevoluteJointDef rj = b3DefaultRevoluteJointDef();
@@ -2442,10 +2519,16 @@ int w_fig_create(float x, float z, float stature, int material)
             rj.lowerAngle = d->cone;      // an elbow's range, or a knee's
             rj.upperAngle = d->hi;
             rj.enableSpring = true;
-            rj.hertz = d->hertz;
+            rj.hertz = capped ? FIG_PASSIVE_HZ : d->hertz;
             rj.dampingRatio = 0.9f;
             rj.targetAngle = 0.0f;
             s_figJoint[b] = b3CreateRevoluteJoint(s_world, &rj);
+            if (capped)
+            {
+                b3RevoluteJoint_EnableMotor(s_figJoint[b], true);
+                b3RevoluteJoint_SetMotorSpeed(s_figJoint[b], 0.0f);
+                b3RevoluteJoint_SetMaxMotorTorque(s_figJoint[b], BONE_CAP[b]);
+            }
         }
         else
         {
@@ -2461,11 +2544,44 @@ int w_fig_create(float x, float z, float stature, int material)
             // degenerate rather than failing loudly.
             sj.coneAngle = d->cone > 1.5f ? 1.5f : d->cone;
             sj.enableSpring = true;
-            sj.hertz = d->hertz;
+            sj.hertz = capped ? FIG_PASSIVE_HZ : d->hertz;
             sj.dampingRatio = 0.9f;
             sj.targetRotation = b3Quat_identity;
             s_figJoint[b] = b3CreateSphericalJoint(s_world, &sj);
+            if (capped)
+            {
+                b3SphericalJoint_EnableMotor(s_figJoint[b], true);
+                b3SphericalJoint_SetMotorVelocity(s_figJoint[b], b3Vec3_zero);
+                b3SphericalJoint_SetMaxMotorTorque(s_figJoint[b], BONE_CAP[b]);
+            }
         }
+    }
+
+    // What each muscle is moving: the rotational inertia of everything below
+    // its joint, about that joint, in the rest pose. The braking clamp in
+    // figMuscle plans against this so it never commands a speed the torque
+    // cap cannot stop from — gain sized against the wrong quantity is the
+    // controller fault this project keeps paying for, so the quantity is
+    // computed from the same bodies the solver integrates.
+    for (int b = 0; b < BONE_COUNT; b++)
+    {
+        s_figJointI[b] = 0.0f;
+        if (BONES[b].parent < 0 || BONE_CAP[b] <= 0.0f) continue;
+        const float jx = x + BONES[b].ox * H;
+        const float jy = s_worldFloorY + BONES[b].oy * H;
+        const float jz = z + BONES[b].oz * H;
+        for (int c = 0; c < BONE_COUNT; c++)
+        {
+            if (figChainSteps(c, b) < 0) continue;      // not below this joint
+            const b3MassData md = b3Body_GetMassData(s_figBone[c]);
+            const b3Pos wc = b3Body_GetWorldPoint(s_figBone[c], md.center);
+            const float dx = (float)wc.x - jx, dy = (float)wc.y - jy,
+                        dz = (float)wc.z - jz;
+            b3Matrix3 Ic = b3Body_GetLocalRotationalInertia(s_figBone[c]);
+            s_figJointI[b] += (Ic.cx.x + Ic.cy.y + Ic.cz.z) * (1.0f / 3.0f)
+                            + md.mass * (dx*dx + dy*dy + dz*dz);
+        }
+        if (s_figJointI[b] < 1e-3f) s_figJointI[b] = 1e-3f;
     }
 
     s_figState = FIG_WAIT;
@@ -2570,6 +2686,69 @@ static void figStride(float phase, float amount)
         // The foot stays flat to the floor as the shin swings under it.
         figAim(LEG(s) + 2, b3MulQuat(qAxisAngle(1.0f, 0.0f, 0.0f, -swing + knee),
                                      qAxisAngle(0.0f, 0.0f, 1.0f, -out)));
+    }
+}
+
+// The muscle. Runs at the END of w_fig_update, after every pose-setter and
+// after the slack loop, so it reads the final targets for this frame — via
+// Get*Target* on the joints themselves, no shadow state to drift. Each capped
+// joint's motor is a velocity servo toward its own spring target: speed
+// err/FIG_TRACK_T, norm-clamped, with the max torque as the budget. A blow's
+// slack acts through the CAP, not the hertz — a struck muscle is a weak
+// muscle, and the passive spring underneath never changes.
+static void figMuscle(void)
+{
+    for (int b = 0; b < BONE_COUNT; b++)
+    {
+        if (BONE_CAP[b] <= 0.0f) continue;
+        if (!s_figAttached[b] || BONES[b].parent < 0) continue;
+        float capEff = BONE_CAP[b] * (1.0f - 0.88f * s_figSlack[b]);
+        const float capMin = 0.05f * BONE_CAP[b];
+        if (capEff < capMin) capEff = capMin;
+        const float T = (b == BONE_NECK || b == BONE_HEAD)
+                      ? FIG_TRACK_T_NK : FIG_TRACK_T;
+        // The braking clamp: v^2 <= 2 (FIG_BRAKE cap / I) err, so the cap can
+        // always stop what the servo has set moving before the target.
+        const float brakeA = 2.0f * FIG_BRAKE * capEff / s_figJointI[b];
+        if (BONES[b].axis == AX_HINGE)
+        {
+            float err = b3RevoluteJoint_GetTargetAngle(s_figJoint[b])
+                      - b3RevoluteJoint_GetAngle(s_figJoint[b]);
+            float wv = err / T;
+            const float ae = err < 0.0f ? -err : err;
+            const float wb = __builtin_sqrtf(brakeA * ae);
+            if (wv >  wb) wv =  wb;
+            if (wv < -wb) wv = -wb;
+            if (wv >  FIG_TRACK_MAXW) wv =  FIG_TRACK_MAXW;
+            if (wv < -FIG_TRACK_MAXW) wv = -FIG_TRACK_MAXW;
+            b3RevoluteJoint_SetMotorSpeed(s_figJoint[b], wv);
+            b3RevoluteJoint_SetMaxMotorTorque(s_figJoint[b], capEff);
+        }
+        else
+        {
+            // The solver's spherical motor drives wB - wA in WORLD frame with
+            // a vector-norm impulse clamp, and its spring's error is
+            // -Rotate(qA, DeltaQuatToRotation(rel, target)) with
+            // qA = parentRot * localFrameA.q. localFrameA.q = R = s_figFrame,
+            // so this expression matches the spring's error direction exactly.
+            const b3Quat qA = b3MulQuat(b3Body_GetRotation(s_figBone[BONES[b].parent]),
+                                        s_figFrame[b]);
+            const b3Quat qB = b3MulQuat(b3Body_GetRotation(s_figBone[b]),
+                                        s_figFrame[b]);
+            const b3Quat rel = b3MulQuat(qConj(qA), qB);
+            const b3Vec3 d = figDeltaQuatToRotation(rel,
+                b3SphericalJoint_GetTargetRotation(s_figJoint[b]));
+            b3Vec3 v = b3RotateVector(qA, d);
+            const float ae = __builtin_sqrtf(v.x*v.x + v.y*v.y + v.z*v.z);
+            v.x /= T; v.y /= T; v.z /= T;
+            float n = ae / T;
+            float wcap = __builtin_sqrtf(brakeA * ae);
+            if (wcap > FIG_TRACK_MAXW) wcap = FIG_TRACK_MAXW;
+            if (n > wcap && n > 1e-6f)
+            { const float k = wcap / n; v.x *= k; v.y *= k; v.z *= k; }
+            b3SphericalJoint_SetMotorVelocity(s_figJoint[b], v);
+            b3SphericalJoint_SetMaxMotorTorque(s_figJoint[b], capEff);
+        }
     }
 }
 
@@ -2769,16 +2948,32 @@ void w_fig_update(float px, float py, float pz, float dt)
     {
         case FIG_DOWN:
         case FIG_FALLING:
-            // Nothing holds a pose on the way down. Every spring goes slack
-            // and the body falls the way a body falls — a figure that keeps
-            // its guard while collapsing was never really hurt.
+            // Nothing holds a pose on the way down. Every spring goes slack,
+            // every motor loses its torque — a corpse has no muscle — and the
+            // body falls the way a body falls. A figure that keeps its guard
+            // while collapsing was never really hurt. Nothing restores these;
+            // FIG_DOWN has no exit.
             for (int b = 0; b < BONE_COUNT; b++)
             {
                 if (!s_figAttached[b] || BONES[b].parent < 0) continue;
                 if (BONES[b].axis == AX_HINGE)
+                {
                     b3RevoluteJoint_SetSpringHertz(s_figJoint[b], 0.6f);
+                    if (BONE_CAP[b] > 0.0f)
+                    {
+                        b3RevoluteJoint_SetMotorSpeed(s_figJoint[b], 0.0f);
+                        b3RevoluteJoint_SetMaxMotorTorque(s_figJoint[b], 0.0f);
+                    }
+                }
                 else
+                {
                     b3SphericalJoint_SetSpringHertz(s_figJoint[b], 0.6f);
+                    if (BONE_CAP[b] > 0.0f)
+                    {
+                        b3SphericalJoint_SetMotorVelocity(s_figJoint[b], b3Vec3_zero);
+                        b3SphericalJoint_SetMaxMotorTorque(s_figJoint[b], 0.0f);
+                    }
+                }
             }
             break;
 
@@ -2872,14 +3067,19 @@ void w_fig_update(float px, float py, float pz, float dt)
             if (s_figSlack[b] < 0.0f) s_figSlack[b] = 0.0f;
             if (!s_figAttached[b] || BONES[b].parent < 0) continue;
             // Reaching zero this frame restores the table value exactly, so
-            // nothing has to remember to put the stiffness back.
-            float hz = BONES[b].hertz * (1.0f - 0.88f * s_figSlack[b]);
+            // nothing has to remember to put the stiffness back. A capped
+            // bone's give goes through its motor cap in figMuscle instead —
+            // its passive spring is already soft and stays where it is.
+            const float base = BONE_CAP[b] > 0.0f ? FIG_PASSIVE_HZ : BONES[b].hertz;
+            float hz = base * (1.0f - 0.88f * s_figSlack[b]);
             if (hz < 0.6f) hz = 0.6f;
             if (BONES[b].axis == AX_HINGE)
                 b3RevoluteJoint_SetSpringHertz(s_figJoint[b], hz);
             else
                 b3SphericalJoint_SetSpringHertz(s_figJoint[b], hz);
         }
+        // The muscle reads the final targets for the frame, so it runs last.
+        figMuscle();
     }
 }
 
@@ -3607,6 +3807,38 @@ float* w_fig_pose(void)
         o[0] = (float)p.x; o[1] = (float)p.y; o[2] = (float)p.z;
         o[3] = q.v.x; o[4] = q.v.y; o[5] = q.v.z; o[6] = q.s;
         o[7] = (float)s_figAttached[b];
+    }
+    return out;
+}
+
+// What every MUSCLE is actually spending, per bone: [motor torque magnitude,
+// its cap]. The cap is the whole claim of the muscle build — a joint that can
+// hold any pose is a rig, not a body — and a claim that big has to be
+// readable, or the suite is taking the engine's word for it.
+WASM_EXPORT("w_fig_muscle")
+float* w_fig_muscle(void)
+{
+    static float out[BONE_COUNT * 2];
+    for (int i = 0; i < BONE_COUNT * 2; i++) out[i] = 0.0f;
+    if (!s_figExists) return out;
+    for (int b = 0; b < BONE_COUNT; b++)
+    {
+        if (BONE_CAP[b] <= 0.0f || !s_figAttached[b] || BONES[b].parent < 0)
+            continue;
+        float mag;
+        if (BONES[b].axis == AX_HINGE)
+        {
+            const float t = b3RevoluteJoint_GetMotorTorque(s_figJoint[b]);
+            mag = t < 0.0f ? -t : t;
+            out[b * 2 + 1] = b3RevoluteJoint_GetMaxMotorTorque(s_figJoint[b]);
+        }
+        else
+        {
+            const b3Vec3 t = b3SphericalJoint_GetMotorTorque(s_figJoint[b]);
+            mag = __builtin_sqrtf(t.x*t.x + t.y*t.y + t.z*t.z);
+            out[b * 2 + 1] = b3SphericalJoint_GetMaxMotorTorque(s_figJoint[b]);
+        }
+        out[b * 2] = mag;
     }
     return out;
 }
